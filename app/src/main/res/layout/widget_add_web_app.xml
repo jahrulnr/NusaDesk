@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Add / edit web app form. Three fields and no more: a required name, an
+     optional image chosen through the system document picker, and the guest port
+     the app serves on. There is deliberately no URL, host, or credential field —
+     the endpoint is generated from the port. Inflated into WebAppFormView. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/content_padding"
+        android:paddingTop="20dp"
+        android:paddingEnd="@dimen/content_padding"
+        android:paddingBottom="@dimen/desktop_bottom_padding">
+
+        <TextView
+            android:id="@+id/webapp_form_heading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/ink"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="2dp"
+            android:text="@string/webapp_form_body"
+            android:textColor="@color/ink_secondary"
+            android:textSize="14sp" />
+
+        <!-- Name -->
+        <TextView
+            style="@style/Widget.LinuxWrapper.FieldLabel"
+            android:layout_marginTop="@dimen/form_field_gap"
+            android:text="@string/webapp_field_name" />
+
+        <EditText
+            android:id="@+id/webapp_name_input"
+            style="@style/Widget.LinuxWrapper.FieldInput"
+            android:hint="@string/webapp_field_name_hint"
+            android:importantForAutofill="no"
+            android:inputType="text"
+            android:maxLines="1"
+            android:maxLength="64" />
+
+        <TextView
+            android:id="@+id/webapp_name_error"
+            style="@style/Widget.LinuxWrapper.FieldError"
+            android:visibility="gone" />
+
+        <!-- Image (optional) -->
+        <TextView
+            style="@style/Widget.LinuxWrapper.FieldLabel"
+            android:layout_marginTop="@dimen/form_field_gap"
+            android:text="@string/webapp_field_image" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="@dimen/webapp_form_image_size"
+                android:layout_height="@dimen/webapp_form_image_size"
+                android:background="@drawable/tile_icon_surface">
+
+                <ImageView
+                    android:id="@+id/webapp_image_preview"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@string/webapp_image_preview_desc"
+                    android:padding="6dp"
+                    android:scaleType="centerCrop"
+                    android:src="@drawable/ic_image_placeholder" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="14dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <Button
+                    android:id="@+id/webapp_image_choose"
+                    style="@style/Widget.LinuxWrapper.FieldButton"
+                    android:text="@string/webapp_image_choose" />
+
+                <Button
+                    android:id="@+id/webapp_image_remove"
+                    style="@style/Widget.LinuxWrapper.FieldButton"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/webapp_image_remove"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/webapp_image_error"
+            style="@style/Widget.LinuxWrapper.FieldError"
+            android:visibility="gone" />
+
+        <!-- Port -->
+        <TextView
+            style="@style/Widget.LinuxWrapper.FieldLabel"
+            android:layout_marginTop="@dimen/form_field_gap"
+            android:text="@string/webapp_field_port" />
+
+        <EditText
+            android:id="@+id/webapp_port_input"
+            style="@style/Widget.LinuxWrapper.FieldInput"
+            android:hint="@string/webapp_field_port_hint"
+            android:importantForAutofill="no"
+            android:inputType="number"
+            android:maxLength="5"
+            android:maxLines="1" />
+
+        <TextView
+            android:id="@+id/webapp_port_error"
+            style="@style/Widget.LinuxWrapper.FieldError"
+            android:visibility="gone" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="2dp"
+            android:text="@string/webapp_port_note"
+            android:textColor="@color/ink_muted"
+            android:textSize="12sp" />
+
+        <!-- Form-level failure: only for reasons that belong to no single field. -->
+        <TextView
+            android:id="@+id/webapp_form_error"
+            style="@style/Widget.LinuxWrapper.FieldError"
+            android:layout_marginTop="@dimen/form_field_gap"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/webapp_save"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/button_height"
+            android:layout_marginTop="@dimen/section_gap"
+            android:background="@drawable/button_primary"
+            android:fontFamily="sans"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/webapp_save"
+            android:textAllCaps="false"
+            android:textColor="@color/button_primary_text"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/webapp_delete"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/button_height"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/button_secondary"
+            android:fontFamily="sans"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/webapp_delete"
+            android:textAllCaps="false"
+            android:textColor="@color/ink"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+</merge>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Opaque scrim behind terminal state overlays (loading/attaching/failed). -->
+<!-- It matches the packaged terminal page background so a state change never -->
+<!-- flashes the WebView's default white surface. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/terminal_surface" />
+</shape>

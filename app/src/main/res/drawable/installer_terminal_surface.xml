@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Terminal log viewport for the installer wizard. Fixed dark in every theme:
+     it is a terminal surface, not a card, so it uses the terminal palette. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/terminal_surface" />
+    <corners android:radius="12dp" />
+    <stroke android:width="1dp" android:color="@color/border" />
+</shape>

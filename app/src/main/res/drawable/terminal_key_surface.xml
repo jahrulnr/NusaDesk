@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One terminal accessory key. The armed state is the sticky CTRL/ALT
+     modifier waiting for the next key; it is a real state, so it is rendered
+     as a filled, bordered key instead of a colour-only hint. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/terminal_key_armed_surface" />
+            <corners android:radius="8dp" />
+            <stroke android:width="1dp" android:color="@color/terminal_key_armed_border" />
+        </shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/terminal_key_pressed_surface" />
+            <corners android:radius="8dp" />
+            <stroke android:width="1dp" android:color="@color/terminal_key_armed_border" />
+        </shape>
+    </item>
+    <item android:state_enabled="false">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/terminal_key_disabled_surface" />
+            <corners android:radius="8dp" />
+            <stroke android:width="1dp" android:color="@color/terminal_key_disabled_border" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/terminal_key_surface" />
+            <corners android:radius="8dp" />
+            <stroke android:width="1dp" android:color="@color/terminal_key_border" />
+        </shape>
+    </item>
+</selector>

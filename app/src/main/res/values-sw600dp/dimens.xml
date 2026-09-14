@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="section_gap">32dp</dimen>
+    <dimen name="content_padding">40dp</dimen>
+    <dimen name="desktop_bottom_padding">56dp</dimen>
+
+    <dimen name="launcher_top_padding">22dp</dimen>
+    <dimen name="launcher_header_gap">22dp</dimen>
+    <dimen name="launcher_grid_gap">20dp</dimen>
+    <dimen name="launcher_title_size">26sp</dimen>
+    <dimen name="launcher_count_size">13sp</dimen>
+    <dimen name="search_field_height">52dp</dimen>
+    <dimen name="search_field_padding">16dp</dimen>
+
+    <dimen name="tile_min_height">124dp</dimen>
+    <dimen name="tile_padding">16dp</dimen>
+    <dimen name="tile_gap">16dp</dimen>
+    <dimen name="tile_icon_size">48dp</dimen>
+    <dimen name="tile_glyph_size">22sp</dimen>
+    <dimen name="tile_label_size">14sp</dimen>
+
+    <dimen name="task_bar_height">56dp</dimen>
+
+    <dimen name="terminal_key_height">48dp</dimen>
+    <dimen name="terminal_key_gap">6dp</dimen>
+    <dimen name="terminal_key_text_size">13sp</dimen>
+</resources>

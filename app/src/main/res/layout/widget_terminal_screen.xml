@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Terminal app surface. A maximized Linux app: the packaged xterm WebView, a -->
+<!-- passive attach panel for the "session is not running" case, a -->
+<!-- non-blocking banner when the terminal dropped while the session stayed up, -->
+<!-- and the mobile accessory key row that sits directly above the soft -->
+<!-- keyboard. -->
+<!-- There is deliberately no Start/Stop control here: the session is owned by -->
+<!-- the launcher. Inflated into TerminalAppView. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <gh.nusashell.nusadesk.presentation.widget.TerminalBridgeView
+                android:id="@+id/terminal_bridge"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/terminal_surface" />
+
+            <!-- Passive attach state. Opaque, so it never shows a half-loaded -->
+            <!-- terminal behind it, and it only offers a way back to the session -->
+            <!-- owner. It covers the terminal area only: the accessory key row -->
+            <!-- below it stays visible and disables itself. The message scrolls -->
+            <!-- instead of squashing its action on a short landscape surface. -->
+            <ScrollView
+                android:id="@+id/terminal_attach_panel"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/terminal_surface"
+                android:fillViewport="true"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="20dp">
+
+                    <TextView
+                        android:id="@+id/attach_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:textColor="@color/terminal_ink"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/attach_body"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:gravity="center"
+                        android:lineSpacingExtra="2dp"
+                        android:textColor="@color/terminal_ink_secondary"
+                        android:textSize="14sp" />
+
+                    <Button
+                        android:id="@+id/attach_action"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:background="@drawable/button_primary"
+                        android:fontFamily="sans"
+                        android:minHeight="@dimen/touch_target"
+                        android:minWidth="@dimen/touch_target"
+                        android:paddingStart="20dp"
+                        android:paddingEnd="20dp"
+                        android:text="@string/terminal_attach_go_desktop"
+                        android:textAllCaps="false"
+                        android:textColor="@color/button_primary_text"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </ScrollView>
+        </FrameLayout>
+
+        <!-- Non-blocking single-line banner for a dropped terminal. -->
+        <LinearLayout
+            android:id="@+id/terminal_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/terminal_chrome_surface"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="8dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/banner_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:lineSpacingExtra="2dp"
+                android:text="@string/terminal_dropped_banner"
+                android:textColor="@color/terminal_ink_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/banner_action"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/button_secondary"
+                android:fontFamily="sans"
+                android:minHeight="@dimen/touch_target"
+                android:minWidth="@dimen/touch_target"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="@string/terminal_reconnect"
+                android:textAllCaps="false"
+                android:textColor="@color/terminal_ink"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <gh.nusashell.nusadesk.presentation.terminal.TerminalKeyRowView
+            android:id="@+id/terminal_key_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+</merge>

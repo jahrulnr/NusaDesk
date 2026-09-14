@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="app_name">NusaDesk</string>
+
+    <!-- Launcher. The launcher is the product's home surface: a search field, the
+         Add app action, the Linux surfaces this build ships, and the web apps the
+         user registered. There is no session control anywhere in the UI: Linux is
+         background infrastructure that starts from an app launch (ADR-0013). -->
+    <string name="launcher_title">All apps</string>
+    <string name="launcher_status_setup">Setup needed</string>
+    <string name="launcher_status_setup_system">Finish Linux setup to use your apps.</string>
+    <string name="launcher_status_setup_service">Add the Linux terminal component to use your apps.</string>
+    <string name="launcher_status_setup_installing">Adding the Linux terminal component…</string>
+    <string name="launcher_status_setup_service_failed">The Linux terminal component could not be added.</string>
+    <string name="launcher_status_ready">Linux ready</string>
+    <string name="launcher_status_ready_detail">Your Linux apps are ready.</string>
+    <string name="launcher_status_starting">Starting Linux…</string>
+    <string name="launcher_status_starting_detail">Linux starts by itself when you open the app.</string>
+    <string name="launcher_status_stopping">Stopping Linux…</string>
+    <string name="launcher_status_stopping_detail">Closing the session and its processes.</string>
+    <string name="launcher_status_stopped">Linux stopped</string>
+    <string name="launcher_status_stopped_detail">Linux starts again next time you open the app.</string>
+    <string name="launcher_status_failed">Linux needs attention</string>
+    <string name="launcher_status_failed_detail">%1$s</string>
+
+    <!-- Linux session vocabulary. One session, owned by the Android host and
+         started from an app launch; no surface offers a start/stop control. -->
+    <string name="session_stopped">Linux session stopped</string>
+    <string name="session_stopped_detail">Linux starts again next time you open the app.</string>
+    <string name="session_starting">Starting Linux…</string>
+    <string name="session_starting_detail">Waiting for the session to report ready.</string>
+    <string name="session_recovering">Recovering the session…</string>
+    <string name="session_recovering_detail">Reconciling the session before restarting it.</string>
+    <string name="session_running">Linux session running</string>
+    <string name="session_running_detail">Your Linux apps are ready.</string>
+    <string name="session_reconnecting">Reconnecting…</string>
+    <string name="session_reconnecting_detail">The Linux session is still running.</string>
+    <string name="session_stopping">Stopping Linux…</string>
+    <string name="session_stopping_detail">Closing the session and its processes.</string>
+    <string name="session_failed">Linux session needs attention</string>
+    <string name="session_failed_detail">%1$s</string>
+    <string name="session_failed_no_reason">The session stopped without a reported reason.</string>
+    <string name="session_badge_stopped">Stopped</string>
+    <string name="session_badge_starting">Starting</string>
+    <string name="session_badge_running">Running</string>
+    <string name="session_badge_stopping">Stopping</string>
+    <string name="session_badge_failed">Needs attention</string>
+
+    <!-- Launcher setup: the curated Linux system and its terminal component are
+         installed once as a single pipeline (ADR-0017). The launcher states the
+         step that is actually missing through one installer surface. -->
+    <string name="setup_eyebrow">SETUP</string>
+
+    <!-- Launcher app tiles -->
+    <string name="apps_unavailable_note">Apps unlock when Linux setup finishes.</string>
+    <string name="app_terminal">Terminal</string>
+    <string name="app_terminal_glyph">&gt;_</string>
+    <string name="app_terminal_desc">Terminal. A full Linux shell.</string>
+    <string name="app_system">Linux System</string>
+    <string name="app_system_glyph">⚙</string>
+    <string name="app_system_desc">Linux System. Install state, session details, and how it works.</string>
+    <string name="app_locked">Locked</string>
+    <string name="app_tile_open_desc">%1$s Double tap to open.</string>
+    <string name="app_tile_locked_desc">%1$s Finish Linux setup to open it.</string>
+
+    <!-- Launcher search -->
+    <string name="apps_search_hint">Search apps</string>
+    <string name="apps_search_clear_desc">Clear search</string>
+    <string name="apps_search_no_results">No apps match “%1$s”.</string>
+    <!-- The count is deliberately not a quantity string. A quantity string is
+         resolved through the device locale's CLDR plural category, and locales
+         with no plural marking (Indonesian, Chinese, Japanese, Korean) have
+         only the "other" category, so the platform renders "1 apps" on an id-ID
+         device. The launcher ships one default copy, so the count picks the
+         form itself; see LauncherHeaderText. PluralsCandidate is the heuristic
+         this deliberately contradicts. -->
+    <string name="apps_count_singular" tools:ignore="PluralsCandidate">%1$d app</string>
+    <string name="apps_count_plural" tools:ignore="PluralsCandidate">%1$d apps</string>
+
+    <!-- App surface task bar: one compact bar with a way back and the surface
+         title. A web app surface additionally carries its own app actions. -->
+    <string name="taskbar_home_desc">Back to all apps</string>
+    <string name="taskbar_more_desc">App options</string>
+
+    <!-- Terminal app surface -->
+    <string name="terminal_loading">Loading terminal…</string>
+    <string name="terminal_attach_stopped_title">Waiting for Linux</string>
+    <string name="terminal_attach_stopped_body">Linux starts automatically when you open the app. The terminal opens as soon as it is running.</string>
+    <string name="terminal_attach_failed_body">Linux could not start: %1$s</string>
+    <string name="terminal_attach_go_desktop">Go to all apps</string>
+    <string name="terminal_connecting">Connecting…</string>
+    <string name="terminal_reconnecting">Reconnecting…</string>
+    <string name="terminal_failed">Could not open the terminal: %1$s</string>
+    <string name="terminal_failed_unknown">unknown reason</string>
+    <string name="terminal_dropped_banner">The terminal disconnected. Linux is still running.</string>
+    <string name="terminal_reconnect">Reconnect terminal</string>
+
+    <!-- Terminal accessory keys (mobile). The row sends the same escape
+         sequences a hardware keyboard would; nothing here owns a session. -->
+    <string name="terminal_key_row_desc">Terminal keys</string>
+    <string name="terminal_key_esc">ESC</string>
+    <string name="terminal_key_ctrl">CTRL</string>
+    <string name="terminal_key_alt">ALT</string>
+    <string name="terminal_key_tab">TAB</string>
+    <string name="terminal_key_home">HOME</string>
+    <string name="terminal_key_end">END</string>
+    <string name="terminal_key_pgup">PGUP</string>
+    <string name="terminal_key_pgdn">PGDN</string>
+    <string name="terminal_key_left">←</string>
+    <string name="terminal_key_right">→</string>
+    <string name="terminal_key_up">↑</string>
+    <string name="terminal_key_down">↓</string>
+    <string name="terminal_key_desc">%1$s terminal key</string>
+    <string name="terminal_key_modifier_desc">%1$s. Double tap to arm it for the next key.</string>
+    <string name="terminal_key_modifier_armed_desc">%1$s armed. The next key is sent with it.</string>
+    <string name="terminal_key_no_shell">The keys are disabled until a shell is attached.</string>
+
+    <!-- Add / edit web app. The user names an app, may pick an image, and enters
+         the guest port it serves on. The endpoint is generated from that port;
+         there is no URL field, and no host, credential, or profile input. -->
+    <string name="webapp_add_title">Add app</string>
+    <string name="webapp_add_glyph">+</string>
+    <string name="webapp_add_desc">Add app. Register a local web app by name, image, and port.</string>
+    <string name="webapp_edit_title">Edit app</string>
+    <!-- Accessible sentence for a user web app tile: the app's own name, then the
+         gestures the tile really supports. -->
+    <string name="webapp_tile_open_desc">%1$s. Double tap to open, long press to edit.</string>
+    <string name="webapp_tile_locked_desc">%1$s. Finish Linux setup to open it.</string>
+    <string name="webapp_form_body">Name the app and give the port its server listens on inside Linux. The app is opened at its own loopback address; you never type a URL.</string>
+    <string name="webapp_field_name">Name</string>
+    <string name="webapp_field_name_hint">e.g. Notebook</string>
+    <string name="webapp_field_image">Image (optional)</string>
+    <string name="webapp_image_choose">Choose image</string>
+    <string name="webapp_image_remove">Remove image</string>
+    <string name="webapp_image_none">No image</string>
+    <string name="webapp_image_preview_desc">Selected image for this app</string>
+    <string name="webapp_field_port">Port</string>
+    <string name="webapp_field_port_hint">1024 – 65535</string>
+    <string name="webapp_port_note">The port your app serves on inside Linux. Port 22022 belongs to the terminal.</string>
+    <string name="webapp_error_name">Enter a name (at most 64 characters).</string>
+    <string name="webapp_error_image">That image cannot be used. Pick another one.</string>
+    <string name="webapp_error_port">Enter a port between 1 and 65535.</string>
+    <string name="webapp_error_port_reserved">Port 22022 belongs to the terminal. Choose another port.</string>
+    <string name="webapp_error_port_in_use">Port %1$d is already used by another app.</string>
+    <string name="webapp_error_unknown_app">This app is no longer registered.</string>
+    <string name="webapp_error_storage">Could not save the app: %1$s</string>
+    <string name="webapp_save">Save app</string>
+    <string name="webapp_save_edit">Save changes</string>
+    <string name="webapp_delete">Remove app</string>
+    <string name="webapp_delete_confirm_title">Remove this app?</string>
+    <string name="webapp_delete_confirm_body">“%1$s” is removed from the launcher. Nothing inside Linux is deleted.</string>
+    <string name="webapp_delete_confirm_action">Remove</string>
+    <string name="webapp_cancel">Cancel</string>
+    <string name="webapp_menu_edit">Edit app…</string>
+
+    <!-- Web app surface: the app's own page, loaded only after its loopback
+         endpoint answers, with honest loading and unreachable states. -->
+    <string name="webapp_state_opening">Opening %1$s…</string>
+    <string name="webapp_state_unreachable_title">%1$s is not running</string>
+    <!-- The number here is a TCP port, not a quantity, so it must not become a
+         plural. PluralsCandidate is the heuristic this deliberately contradicts. -->
+    <string name="webapp_state_unreachable_body" tools:ignore="PluralsCandidate">Nothing answered on port %1$d inside Linux yet. Start the app there, then try again.</string>
+    <string name="webapp_state_failed_title">%1$s could not be shown</string>
+    <string name="webapp_state_failed_body">%1$s</string>
+    <string name="webapp_state_retry">Try again</string>
+    <string name="webapp_state_blocked">The page tried to open an address that is not this app.</string>
+    <string name="webapp_state_crashed">The page stopped responding.</string>
+
+    <!-- Linux system screen (install state, session details, contract) -->
+    <string name="system_eyebrow">LINUX SYSTEM</string>
+    <string name="system_title">Linux system</string>
+    <string name="system_body">A verified, curated Ubuntu Base rootfs stored in app-private storage. The Android host owns the session lifecycle, starts it from an app launch, and keeps its state honest.</string>
+    <string name="system_state_label">System state</string>
+    <string name="system_session_label">Session</string>
+    <string name="system_service_label">Terminal component</string>
+    <string name="system_service_installed">Installed</string>
+    <string name="system_service_missing">Not installed</string>
+    <string name="system_service_installing">Installing…</string>
+    <string name="system_service_failed">Failed: %1$s</string>
+    <string name="system_webapps_label">Registered web apps</string>
+    <string name="system_details_eyebrow">TECHNICAL DETAILS</string>
+    <string name="system_detail_endpoint">Loopback endpoint</string>
+    <string name="system_detail_endpoint_none">No endpoint yet</string>
+    <string name="system_detail_endpoint_value">%1$s:%2$d</string>
+    <string name="system_detail_app">Runtime profile</string>
+    <string name="system_detail_version">Version</string>
+    <string name="system_how_title">How NusaDesk works</string>
+    <string name="system_how_body">Android host → verified system → Android-owned session → loopback endpoint → app surface. Linux starts when you open the app and keeps running in the background; the notification\'s Stop action stops it, and opening the app starts it again. A running process is not the same as a ready session, and loopback is reachability, not authentication.</string>
+    <string name="action_read_contract">How it works</string>
+
+    <!-- Installer wizard -->
+    <string name="wizard_welcome_title">Set up your Linux desktop</string>
+    <string name="wizard_welcome_body">A pinned Ubuntu Base 24.04.5 ARM64 system is downloaded over HTTPS, verified against a catalog digest, and stored privately on this device. Nothing is executed during setup.</string>
+    <string name="wizard_requirement_storage">About %1$s of app storage</string>
+    <string name="wizard_requirement_storage_generic">Enough app-private storage</string>
+    <string name="wizard_requirement_abi">An arm64 device</string>
+    <string name="wizard_requirement_network">An internet connection</string>
+    <string name="wizard_fact_private_title">Private by default</string>
+    <string name="wizard_fact_private_body">Linux files stay inside this app.</string>
+    <string name="wizard_fact_verified_title">Verified before run</string>
+    <string name="wizard_fact_verified_body">Every download is checked before activation.</string>
+    <string name="wizard_fact_background_title">Ready for the background</string>
+    <string name="wizard_fact_background_body">Linux keeps running while you use your apps.</string>
+    <string name="wizard_fact_number_one">01</string>
+    <string name="wizard_fact_number_two">02</string>
+    <string name="wizard_fact_number_three">03</string>
+    <string name="wizard_download_title">Downloading Linux</string>
+    <string name="wizard_verify_title">Verifying the download</string>
+    <string name="wizard_extract_title">Preparing private files</string>
+    <string name="wizard_addon_pending_title">Adding terminal component</string>
+    <string name="wizard_addon_download_title">Downloading the terminal component</string>
+    <string name="wizard_addon_verify_title">Verifying the terminal component</string>
+    <string name="wizard_addon_extract_title">Preparing the terminal component</string>
+    <string name="wizard_ready_title">Linux is ready</string>
+    <string name="wizard_failed_title">Setup needs attention</string>
+    <string name="wizard_progress_desc">Setup progress: %1$d%%</string>
+    <string name="wizard_indeterminate_desc">Working…</string>
+
+    <!-- Actions -->
+    <string name="action_begin_install">Start setup</string>
+    <string name="action_retry_install">Try again</string>
+    <string name="action_installing">Installing…</string>
+
+    <!-- Dialog -->
+    <string name="dialog_close">Close</string>
+
+    <!-- Accessibility / content descriptions -->
+    <string name="status_content_description">Status: %1$s. %2$s</string>
+</resources>

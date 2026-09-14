@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One terminal accessory key. Inflated by TerminalKeyRowView, which owns the -->
+<!-- wrapping layout and the sticky CTRL/ALT state. -->
+<Button xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/Widget.LinuxWrapper.TerminalKey" />

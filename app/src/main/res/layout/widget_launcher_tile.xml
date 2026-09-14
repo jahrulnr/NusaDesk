@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One launcher tile. Inflated into LauncherTileView (a vertical LinearLayout
+     that applies the tile surface and padding in code, so the tile can be sized
+     by the launcher's responsive column count). The tile is a single
+     accessibility node: the icon plate, label, and status children are excluded
+     from the accessibility tree and the tile root carries the full description. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <LinearLayout
+        android:id="@+id/tile_icon"
+        style="@style/Widget.LinuxWrapper.AppTileIcon">
+
+        <ImageView
+            android:id="@+id/tile_image"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tile_glyph"
+            style="@style/Widget.LinuxWrapper.AppTileGlyph" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tile_label"
+        style="@style/Widget.LinuxWrapper.AppTileLabel" />
+
+    <TextView
+        android:id="@+id/tile_status"
+        style="@style/Widget.LinuxWrapper.AppTileStatus" />
+</merge>

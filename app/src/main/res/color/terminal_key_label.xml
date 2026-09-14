@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Terminal accessory key label. Armed (sticky CTRL/ALT) and disabled keys
+     stay readable; the state is also carried by the key's surface and its
+     accessible description, never by colour alone. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true" android:color="@color/terminal_key_armed_ink" />
+    <item android:state_enabled="false" android:color="@color/terminal_key_disabled_ink" />
+    <item android:color="@color/terminal_key_ink" />
+</selector>

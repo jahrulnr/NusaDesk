@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One user web app surface. The WebView is created in code and added into
+     webapp_view_container once the app's loopback endpoint has actually
+     answered; until then — and whenever it stops answering — this surface shows
+     an explicit state instead of a browser error page. Inflated into
+     WebAppSurfaceView. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <FrameLayout
+            android:id="@+id/webapp_view_container"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/surface_elevated" />
+
+        <!-- Opaque state panel: loading, unreachable, or failed. It covers the
+             web area only and always offers the honest next step (retry). -->
+        <ScrollView
+            android:id="@+id/webapp_state_panel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/surface"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:id="@+id/webapp_state_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:textColor="@color/ink"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/webapp_state_body"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:gravity="center"
+                    android:lineSpacingExtra="2dp"
+                    android:textColor="@color/ink_secondary"
+                    android:textSize="14sp" />
+
+                <ProgressBar
+                    android:id="@+id/webapp_state_progress"
+                    style="?android:attr/progressBarStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:indeterminate="true"
+                    android:visibility="gone" />
+
+                <Button
+                    android:id="@+id/webapp_state_action"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/button_primary"
+                    android:fontFamily="sans"
+                    android:minHeight="@dimen/touch_target"
+                    android:minWidth="@dimen/touch_target"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:text="@string/webapp_state_retry"
+                    android:textAllCaps="false"
+                    android:textColor="@color/button_primary_text"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </ScrollView>
+    </FrameLayout>
+</merge>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <application
+        android:name=".infrastructure.integration.LinuxWrapperApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="false">
+        <activity
+            android:name=".presentation.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            Foreground host shell for the local Linux runtime. Lifecycle host
+            only: it owns the user-visible status notification and a Stop
+            action, and delegates start/stop to the single registered runtime
+            workload. It does not run PRoot or start arbitrary code.
+            Linux starts from a user-visible launch (the Activity calls
+            RuntimeHostService.ensureRunning) and keeps running while the app is
+            backgrounded; there is no boot receiver, job, or alarm that could
+            start it without the user. The specialUse subtype rationale and any
+            distribution-channel policy review (e.g. Google Play special-use
+            review) still need to be completed before a public release; see
+            ADR-0007 and ADR-0013.
+        -->
+        <service
+            android:name=".infrastructure.service.RuntimeHostService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="linux_runtime_host: supervises a packaged, verified guest runtime on the fixed loopback SSH endpoint for the in-app terminal; started from a user-visible launch, user-visible with a Stop action, not a background server" />
+        </service>
+    </application>
+
+</manifest>

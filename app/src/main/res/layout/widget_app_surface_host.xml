@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- App surface host: one compact task bar plus the container that holds the
+     open surface. The bar carries only a way back and the surface title, and it
+     grows an options button only for a surface that really has app-level actions
+     (a user web app: edit and remove). There is no session chrome here — Linux
+     state belongs to the launcher's readiness pill, not to every app. Inflated
+     into AppSurfaceHostView. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/task_bar_surface"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:minHeight="@dimen/task_bar_height"
+            android:orientation="horizontal"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp">
+
+            <ImageButton
+                android:id="@+id/taskbar_home"
+                android:layout_width="@dimen/touch_target"
+                android:layout_height="@dimen/touch_target"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/taskbar_home_desc"
+                android:padding="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_home" />
+
+            <TextView
+                android:id="@+id/taskbar_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/ink"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/taskbar_more"
+                android:layout_width="@dimen/touch_target"
+                android:layout_height="@dimen/touch_target"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/taskbar_more_desc"
+                android:padding="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_more"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/app_surface_container"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+    </LinearLayout>
+</merge>

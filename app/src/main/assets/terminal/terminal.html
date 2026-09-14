@@ -1,0 +1,107 @@
+<!doctype html>
+<!--
+  Terminal host page for the LinuxWrapper SSH bridge.
+
+  This page is a THIN loader: it loads the pinned, local xterm.js bundle
+  (xterm.js, xterm.css, addon-fit.js) from the same assets directory and
+  exposes a minimal, focused JS-side contract (window.LinuxWrapperTerminal)
+  for the Android presentation layer to proxy to SshClientBridge. It contains
+  NO homemade terminal emulation — all rendering is done by upstream xterm.js.
+
+  Security: load this only from an owned origin. The Android side must expose
+  only a minimal, origin-checked JavascriptInterface that proxies the few
+  methods below (write/resize/notifyOutputSinkReady), NOT a broad bridge.
+  External links are not handled here; they are the WebView host's job.
+
+  Contract (window.LinuxWrapperTerminal):
+    write(textOrBytes)        host -> terminal: write SSH stdout to the screen.
+    writeStderr(textOrBytes)  host -> terminal: write SSH stderr to the screen.
+    resize(cols, rows)        host -> terminal: set the PTY size and refit.
+    fit()                     fit the terminal to its container.
+    focus()                   focus the terminal for input.
+    size()                    terminal -> host: {cols, rows} actually rendered.
+    onInput(callback)         terminal -> host: callback(data:string) for stdin.
+    onResize(callback)        terminal -> host: callback(cols, rows) on resize.
+    dispose()                 tear down the terminal.
+    ready()                   returns true once the terminal is initialised.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Terminal</title>
+  <link rel="stylesheet" href="xterm.css" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; }
+    #terminal { width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="terminal" aria-label="Terminal"></div>
+  <script src="xterm.js"></script>
+  <script src="addon-fit.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      var Terminal = window.Terminal;
+      var FitAddon = window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon);
+
+      var term = new Terminal({
+        cols: 80,
+        rows: 24,
+        cursorBlink: true,
+        scrollback: 1000,
+        fontFamily: "monospace",
+        allowProposedApi: true
+      });
+      var container = document.getElementById("terminal");
+      term.open(container);
+
+      var fitAddon = null;
+      if (FitAddon) {
+        fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
+        try { fitAddon.fit(); } catch (e) { /* container may not be sized yet */ }
+      }
+
+      // Decode bytes (ArrayBuffer/Uint8Array) or pass strings straight through.
+      function decode(data) {
+        if (data == null) return "";
+        if (typeof data === "string") return data;
+        var bytes = (data instanceof ArrayBuffer) ? new Uint8Array(data) : data;
+        return new TextDecoder("utf-8").decode(bytes);
+      }
+
+      var inputCb = null;
+      var resizeCb = null;
+
+      term.onData(function (data) {
+        if (typeof inputCb === "function") inputCb(data);
+      });
+      term.onResize(function (size) {
+        if (typeof resizeCb === "function") resizeCb(size.cols, size.rows);
+      });
+
+      window.addEventListener("resize", function () {
+        if (fitAddon) { try { fitAddon.fit(); } catch (e) { /* ignore */ } }
+      });
+
+      window.LinuxWrapperTerminal = {
+        ready: function () { return true; },
+        write: function (data) { term.write(decode(data)); },
+        writeStderr: function (data) { term.write(decode(data)); },
+        resize: function (cols, rows) {
+          try { term.resize(cols, rows); } catch (e) { /* ignore */ }
+        },
+        fit: function () { if (fitAddon) { try { fitAddon.fit(); } catch (e) { /* ignore */ } } },
+        focus: function () { term.focus(); },
+        size: function () { return { cols: term.cols, rows: term.rows }; },
+        onInput: function (cb) { inputCb = cb; },
+        onResize: function (cb) { resizeCb = cb; },
+        dispose: function () { term.dispose(); }
+      };
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Desktop shell. The launcher is the home surface; every other destination is
+  hosted inside the app surface host's container with the shared task bar, so
+  there is exactly one way back to the desktop. Destinations stay attached and
+  are switched by visibility, which is what keeps a live terminal's WebView and
+  scrollback alive across a trip back to the launcher.
+-->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <FrameLayout
+        android:id="@+id/shell_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/surface">
+
+        <gh.nusashell.nusadesk.presentation.desktop.DesktopHomeView
+            android:id="@+id/desktop_home"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <gh.nusashell.nusadesk.presentation.desktop.AppSurfaceHostView
+            android:id="@+id/app_surface_host"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+    </FrameLayout>
+</merge>

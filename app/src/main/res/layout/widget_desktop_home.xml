@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher (home). One column that reflows at every size: the grid's column
+     count follows the real available width, so phone portrait, phone landscape,
+     and tablets all use this layout instead of a variant each.
+
+     Order follows the launcher reference: search at the top, then the app
+     header with its count and the passive Linux readiness pill, then the grid —
+     whose first tile is the dashed "Add app" action. Setup steps appear only
+     while they are actually missing, and there is no session control anywhere. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/content_padding"
+        android:paddingTop="@dimen/launcher_top_padding"
+        android:paddingEnd="@dimen/content_padding"
+        android:paddingBottom="@dimen/desktop_bottom_padding">
+
+        <!-- App search: always visible, filters the grid below as you type. -->
+        <LinearLayout
+            android:id="@+id/apps_search_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/search_field_surface"
+            android:gravity="center_vertical"
+            android:minHeight="@dimen/search_field_height"
+            android:orientation="horizontal"
+            android:paddingStart="@dimen/search_field_padding"
+            android:paddingEnd="2dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_search" />
+
+            <EditText
+                android:id="@+id/apps_search_input"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:background="@null"
+                android:hint="@string/apps_search_hint"
+                android:imeOptions="actionSearch"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:maxLines="1"
+                android:minHeight="@dimen/touch_target"
+                android:paddingTop="0dp"
+                android:paddingBottom="0dp"
+                android:textColor="@color/ink"
+                android:textColorHint="@color/ink_muted"
+                android:textSize="15sp" />
+
+            <ImageButton
+                android:id="@+id/apps_search_clear"
+                android:layout_width="@dimen/touch_target"
+                android:layout_height="@dimen/touch_target"
+                android:background="@null"
+                android:contentDescription="@string/apps_search_clear_desc"
+                android:padding="14dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_close"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- App header: the launcher title, how many apps it holds, and the one
+             passive statement about Linux. The pill has no action: Linux starts
+             from an app launch, so a start button here would be a lie. -->
+        <LinearLayout
+            android:id="@+id/apps_header_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/launcher_header_gap"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/launcher_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/launcher_title"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/launcher_title_size"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/launcher_count"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/ink_muted"
+                android:textSize="@dimen/launcher_count_size" />
+
+            <TextView
+                android:id="@+id/launcher_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:maxLines="1"
+                android:paddingStart="10dp"
+                android:paddingTop="5dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="5dp"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Setup: the single installer surface. Visible while either the
+             curated rootfs or the guest-SSH add-on is missing; gone once both
+             are active. One wizard, one thumb-reachable action — there is no
+             second "Next: add terminal component" card. -->
+        <LinearLayout
+            android:id="@+id/setup_runtime_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/section_gap"
+            android:background="@drawable/card_surface"
+            android:orientation="vertical"
+            android:padding="20dp"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/Widget.LinuxWrapper.Eyebrow"
+                android:text="@string/setup_eyebrow" />
+
+            <gh.nusashell.nusadesk.presentation.widget.InstallerWizardView
+                android:id="@+id/installer_wizard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/apps_note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/section_gap"
+            android:lineSpacingExtra="2dp"
+            android:text="@string/apps_unavailable_note"
+            android:textColor="@color/ink_muted"
+            android:textSize="13sp" />
+
+        <!-- The app grid: Add app, the Linux surfaces, then the user's web apps. -->
+        <gh.nusashell.nusadesk.presentation.desktop.LauncherGridView
+            android:id="@+id/apps_grid"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/launcher_grid_gap"
+            android:orientation="vertical" />
+
+        <TextView
+            android:id="@+id/apps_search_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/section_gap"
+            android:lineSpacingExtra="2dp"
+            android:textColor="@color/ink_muted"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</merge>

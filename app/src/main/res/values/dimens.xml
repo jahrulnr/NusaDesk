@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="section_gap">24dp</dimen>
+    <dimen name="button_height">52dp</dimen>
+    <dimen name="touch_target">48dp</dimen>
+
+    <!-- Shell -->
+    <dimen name="content_padding">20dp</dimen>
+    <dimen name="desktop_bottom_padding">40dp</dimen>
+
+    <!-- Launcher -->
+    <dimen name="launcher_top_padding">14dp</dimen>
+    <dimen name="launcher_header_gap">18dp</dimen>
+    <dimen name="launcher_grid_gap">16dp</dimen>
+    <dimen name="launcher_title_size">22sp</dimen>
+    <dimen name="launcher_count_size">12sp</dimen>
+    <dimen name="search_field_height">48dp</dimen>
+    <dimen name="search_field_padding">14dp</dimen>
+
+    <!-- Launcher app tiles -->
+    <dimen name="tile_min_height">112dp</dimen>
+    <dimen name="tile_padding">12dp</dimen>
+    <dimen name="tile_gap">12dp</dimen>
+    <dimen name="tile_icon_size">44dp</dimen>
+    <dimen name="tile_glyph_size">20sp</dimen>
+    <dimen name="tile_label_size">13sp</dimen>
+
+    <!-- Add / edit web app form -->
+    <dimen name="form_field_gap">20dp</dimen>
+    <dimen name="webapp_form_image_size">64dp</dimen>
+
+    <!-- App surface task bar -->
+    <dimen name="task_bar_height">48dp</dimen>
+
+    <!-- Terminal accessory key row -->
+    <dimen name="terminal_key_height">48dp</dimen>
+    <dimen name="terminal_key_gap">3dp</dimen>
+    <dimen name="terminal_key_padding">6dp</dimen>
+    <dimen name="terminal_key_text_size">12sp</dimen>
+
+    <!-- Wizard -->
+    <dimen name="wizard_log_height">180dp</dimen>
+    <dimen name="wizard_log_text_size">12sp</dimen>
+</resources>

@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ubuntu-live-installer setup surface. Inflated into InstallerWizardView
+     (a vertical LinearLayout). The terminal log viewport is an append-only,
+     monospace, dark panel that preserves install history while a compact
+     progress bar and one thumb-reachable action sit below it. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Setup context title. -->
+    <TextView
+        android:id="@+id/wizard_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:includeFontPadding="false"
+        android:textColor="@color/ink"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <!-- Terminal log viewport. Bounded height so it never grows unbounded;
+         scrolls internally to keep the latest line visible. -->
+    <ScrollView
+        android:id="@+id/wizard_log_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/wizard_log_height"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/installer_terminal_surface"
+        android:fillViewport="true"
+        android:scrollbars="vertical">
+
+        <TextView
+            android:id="@+id/wizard_log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:lineSpacingExtra="1dp"
+            android:padding="12dp"
+            android:textColor="@color/terminal_ink"
+            android:textColorLink="@color/primary"
+            android:textIsSelectable="false"
+            android:textSize="@dimen/wizard_log_text_size" />
+    </ScrollView>
+
+    <!-- Requirements: visible only before setup starts (NOT_INSTALLED). -->
+    <LinearLayout
+        android:id="@+id/wizard_requirements"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/info_surface"
+        android:orientation="vertical"
+        android:padding="14dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/wizard_requirement_storage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:letterSpacing="0.1"
+            android:text="@string/wizard_requirement_storage_generic"
+            android:textColor="@color/ink"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/wizard_requirement_abi"
+            android:textColor="@color/ink"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/wizard_requirement_network"
+            android:textColor="@color/ink"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- Current progress bar. Determinate for download, indeterminate for
+         verify/extract, hidden otherwise. -->
+    <ProgressBar
+        android:id="@+id/wizard_progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="10dp"
+        android:layout_marginTop="12dp"
+        android:max="100"
+        android:progressDrawable="@drawable/progress_horizontal"
+        android:visibility="gone" />
+
+    <!-- Current status detail line. Shows the live snapshot detail (download
+         percent, verify/extract status) below the progress bar. -->
+    <TextView
+        android:id="@+id/wizard_detail"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:fontFamily="monospace"
+        android:lineSpacingExtra="1dp"
+        android:textColor="@color/terminal_ink_secondary"
+        android:textSize="@dimen/wizard_log_text_size"
+        android:visibility="gone" />
+
+
+    <!-- One thumb-reachable full-width primary action. -->
+    <Button
+        android:id="@+id/wizard_action"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/button_height"
+        android:layout_marginTop="14dp"
+        android:background="@drawable/button_primary"
+        android:fontFamily="sans"
+        android:minHeight="@dimen/touch_target"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:text="@string/action_begin_install"
+        android:textAllCaps="false"
+        android:textColor="@color/button_primary_text"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <!-- A compact reassurance footer uses the otherwise empty setup space to
+         explain what the user is getting, without adding another decision or
+         button. It remains passive and thumb-friendly. -->
+    <LinearLayout
+        android:id="@+id/wizard_facts"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="32dp"
+                android:layout_height="wrap_content"
+                android:text="@string/wizard_fact_number_one"
+                android:textColor="@color/primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/wizard_fact_private_title"
+                    android:textColor="@color/ink"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/wizard_fact_private_body"
+                    android:textColor="@color/ink_muted"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="32dp"
+                android:layout_height="wrap_content"
+                android:text="@string/wizard_fact_number_two"
+                android:textColor="@color/primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/wizard_fact_verified_title"
+                    android:textColor="@color/ink"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/wizard_fact_verified_body"
+                    android:textColor="@color/ink_muted"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="32dp"
+                android:layout_height="wrap_content"
+                android:text="@string/wizard_fact_number_three"
+                android:textColor="@color/primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/wizard_fact_background_title"
+                    android:textColor="@color/ink"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/wizard_fact_background_body"
+                    android:textColor="@color/ink_muted"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+</merge>
+
+

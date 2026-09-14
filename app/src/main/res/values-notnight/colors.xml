@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="surface">#F7F9FA</color>
+    <color name="surface_elevated">#FFFFFF</color>
+    <color name="surface_subtle">#EDF3F3</color>
+    <color name="ink">#12242B</color>
+    <color name="ink_secondary">#52656D</color>
+    <color name="ink_muted">#5E6E74</color>
+    <color name="border">#D9E4E5</color>
+    <color name="primary">#0F6269</color>
+    <color name="primary_dark">#08474D</color>
+    <color name="primary_tint">#DDF1EF</color>
+    <color name="success">#277A5E</color>
+    <color name="success_tint">#E3F3EC</color>
+    <color name="warning">#8A4A0D</color>
+    <color name="warning_tint">#FFF0DF</color>
+    <color name="info">#346C9A</color>
+    <color name="info_tint">#E5F0FA</color>
+    <color name="danger">#A84D50</color>
+    <color name="danger_tint">#FBE8E8</color>
+    <color name="button_primary_background">#0F6269</color>
+    <color name="button_primary_pressed_background">#08474D</color>
+    <color name="button_primary_text">#FFFFFF</color>
+
+    <!-- The terminal surface stays dark in the light theme too: it is the -->
+    <!-- packaged xterm page's own background, not app chrome. -->
+    <color name="terminal_surface">#000000</color>
+    <!-- Terminal chrome. The terminal surface is dark in every theme (it is the
+         packaged xterm page's own background), so its text and banner colours are
+         fixed instead of following the theme's ink. -->
+    <color name="terminal_ink">#F2F7F6</color>
+    <color name="terminal_ink_secondary">#B4C4C4</color>
+    <color name="terminal_chrome_surface">#172428</color>
+    <color name="tile_surface">#FFFFFF</color>
+    <color name="tile_surface_pressed">#EDF3F3</color>
+    <color name="tile_add_border">#4D0F6269</color>
+    <color name="task_bar_surface">#FFFFFF</color>
+
+    <!-- Launcher backdrop. A subtle wash plus a low-alpha accent glow: enough to
+         read as a home screen, never enough to compete with tile labels. -->
+    <color name="launcher_backdrop_top">#F7F9FA</color>
+    <color name="launcher_backdrop_bottom">#EDF4F5</color>
+    <color name="launcher_backdrop_glow">#33DDF1EF</color>
+</resources>

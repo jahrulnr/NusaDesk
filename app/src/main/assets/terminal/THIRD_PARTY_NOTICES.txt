@@ -1,0 +1,38 @@
+Third-party notices for the terminal assets in this directory.
+=================================================================
+
+These files are the pinned upstream browser distribution of xterm.js, fetched
+from the official npm registry (https://www.npmjs.com/) and included verbatim.
+They are NOT homemade terminal emulation. Do not modify them; to upgrade,
+re-fetch from the official source and update the versions below.
+
+1. xterm.js core
+   File:        xterm.js
+   Package:     @xterm/xterm
+   Version:     6.0.0
+   License:     MIT
+   Source:      https://www.npmjs.com/package/@xterm/xterm
+   Release:     https://github.com/xtermjs/xterm.js/releases/tag/6.0.0 (2025-12-22)
+   Local copy:  xterm-LICENSE.txt
+   Copyright:   (c) 2017-2026 The xterm.js authors
+                (c) 2014-2017 SourceLair, Private Company
+                (c) 2012-2013 Christopher Jeffrey
+
+2. xterm.js FitAddon
+   File:        addon-fit.js
+   Package:     @xterm/addon-fit
+   Version:     0.11.0
+   License:     MIT
+   Source:      https://www.npmjs.com/package/@xterm/addon-fit
+   Local copy:  addon-fit-LICENSE.txt
+   Copyright:   (c) 2019-2026 The xterm.js authors
+
+3. xterm.js stylesheet
+   File:        xterm.css
+   Package:     @xterm/xterm (part of the core package)
+   Version:     6.0.0
+   License:     MIT
+
+The xterm.js bundle is treated as part of the terminal trust boundary: it is
+loaded locally from assets, never from a remote CDN. The thin host page
+(terminal.html) loads only these local files.

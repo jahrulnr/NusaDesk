@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">@color/primary</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+        <item name="android:navigationBarDividerColor">@color/border</item>
+        <item name="android:statusBarColor">@color/surface</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:colorBackground">@color/surface_elevated</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/AppDialogTheme</item>
+    </style>
+
+    <style name="AppDialogTheme" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorBackground">@color/surface_elevated</item>
+        <item name="android:windowBackground">@drawable/dialog_surface</item>
+    </style>
+</resources>

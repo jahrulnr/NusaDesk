@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="surface">#0F191B</color>
+    <color name="surface_elevated">#172428</color>
+    <color name="surface_subtle">#203337</color>
+    <color name="ink">#F2F7F6</color>
+    <color name="ink_secondary">#B4C4C4</color>
+    <color name="ink_muted">#8DA1A1</color>
+    <color name="border">#2D4245</color>
+    <color name="primary">#83DDD6</color>
+    <color name="primary_dark">#A9EEE9</color>
+    <color name="primary_tint">#1C3B3D</color>
+    <color name="success">#83D5AB</color>
+    <color name="success_tint">#1C3A31</color>
+    <color name="warning">#F1B878</color>
+    <color name="warning_tint">#3E2D1C</color>
+    <color name="info">#8FC8F4</color>
+    <color name="info_tint">#1D3449</color>
+    <color name="danger">#FF9B9A</color>
+    <color name="danger_tint">#452A2D</color>
+    <color name="button_primary_background">#0F6269</color>
+    <color name="button_primary_pressed_background">#147A80</color>
+    <color name="button_primary_text">#FFFFFF</color>
+
+    <!-- Desktop surfaces. The terminal surface is a fixed dark colour in both -->
+    <!-- themes: it is the WebView's own background, so it must match the -->
+    <!-- packaged xterm page instead of flashing the WebView default white. -->
+    <color name="terminal_surface">#000000</color>
+    <!-- Terminal chrome. The terminal surface is dark in every theme (it is the
+         packaged xterm page's own background), so its text and banner colours are
+         fixed instead of following the theme's ink. -->
+    <color name="terminal_ink">#F2F7F6</color>
+    <color name="terminal_ink_secondary">#B4C4C4</color>
+    <color name="terminal_chrome_surface">#172428</color>
+    <color name="tile_surface">#172428</color>
+    <color name="tile_surface_pressed">#203337</color>
+    <color name="tile_add_border">#4D83DDD6</color>
+    <color name="task_bar_surface">#172428</color>
+
+    <!-- Launcher backdrop. A subtle wash plus a low-alpha accent glow: enough to
+         read as a home screen, never enough to compete with tile labels. -->
+    <color name="launcher_backdrop_top">#0F191B</color>
+    <color name="launcher_backdrop_bottom">#132226</color>
+    <color name="launcher_backdrop_glow">#401C3B3D</color>
+
+    <!-- Terminal accessory keys. The terminal surface is dark in every theme,
+         so its key row is fixed chrome too and these are deliberately defined
+         once here instead of per night/notnight variant. -->
+    <color name="terminal_key_surface">#1A2A2E</color>
+    <color name="terminal_key_pressed_surface">#203337</color>
+    <color name="terminal_key_border">#2D4245</color>
+    <color name="terminal_key_armed_surface">#1C3B3D</color>
+    <color name="terminal_key_armed_border">#83DDD6</color>
+    <color name="terminal_key_disabled_surface">#121B1D</color>
+    <color name="terminal_key_disabled_border">#23302F</color>
+    <color name="terminal_key_ink">#F2F7F6</color>
+    <color name="terminal_key_armed_ink">#A9EEE9</color>
+    <color name="terminal_key_disabled_ink">#6E7F82</color>
+</resources>

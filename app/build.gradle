@@ -1,0 +1,112 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'gh.nusashell.nusadesk'
+    compileSdk 37
+
+    defaultConfig {
+        applicationId 'gh.nusashell.nusadesk'
+        minSdk 29
+        targetSdk 37
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    lint {
+        abortOnError true
+        warningsAsErrors true
+        // The wrapper version is intentionally pinned by the foundation build contract.
+        disable 'AndroidGradlePluginVersion'
+        // Pinned dependency versions are deliberate, not stale: Bouncy Castle
+        // bcprov 1.84 is the version Apache MINA SSHD 2.19.0 targets, and 1.86
+        // was published only ~2 days before this change (violating the >=7-day
+        // vetting rule). slf4j 1.7.36 is MINA's target line. Suppress the
+        // freshness nudge so the supply-chain vetting rule wins over "newer
+        // is available". (bcpkix was removed: see dependencies comment.)
+        disable 'NewerVersionAvailable'
+    }
+
+    testOptions {
+        unitTests {
+            returnDefaultValues true
+        }
+    }
+
+    // The packaged PRoot execution bridge (ADR-004) is an executable PIE renamed
+    // libproot.so. The Android host must execve() it from a read-only executable
+    // path (ApplicationInfo.nativeLibraryDir); it is NOT a JNI library and is
+    // never dlopen'd. AGP's default for minSdk 29 is extractNativeLibs=false,
+    // which keeps the .so inside the APK and loads it via dlopen — that leaves
+    // nativeLibraryDir empty and breaks the ADR-004 execve contract (ADR-0008
+    // blocker 1). useLegacyPackaging=true makes the package installer extract
+    // native libs from the APK into nativeLibraryDir at install time and chmod
+    // them executable, which is exactly the contract the bridge needs. This is a
+    // packaging/extraction option, not a security control: the libs still come
+    // from the signed APK and land in the app-private read-only lib dir. It does
+    // not alter networkSecurityConfig, cleartext, backup, or any permission.
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+        resources {
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.txt',
+                'META-INF/*.DSA',
+                'META-INF/*.SF',
+                'META-INF/*.RSA',
+                'META-INF/io.netty.versions.properties'
+            ]
+        }
+    }
+}
+
+dependencies {
+    implementation 'org.apache.commons:commons-compress:1.28.0'
+
+    // SSH client bridge core. Apache MINA SSHD is a real Java SSH client/server
+    // library (Apache License 2.0). Only the client side is used at runtime; the
+    // server side is pulled in transitively by sshd-core and reused as an
+    // in-process test fixture, never shipped as a guest SSH server (Ubuntu Base
+    // does not provide one — see SshClientBridge JavaDoc). Versions are pinned
+    // exactly; Bouncy Castle bcprov 1.84 is the version MINA SSHD 2.19.0 targets
+    // and is deliberately older than the very latest release to stay vetted.
+    //
+    // Only bcprov is needed: MINA registers BouncyCastleProvider (bcprov) for
+    // JCA and uses its own built-in key-pair parsers
+    // (PEMResourceParserUtils.PROXY + OpenSSHKeyPairResourceParser) for key
+    // loading — none of which require bcpkix. The bcpkix-dependent classes
+    // (BouncyCastleKeyPairResourceParser, BouncyCastleEncryptedPrivateKeyInfo
+    // Decryptor, BouncyCastleGeneratorHostKeyProvider) are only invoked for
+    // encrypted PKCS8 keys, PEM host-key writing, or explicit BC parser
+    // registration, none of which this app does (SshClientBridge.loadKeyPair
+    // passes a null FilePasswordProvider and never calls setKeyPairResource
+    // Parser). bcpkix also shipped org.bouncycastle.est.jcajce helpers that
+    // tripped the TrustAllX509TrustManager lint check; removing bcpkix fixes
+    // that at the source instead of suppressing the security check globally.
+    implementation 'org.apache.sshd:sshd-core:2.19.0'
+    implementation 'org.apache.sshd:sshd-common:2.19.0'
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.84'
+    implementation 'net.i2p.crypto:eddsa:0.3.0'
+    implementation 'org.slf4j:slf4j-api:1.7.36'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.slf4j:slf4j-simple:1.7.36'
+}
