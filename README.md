@@ -46,6 +46,9 @@ make check
 
 This runs the unit tests, Android lint, and a debug build.
 
+`make test` also runs the pure JavaScript terminal gesture-policy suite, so
+Node.js is required for that target in addition to the Android SDK/JDK.
+
 ### Build the debug APK
 
 ```bash
@@ -120,6 +123,8 @@ documentation set:
   findings behind the foundation.
 - [Contributor and agent guidance](AGENTS.md) — repository rules and safety
   constraints.
+- [Security policy](SECURITY.md) — vulnerability reporting, security scope, and
+  threat-model boundaries.
 
 ## Honest boundaries
 

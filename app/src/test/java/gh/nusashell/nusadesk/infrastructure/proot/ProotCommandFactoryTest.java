@@ -199,4 +199,31 @@ public class ProotCommandFactoryTest {
         List<String> argv = new ProotCommandFactory().buildArgv(spec);
         assertFalse(argv.contains(ProotCommandFactory.OPT_BIND));
     }
+
+    @Test
+    public void resolvConfBindAppearsAsBindArgument() {
+        // The guest /etc/resolv.conf is bound from an app-private host file
+        // written from Android's active-network DNS (ADR-0019). Assert the
+        // command factory emits it verbatim as a -b host:/etc/resolv.conf.
+        ProotBindMount resolv = ProotBindMount.of(
+                "/data/data/gh.nusashell.nusadesk/cache/resolv.conf",
+                "/etc/resolv.conf");
+        ProotLaunchSpec spec = ProotLaunchSpec.builder()
+                .prootBinary(PROOT)
+                .rootfs(ROOTFS)
+                .guestArgv(ProotLauncher.GUEST_PROBE_ARGV)
+                .bindMounts(Arrays.asList(
+                        ProotBindMount.of("/proc", "/proc"),
+                        ProotBindMount.of("/dev", "/dev"),
+                        resolv))
+                .hostWorkingDir("/data/data/gh.nusashell.nusadesk/files")
+                .build();
+        List<String> argv = new ProotCommandFactory().buildArgv(spec);
+        assertTrue("resolv.conf bind present", argv.contains(resolv.toBindArgument()));
+        // The bind argument is a -b pair: find the -b flag immediately before it.
+        int bindArg = argv.indexOf(resolv.toBindArgument());
+        assertTrue("resolv.conf bind argument found", bindArg > 0);
+        assertEquals(ProotCommandFactory.OPT_BIND, argv.get(bindArg - 1));
+        assertEquals("/etc/resolv.conf", resolv.getGuestPath());
+    }
 }

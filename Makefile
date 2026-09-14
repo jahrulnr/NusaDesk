@@ -2,14 +2,16 @@ SHELL := /bin/sh
 
 GRADLEW ?= ./gradlew
 ADB ?= adb
+NODE ?= node
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 GRADLE_FLAGS ?= --no-daemon
 
 .PHONY: test lint build check devices push install clean
 
-# Run the JVM/unit test suite.
+# Run the JVM/unit test suite and the pure-JavaScript terminal policy tests.
 test:
 	$(GRADLEW) $(GRADLE_FLAGS) test
+	$(NODE) app/src/test/js/touch-scroll-policy.test.js
 
 # Run Android lint with warnings treated as errors.
 lint:

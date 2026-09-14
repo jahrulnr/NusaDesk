@@ -7,6 +7,10 @@ description: Use when validating Android runtime, foreground-service, native-loa
 
 Use this skill for device-test planning and release gates. Emulator-only evidence is insufficient for native execution/lifecycle work.
 
+## Evidence boundary
+
+Record which configurations have device-verified runtime behavior and which are emulator-only or untested. Do not claim support for a configuration that has no recorded device run. An emulator's ARM translation is not runtime evidence for an ARM target. Mark each configuration `supported`, `experimental`, or `unsupported` rather than implying blanket coverage.
+
 ## Minimum matrix
 
 - Android 10/API 29 floor;

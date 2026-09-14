@@ -2,6 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+        Required to read the active network's DNS servers
+        (ConnectivityManager.getActiveNetwork/getLinkProperties) so the guest
+        /etc/resolv.conf can be built from the network Android actually routes
+        on (ADR-0019). Normal, non-dangerous permission: no runtime grant,
+        no network I/O of its own, and no broad storage/LAN/battery scope.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 

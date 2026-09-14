@@ -91,6 +91,11 @@ public final class TerminalBridgeView extends FrameLayout {
      */
     private boolean pageReady;
     private CharSequence requestedOverlay;
+    private boolean touchGestureActive;
+    private boolean touchScrollStarted;
+    private float touchStartY;
+    private float touchLastY;
+    private final float touchScrollThresholdPx;
 
     public TerminalBridgeView(Context context) {
         this(context, null);
@@ -99,18 +104,63 @@ public final class TerminalBridgeView extends FrameLayout {
     @SuppressLint("ClickableViewAccessibility")
     public TerminalBridgeView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        touchScrollThresholdPx = 10f * getResources().getDisplayMetrics().density;
         webView = new WebView(context);
         // The terminal must be able to hold view focus in touch mode so that
         // hardware/injected key events reach the shell instead of falling back
         // to a previously focused button (Enter would otherwise click it).
         webView.setFocusableInTouchMode(true);
-        // The listener only moves focus on touch; click handling stays inside
-        // the WebView, so performClick does not apply here.
+        // Let taps and normal xterm input pass through. Once a one-finger drag
+        // crosses the threshold, keep the gesture in this native view and ask
+        // the trusted page to move its viewport. This is more reliable than
+        // relying on Android WebView to dispatch DOM touchmove to xterm.js.
         webView.setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
                 v.requestFocus();
+                touchGestureActive = event.getPointerCount() == 1;
+                touchScrollStarted = false;
+                touchStartY = touchLastY = event.getY();
+                // Own the complete gesture so xterm/WebView cannot translate
+                // the same drag into a long-press/paste selection. A short tap
+                // is replayed as focus on ACTION_UP below.
+                return true;
             }
-            return false;
+            if (action == MotionEvent.ACTION_POINTER_DOWN
+                    || event.getPointerCount() != 1) {
+                touchGestureActive = false;
+                touchScrollStarted = false;
+                return true;
+            }
+            if (action == MotionEvent.ACTION_MOVE && touchGestureActive) {
+                float currentY = event.getY();
+                float totalDelta = currentY - touchStartY;
+                if (!touchScrollStarted
+                        && Math.abs(totalDelta) < touchScrollThresholdPx) {
+                    touchLastY = currentY;
+                    return true;
+                }
+                touchScrollStarted = true;
+                float delta = currentY - touchLastY;
+                if (delta != 0f) {
+                    // The finger moving up should reveal older output, so the
+                    // viewport moves by the inverse of the finger delta.
+                    postToPage(TerminalMessage.scroll(Math.round(-delta)));
+                }
+                touchLastY = currentY;
+                return true;
+            }
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                boolean wasScroll = touchScrollStarted;
+                touchGestureActive = false;
+                touchScrollStarted = false;
+                if (!wasScroll && action == MotionEvent.ACTION_UP) {
+                    v.performClick();
+                    focus();
+                }
+                return true;
+            }
+            return touchGestureActive;
         });
         overlay = new TextView(context);
         overlay.setVisibility(GONE);
@@ -295,6 +345,9 @@ public final class TerminalBridgeView extends FrameLayout {
         // Inject the shim first, then transfer the page's port. The page's MessagePort
         // queues messages until onmessage is set, so there is no delivery race.
         webView.evaluateJavascript(SHIM_JS, null);
+        webView.evaluateJavascript(
+                "window.LinuxWrapperTouchScroll && "
+                        + "window.LinuxWrapperTouchScroll.enableNativeMode();", null);
         webView.postWebMessage(
                 new WebMessage("", new WebMessagePort[]{channel[1]}),
                 Uri.parse(ORIGIN));
@@ -458,6 +511,7 @@ public final class TerminalBridgeView extends FrameLayout {
 +       "case 'setSize':if(typeof m.c==='number'&&typeof m.r==='number'){term.resize(m.c,m.r);}break;"
 +       "case 'fit':term.fit();break;"
 +       "case 'focus':term.focus();break;"
++       "case 'scroll':if(window.LinuxWrapperTouchScroll&&typeof m.d==='number'){window.LinuxWrapperTouchScroll.scrollBy(m.d);}break;"
 +     "}"
 +   "};"
 +   "term.onInput(function(d){send({t:'input',d:d});});"

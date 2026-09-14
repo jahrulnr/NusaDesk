@@ -33,13 +33,22 @@
   <link rel="stylesheet" href="xterm.css" />
   <style>
     html, body { margin: 0; padding: 0; height: 100%; background: #000; }
-    #terminal { width: 100vw; height: 100vh; }
+    #terminal {
+      width: 100vw;
+      height: 100vh;
+      /* The gesture adapter handles the vertical drag at the page boundary;
+         this prevents Android WebView from converting it into a tap/overscroll
+         before the capture listener can update the xterm viewport. */
+      touch-action: none;
+      overscroll-behavior: none;
+    }
   </style>
 </head>
 <body>
   <div id="terminal" aria-label="Terminal"></div>
   <script src="xterm.js"></script>
   <script src="addon-fit.js"></script>
+  <script src="touch-scroll.js"></script>
   <script>
     (function () {
       "use strict";
@@ -86,6 +95,14 @@
       window.addEventListener("resize", function () {
         if (fitAddon) { try { fitAddon.fit(); } catch (e) { /* ignore */ } }
       });
+
+      // Mobile touch-to-scrollback adapter (see touch-scroll.js). xterm.js 6.0.0
+      // does not scroll the viewport on a one-finger drag on Android WebView;
+      // this translates such a drag into bounded scrollTop changes without
+      // stealing taps, keyboard input, or xterm mouse-tracking gestures.
+      if (window.LinuxWrapperTouchScroll) {
+        window.LinuxWrapperTouchScroll.install(container, term);
+      }
 
       window.LinuxWrapperTerminal = {
         ready: function () { return true; },

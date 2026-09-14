@@ -7,7 +7,7 @@ package gh.nusashell.nusadesk.presentation.terminal;
  *
  * <p>This is a tiny, fixed protocol — not a generic RPC. The native side encodes
  * {@link Type#WRITE}, {@link Type#WRITE_STDERR}, {@link Type#RESIZE},
- * {@link Type#FIT} and {@link Type#FOCUS} commands to the page; the page encodes
+ * {@link Type#FIT}, {@link Type#FOCUS}, and {@link Type#SCROLL} commands to the page; the page encodes
  * {@link Type#READY}, {@link Type#INPUT} and {@link Type#RESIZE} events back. Only
  * the fields each type uses are meaningful; the others are zero/null.</p>
  *
@@ -32,6 +32,8 @@ public final class TerminalMessage {
         SET_SIZE,
         /** Host -> page: refit the terminal to its container. */
         FIT,
+        /** Host -> page: scroll the xterm viewport by a bounded pixel delta. */
+        SCROLL,
         /** Host -> page: focus the terminal for input. */
         FOCUS
     }
@@ -40,12 +42,14 @@ public final class TerminalMessage {
     private final String data;
     private final int cols;
     private final int rows;
+    private final int scrollDelta;
 
-    private TerminalMessage(Type type, String data, int cols, int rows) {
+    private TerminalMessage(Type type, String data, int cols, int rows, int scrollDelta) {
         this.type = type;
         this.data = data;
         this.cols = cols;
         this.rows = rows;
+        this.scrollDelta = scrollDelta;
     }
 
     /** A text-carrying message (READY/INPUT/WRITE/WRITE_STDERR). {@code data} must be non-null. */
@@ -56,7 +60,7 @@ public final class TerminalMessage {
         if (data == null) {
             throw new IllegalArgumentException("data must not be null");
         }
-        return new TerminalMessage(type, data, 0, 0);
+        return new TerminalMessage(type, data, 0, 0, 0);
     }
 
     /** A size-carrying message (RESIZE/SET_SIZE). */
@@ -64,7 +68,7 @@ public final class TerminalMessage {
         if (type == null) {
             throw new IllegalArgumentException("type must not be null");
         }
-        return new TerminalMessage(type, null, cols, rows);
+        return new TerminalMessage(type, null, cols, rows, 0);
     }
 
     /** A parameterless message (FIT/FOCUS). */
@@ -72,7 +76,15 @@ public final class TerminalMessage {
         if (type == null) {
             throw new IllegalArgumentException("type must not be null");
         }
-        return new TerminalMessage(type, null, 0, 0);
+        return new TerminalMessage(type, null, 0, 0, 0);
+    }
+
+    /** A native touch-scroll command, bounded to a safe pixel delta. */
+    public static TerminalMessage scroll(int deltaPixels) {
+        if (deltaPixels < -2000 || deltaPixels > 2000 || deltaPixels == 0) {
+            throw new IllegalArgumentException("scroll delta must be between -2000 and 2000");
+        }
+        return new TerminalMessage(Type.SCROLL, null, 0, 0, deltaPixels);
     }
 
     public Type getType() {
@@ -90,5 +102,10 @@ public final class TerminalMessage {
 
     public int getRows() {
         return rows;
+    }
+
+    /** Pixel delta for {@link Type#SCROLL}; zero for every other message. */
+    public int getScrollDelta() {
+        return scrollDelta;
     }
 }

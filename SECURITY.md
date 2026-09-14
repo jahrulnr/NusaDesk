@@ -1,0 +1,99 @@
+# Security Policy
+
+## Project status
+
+NusaDesk is an experimental Android/Linux workspace foundation. The current
+version is `0.0.0`, and runtime evidence is limited to one Android 10 / API 29
+ARM64 device. Security behavior on other Android versions, OEMs, and 16 KB
+page-size devices is not yet covered by the same evidence.
+
+## Reporting a vulnerability
+
+Please **do not disclose suspected vulnerabilities in a public issue, pull
+request, or chat message**.
+
+Until a dedicated security contact is published, report issues through a
+private maintainer channel associated with this repository. If GitHub Security
+Advisories are enabled for the repository, use a private advisory instead of a
+public issue.
+
+A useful report includes:
+
+- a short description of the security impact;
+- the affected version or commit;
+- device model, Android version, ABI, and page-size information when relevant;
+- clear reproduction steps or a minimal proof of concept;
+- logs, screenshots, or traces with credentials and personal data removed;
+- whether the issue is reproducible on a clean installation.
+
+Please allow maintainers reasonable time to investigate and coordinate a fix
+before making vulnerability details public. Do not access, modify, or delete
+other users' data while investigating a report.
+
+## What is in scope
+
+Security reports are welcome for the current application and repository,
+especially issues involving:
+
+- execution of an unverified, tampered, or unintended runtime payload;
+- archive extraction escaping app-private storage or creating unsafe file types;
+- bypassing the fixed loopback or exact-origin WebView boundaries;
+- unintended access to another local web-app port or external host;
+- SSH host-key, credential, or Keystore handling;
+- process supervision, orphan guest processes, stale PID files, or false
+  `RUNNING`/readiness states;
+- secrets exposed in logs, URLs, process arguments, APK resources, or crash
+  messages;
+- Android manifest, foreground-service, backup, or permission configuration
+  that creates an unintended security boundary bypass.
+
+## Important security boundaries
+
+The following are deliberate properties of the current design:
+
+- **PRoot is not a sandbox.** It shares the Android kernel, app UID, and real
+  supplementary groups. A guest runtime must not be treated as hostile-code
+  isolation.
+- **Loopback is not authentication.** The guest SSH path uses credentials and
+  pinned host keys; sensitive future services need their own authentication.
+- **Runtime payloads are curated.** The product does not expose arbitrary URLs,
+  arbitrary rootfs images, or arbitrary shell commands as its default API.
+- **Payload integrity is digest-based.** Current catalog entries use reviewed,
+  compile-time pinned SHA-256 digests. A signed remote catalog service is not
+  implemented yet.
+- **WebView content is origin-restricted.** User web apps are limited to their
+  generated loopback origin. Different loopback ports are blocked, external
+  links leave for the system browser, and no broad JavaScript interface is
+  registered.
+- **The runtime is app-visible.** Linux starts from an Activity foreground
+  event and remains visible through an Android foreground-service notification.
+  There is no boot or silent LAN autostart path.
+
+See the [architecture](docs/architecture.md), [limitations](docs/limitations.md),
+and [architecture decisions](docs/decisions/) for the detailed security model
+and its trade-offs.
+
+## Out of scope or not a security guarantee
+
+- Full Linux compatibility or arbitrary Linux application support.
+- PRoot/guest isolation equivalent to a VM, container, or hostile-code sandbox.
+- Guaranteed 24/7 process survival across Android versions and OEM policies.
+- LAN/public runtime exposure.
+- Google Play approval or compliance.
+- Security claims for devices or Android versions outside the documented test
+  evidence.
+
+## Disclosure and remediation
+
+Maintainers will validate the report, determine affected versions and device
+profiles, and document the remediation in the relevant source, test, or ADR.
+Fixes should include regression coverage where practical and should be
+verified with the repository baseline checks:
+
+```bash
+./gradlew test
+./gradlew lintDebug
+./gradlew assembleDebug
+```
+
+No fixed response or remediation SLA is promised for this experimental version.

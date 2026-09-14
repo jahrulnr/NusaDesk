@@ -32,7 +32,8 @@ infrastructure --------------> application/domain
 
 ## Runtime-specific guardrails
 
-- The foundation is not the Linux runtime. Do not implement PRoot, QEMU, JNI, downloads, or target-app integration under this trigger unless the task explicitly scopes one.
+- Runtime work (process execution bridges, guest services, payload download/verify, process supervision, WebView terminals) may be done only when an accepted task explicitly scopes a runtime slice. This skill does not by itself authorize runtime work, and it never authorizes expanding scope or adding a second runtime/app/profile under this trigger.
+- Keep YAGNI/KISS and the layer rules above even for runtime code: no speculative abstraction, registry, or option matrix without a current boundary.
 - The Android host owns lifecycle; a Linux app must not install `systemd`/launchd services.
 - A port is published only after the child reports a concrete loopback endpoint and health readiness.
 - Store recoverable working state explicitly; never infer `RUNNING` from a PID alone.

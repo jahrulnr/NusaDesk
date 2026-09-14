@@ -48,6 +48,25 @@ public class TerminalMessageCodecTest {
     }
 
     @Test
+    public void encodesNativeTouchScrollCommand() {
+        assertEquals("{\"t\":\"scroll\",\"d\":-24}",
+                TerminalMessageCodec.encode(TerminalMessage.scroll(-24)));
+        assertEquals(-24, TerminalMessage.scroll(-24).getScrollDelta());
+    }
+
+    @Test
+    public void scrollCommandRejectsZeroAndUnboundedDeltas() {
+        for (int delta : new int[] { 0, -2001, 2001 }) {
+            try {
+                TerminalMessage.scroll(delta);
+                fail("expected invalid scroll delta: " + delta);
+            } catch (IllegalArgumentException expected) {
+                // expected
+            }
+        }
+    }
+
+    @Test
     public void encodeEscapesQuotesBackslashesAndControlChars() {
         String json = TerminalMessageCodec.encode(
                 TerminalMessage.text(TerminalMessage.Type.WRITE, "a\"b\\c\t\u0001"));

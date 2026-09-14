@@ -188,6 +188,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             throw new IllegalArgumentException("listener must not be null");
         }
         workExecutor.execute(() -> {
+            // Covers the reclaimUntrackedDaemon path (active == null) too: a
+            // previous session may have started the resolver refresh.
+            launcher.stopResolverRefresh();
             ActiveDaemon daemon = active;
             active = null;
             if (daemon != null) {
@@ -300,6 +303,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             pinGuestHostKey(hostKey, endpoint);
             active = new ActiveDaemon(process, daemon, pidFile, endpoint, listener, monitor);
             supervised = true;
+            // Keep the guest resolver current while the daemon runs: the bound
+            // resolv.conf is rewritten in place when the active network changes.
+            launcher.startResolverRefresh();
             Log.i(TAG, "guest " + daemon.label() + " ready on "
                     + endpoint.getHost() + ":" + endpoint.getPort());
             callbackExecutor.execute(() -> listener.onReadiness(new ReadinessFrame(
@@ -408,6 +414,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
      * down the tracer, then confirm the endpoint no longer answers.
      */
     private void teardown(ActiveDaemon daemon) {
+        // The supervised runtime is going away: stop rewriting the guest
+        // resolver. Idempotent, so safe alongside the stop() call below.
+        launcher.stopResolverRefresh();
         daemon.stopRequested = true;
         Long pid = GuestSshdPidFile.read(daemon.pidFile);
         if (pid != null && signalGuestDaemon(pid, daemon.daemon)) {

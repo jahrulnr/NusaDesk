@@ -59,6 +59,12 @@ public final class TerminalMessageCodec {
                 return "{\"t\":\"fit\"}";
             case FOCUS:
                 return "{\"t\":\"focus\"}";
+            case SCROLL:
+                int delta = message.getScrollDelta();
+                if (delta == 0 || delta < -2000 || delta > 2000) {
+                    throw new IllegalArgumentException("invalid scroll delta");
+                }
+                return "{\"t\":\"scroll\",\"d\":" + delta + "}";
             // Page-originated types are not encoded by the host; reject to catch misuse.
             case READY:
             case INPUT:

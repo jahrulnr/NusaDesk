@@ -94,6 +94,14 @@
     /* On OS X this is required in order for the scroll bar to appear fully opaque */
     background-color: #000;
     overflow-y: scroll;
+    /* The adapter owns one-finger vertical drags and updates scrollTop itself.
+       Disabling browser gesture arbitration is necessary on Android WebView;
+       xterm.js 6 otherwise converts the drag to a pointer tap and never emits
+       a usable viewport scroll. Taps still pass through because the adapter
+       waits for its movement threshold. */
+    touch-action: none;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
     cursor: default;
     position: absolute;
     right: 0;
