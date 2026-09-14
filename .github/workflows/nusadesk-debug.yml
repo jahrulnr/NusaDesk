@@ -2,7 +2,9 @@ name: NusaDesk debug APK
 
 on:
   push:
-    branches-ignore: ["master"]
+    # Validate every direct push and merge commit landing on master. Feature
+    # branches are covered by pull_request runs, saving free-tier minutes.
+    branches: ["master"]
   pull_request:
   workflow_dispatch:
 
@@ -35,7 +37,11 @@ jobs:
           node-version: "20"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          # v3/v4 default to installing the removed `tools` package. The
+          # project installs only the pinned SDK components below.
+          packages: ''
 
       - name: Install Android build dependencies
         run: |

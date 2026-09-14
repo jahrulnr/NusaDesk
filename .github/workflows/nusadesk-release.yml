@@ -39,7 +39,11 @@ jobs:
           node-version: "20"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          # v3/v4 default to installing the removed `tools` package. The
+          # project installs only the pinned SDK components below.
+          packages: ''
 
       - name: Install Android build dependencies
         run: |
@@ -78,9 +82,11 @@ jobs:
           fi
 
           tag="v$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "release_asset=NusaDesk-$tag-debug.apk" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "release_asset=NusaDesk-$tag-debug.apk"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Refuse an existing release tag
         shell: bash
