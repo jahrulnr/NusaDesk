@@ -4,9 +4,12 @@
 
 This repository is a Java Android Linux-desktop-on-Android host. The long-term product idea is realized as:
 
-```text
-Android host -> verified downloaded runtime/app -> supervised process
-             -> loopback HTTP/WebSocket/SSE port -> Android WebView
+```mermaid
+flowchart LR
+    AndroidHost["Android host"] --> Payload["Verified downloaded runtime/app"]
+    Payload --> Supervisor["Supervised process"]
+    Supervisor --> Loopback["Loopback HTTP/WebSocket/SSE port"]
+    Loopback --> WebView["Android WebView"]
 ```
 
 Implemented and device-verified on Android 10/API 29 arm64: the curated Ubuntu Base ARM64 download/verify/extract/activate proof (ADR-0006), the packaged standalone PRoot execution bridge (ADR-0004, ADR-0008), the guest-native OpenSSH add-on on the fixed loopback endpoint `127.0.0.1:22022` (ADR-0009, ADR-0010, ADR-0013), the runtime process supervisor under a user-visible foreground service, and the xterm.js WebView terminal. Implemented and UX-verified on an x86_64 emulator (API 35): the launcher-first desktop shell, user-local web apps, and the single serialized setup pipeline (ADR-0017). The emulator's ARM translation is **not** runtime evidence; other API levels, 16 KB-page devices, and OEMs remain open.
@@ -28,9 +31,12 @@ Still out of scope unless a later task explicitly scopes one of these pieces: a 
 
 The source tree uses these layers:
 
-```text
-presentation  -> application  -> domain
-infrastructure --------------> application/domain
+```mermaid
+flowchart LR
+    Presentation["presentation"] --> Application["application"]
+    Application --> Domain["domain"]
+    Infrastructure["infrastructure"] --> Application
+    Infrastructure --> Domain
 ```
 
 - `domain/`: pure Java value objects, enums, invariants, and deterministic policies. No Android imports, no file/network/process I/O, no Gradle APIs.

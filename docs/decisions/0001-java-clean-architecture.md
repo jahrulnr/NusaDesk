@@ -12,9 +12,12 @@ The product needs Android lifecycle, storage, WebView, download, process, and ev
 
 Use a single Java Android application module with four small boundaries:
 
-```text
-presentation -> application -> domain
-infrastructure -> application/domain
+```mermaid
+flowchart LR
+    Presentation["presentation"] --> Application["application"]
+    Application --> Domain["domain"]
+    Infrastructure["infrastructure"] --> Application
+    Infrastructure --> Domain
 ```
 
 Use pure Java domain value objects and JUnit tests. Keep Android framework access in presentation/infrastructure. Add an interface only where an actual boundary or test seam exists.

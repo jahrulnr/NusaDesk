@@ -1,184 +1,136 @@
-# NusaDesk
+<p align="center">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="NusaDesk logo" width="180">
+</p>
 
-A Linux desktop that lives on an Android device. The launcher is the home
-surface; the terminal is one Linux app among others, and the desktop's web apps
-are the ones the user registers. Linux itself is background infrastructure: it
-starts when the app comes to the foreground and keeps running behind a
-user-visible foreground service.
+<h1 align="center">NusaDesk</h1>
 
-> **Status:** desktop shell + curated install + guest-native SSH runtime path +
-> user-local web-app launcher. Ubuntu Base rootfs
-> download/verification/extraction/activation is implemented and device-verified.
-> The runtime workload starts the guest's own OpenSSH daemon under PRoot on the
-> fixed loopback endpoint `127.0.0.1:22022`, verifies an SSH banner as readiness,
-> and connects the Android SSH client with host-key pinning and a Keystore-backed
-> credential (ADR-0009, ADR-0013). The daemon arrives as a curated,
-> digest-pinned OpenSSH add-on payload (ADR-0010) that installs into a private
-> overlay and is bound into the guest.
->
-> The presentation layer is launcher-first (ADR-0012, ADR-0014): the launcher is
-> the home destination, Linux starts from an Activity foreground event
-> (`RuntimeHostService.ensureRunning`) and is stopped only from the platform's own
-> notification action, the terminal is local-only through
-> `LocalSshSessionFactory`, and a user can add, edit, and remove web apps by name,
-> optional image, and guest port. UX for the launcher, the add/edit form, search,
-> the unreachable/loaded web-app states, the terminal's waiting state, the system
-> screen, landscape, tablet, and large-font states is verified on an x86_64
-> emulator (API 35, 720×1280@320).
->
-> **Evidence boundary.** The emulator runs PRoot through ARM translation, so it
-> is **not** evidence for the runtime contract — guest SSH, live shells, and
-> background/foreground lifecycle remain exactly as strong as the last arm64
-> device run and no stronger. Other API levels, 16 KB-page devices, and OEMs are
-> still open. No Google Play compliance claim is made.
+<p align="center">
+  <strong>Your Linux workspace, at home on Android.</strong><br>
+  A calm, launcher-first desktop for a terminal and the web apps you choose.
+</p>
 
-## Baseline
+<p align="center">
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/roadmap.md">Roadmap</a> ·
+  <a href="docs/limitations.md">Limitations</a> ·
+  <a href="docs/test-plan.md">Test plan</a>
+</p>
 
-- Java source code only.
-- Android `minSdk 29` (Android 10+).
-- `compileSdk 37`, `targetSdk 37`.
-- Android Gradle Plugin 9.4.0.
-- Gradle 9.6.0 via the Gradle Wrapper.
-- JDK 17 for the build; Java 11 source/target compatibility.
-- No Kotlin, Compose, or JNI source; the only native artifact is the packaged standalone PRoot execution bridge (`libproot.so` + `libproot-loader.so` in `jniLibs/arm64-v8a/`), reproducibly built and hash-pinned by `scripts/build-proot-arm64.sh` (ADR-0004, ADR-0008). Apache Commons Compress is used only for safe tar.gz inspection/extraction.
+> **Project status:** NusaDesk is an experimental product foundation. The core
+> runtime and terminal path have been verified on one Android 10 / API 29 ARM64
+> device. The launcher and web-app experience has been UX-verified on an API 35
+> emulator. Broader device, Android-version, OEM, and 16 KB page-size coverage
+> is still open.
+
+## Overview
+
+NusaDesk brings a focused Linux workspace to Android without trying to imitate a
+full desktop operating system.
+
+Open the app and you arrive at a simple launcher. From there, you can open a
+local Linux terminal or launch the web apps you register yourself. Linux runs
+quietly in the background, while NusaDesk keeps the user-facing experience
+clear: setup when needed, a useful workspace when ready, and honest status when
+something needs attention.
+
+NusaDesk is intentionally curated rather than universal. It is built around a
+small, tested runtime foundation—not a promise to run every Linux application.
 
 ## Quick start
 
-Using the Makefile:
+### Check the project locally
 
 ```bash
-make test       # Run the unit-test suite
-make build      # Run lint and assemble the debug APK
-make check      # Run tests, lint, and assemble
-make push       # Build first, then install to every online adb device
+make check
 ```
 
-`make push` uses `adb devices`, filters to targets in the `device` state, and
-installs with `adb install -r` so each device's app data and runtime payload are
-preserved. Override the tools or APK path when needed, for example:
+This runs the unit tests, Android lint, and a debug build.
+
+### Build the debug APK
 
 ```bash
-make push ADB=/path/to/adb
-make build GRADLEW=./gradlew
+make build
 ```
 
-The equivalent Gradle commands are:
+The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+### Install on a connected Android device or emulator
 
 ```bash
-./gradlew test
-./gradlew lintDebug
-./gradlew assembleDebug
+make push
 ```
 
-The build requires an Android SDK with platform 37 and Build Tools 36.0.0. Set `ANDROID_HOME` or `ANDROID_SDK_ROOT` if the SDK is not installed in the IDE-managed default location.
-
-Install the debug APK on a connected device/emulator only after the scaffold builds:
+`make push` builds first and installs the debug APK on every connected `adb`
+target in the `device` state. To install manually instead:
 
 ```bash
 ./gradlew installDebug
 ```
 
-## Architecture
+A local Android SDK with the project’s required platform and build tools is
+needed. See the [technical documentation](docs/) for the full environment and
+runtime requirements.
 
-```text
-presentation  -> application  -> domain
-      \             ^
-       \            |
-        infrastructure implements application ports
-```
+## Features
 
-- `domain/` contains Android-free state/value objects, including the web-app
-  definition, its id, and the guest port policy that reserves `22022`.
-- `application/` contains ports/contracts for runtime, state, port handling, and
-  the web-app registry that validates and persists launcher entries.
-- `infrastructure/` contains the app-private state/download/extraction adapter,
-  the PRoot execution bridge, the runtime host service, the SSH client with
-  host-key pinning, and the loopback WebView boundary.
-- `presentation/` contains the shell. `desktop/` holds the launcher
-  (`DesktopHomeView`), its model (`LauncherModel`/`LauncherEntry`), the readiness
-  pill (`LauncherStatus`), the responsive grid (`LauncherGridView`), the app tiles,
-  the app surface host with its compact task bar, and the system screen;
-  `terminal/` holds the local-only terminal surface and its accessory key row;
-  `webapp/` holds the add/edit form (`WebAppFormView`) and the web-app surface
-  (`WebAppSurfaceView`). `MainActivity` routes between them, owns the install
-  coordinator, the web-app registry, and the readiness probe executor, and wires
-  callbacks; it does not run runtime work or make security decisions locally.
+### A launcher that feels like home
 
-Linux has no lifecycle control anywhere in the UI. `MainActivity.onStart()` asks
-the idempotent `RuntimeHostService.ensureRunning` to bring Linux up once the
-curated system and its terminal component are installed, and the launcher states
-readiness with one passive pill (`LauncherStatus`). The foreground-service
-notification keeps the user-visible `Stop` action Android requires.
+- A clean, launcher-first home surface.
+- Search across the apps available in the workspace.
+- Curated system surfaces alongside your own web apps.
+- Responsive layouts for phones, landscape, tablets, and larger font sizes.
 
-The terminal cannot dial anything but the Linux this app started:
-`LocalSshSessionFactory` fixes the host, port, credential, and trust policy, and
-takes only the initial PTY size.
+### A local Linux terminal
 
-A user web app is a launcher entry with a generated endpoint: the form accepts a
-name, an optional image, and a guest port, and the tile opens exactly
-`http://127.0.0.1:<port>/` — after a bounded reachability observation, through
-`WebAppWebViewBoundary` (exact-origin policy, external links to the system
-browser, no JavaScript interface).
+- A real guest shell presented through a mobile-friendly terminal.
+- Built-in accessory keys for touch devices.
+- Session continuity across navigation and Activity recreation.
+- Reconnect and failure states that explain what is happening instead of
+  pretending everything is running.
 
-See [`AGENTS.md`](AGENTS.md), [`docs/architecture.md`](docs/architecture.md),
-[`docs/roadmap.md`](docs/roadmap.md), and [`docs/decisions/`](docs/decisions/)
-(notably [ADR-0014](docs/decisions/0014-user-local-web-app-launcher.md) for the
-launcher and web-app slice, [ADR-0013](docs/decisions/0013-fixed-local-ssh-background.md)
-for the fixed local endpoint and autostart, and
-[ADR-0009](docs/decisions/0009-guest-native-ssh-daemon.md) for the guest daemon).
+### Your web apps, your workspace
 
-## Repository skills
+- Add, edit, and remove web apps by name, icon, and local guest port.
+- Open each app from its own launcher tile.
+- Reachability checks before loading the app surface.
+- Clear unavailable, failed, and loaded states.
 
-The local agent playbooks live under [`.agents/skills/`](.agents/skills/). They are intentionally narrow and must not be treated as permission to implement the complete runtime:
+### Quiet background runtime
 
-- `android-clean-architecture`
-- `android-webview-hosting`
-- `runtime-process-and-port-handling`
-- `runtime-download-and-integrity`
-- `android-compatibility-testing`
+- Linux starts when the app is opened and continues behind a visible Android
+  notification.
+- One clear Stop action in the system notification.
+- Curated setup flow for the Linux foundation and terminal component.
+- No remote-host SSH UI and no LAN-sharing mode in the current product.
 
-## Scope of this phase
+## Documentation
 
-Included:
+The README is intentionally product-focused. Technical details live in the
+documentation set:
 
-- Launcher home: search, the dashed `Add app` action, the curated Linux surfaces,
-  and the user's registered web apps in one dense grid (ADR-0014).
-- Add/edit/remove web app: required name, optional image through the system
-  document picker with a persisted read permission, required guest port with
-  field-level validation, and app-private persistence.
-- Web-app surface: asynchronous reachability observation before the WebView
-  loads the exact generated loopback origin, with explicit probing, unreachable,
-  failed, and loaded states.
-- Terminal as a maximized app surface that is local-only, with an honest waiting
-  or failure prompt and a mobile accessory key row.
-- Linux as background infrastructure: autostart from an Activity foreground
-  event, a passive launcher readiness pill, and the platform notification as the
-  only stop path.
-- Linux system screen: install state, session and terminal-component status,
-  registered web-app count, loopback endpoint, runtime profile, and the product
-  contract — with no lifecycle control.
-- Curated Ubuntu Base ARM64 on-demand download, digest verification, safe extraction, and atomic activation proof.
-- Clean Architecture package boundaries.
-- Minimal working-state and port contracts.
-- Documentation of research findings, constraints, risks, and planned spikes.
-- Unit tests for pure domain and presentation logic.
+- [Architecture](docs/architecture.md) — runtime boundaries, layers, and data flow.
+- [Limitations](docs/limitations.md) — current constraints, unsupported scenarios,
+  and evidence boundaries.
+- [Roadmap](docs/roadmap.md) — planned product slices and compatibility gates.
+- [Test plan](docs/test-plan.md) — automated, emulator, and physical-device
+  verification.
+- [Architecture decisions](docs/decisions/) — the reasoning behind major
+  product and runtime choices.
+- [Research notes](docs/research-findings.md) — source material and technical
+  findings behind the foundation.
+- [Contributor and agent guidance](AGENTS.md) — repository rules and safety
+  constraints.
 
-Out of scope:
+## Honest boundaries
 
-- A curated desktop web-app profile: the user's own registered web apps are the
-  desktop, and the product ships no built-in desktop or file browser.
-- Arbitrary image/package/app installation.
-- An external SSH client: no remote host, port, profile, or credential UI exists.
-- LAN/public binding.
-- Target-specific app integration.
-- A second Linux session: the product owns exactly one at a time.
+NusaDesk does not currently claim full Linux compatibility, guaranteed 24/7
+runtime survival, support for every Android device, LAN exposure, arbitrary
+package installation, or Google Play approval. See the [limitations](docs/limitations.md)
+and [test plan](docs/test-plan.md) before treating the current build as a
+production release.
 
-## License and distribution caveats
+## License and distribution
 
-- PRoot (the packaged execution bridge) is GPL-2.0-or-later. Packaging/distributing it requires GPLv2+ source/notice obligations and a combined-work legal review before distribution. No GPL-cleanliness claim is made.
-- Dropbear (permissive/MIT-style) and OpenSSH (BSD) are includable in a curated rootfs, but license/notice/attribution obligations apply.
-- No Google Play compliance or approval is claimed. Initial distribution is sideload/F-Droid or another controlled channel; a Play submission needs a separate policy review.
-
-## License
-
-Not selected yet.
+The application license and final distribution model are still under review.
+Third-party runtime components carry their own license and notice obligations;
+see the [technical documentation](docs/) before redistribution.

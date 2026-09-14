@@ -28,14 +28,13 @@ emulator is **not** runtime evidence.
 
 The product shape is:
 
-```text
-Android host
-  -> verified curated runtime payload (rootfs + guest SSH server)
-  -> packaged PRoot execution bridge
-  -> Android-owned lifecycle and process supervision (foreground service)
-  -> guest SSH server on the fixed loopback endpoint + readiness frame
-  -> app surfaces: local-only terminal, Linux system screen,
-     and user-registered web apps on http://127.0.0.1:<guest-port>/
+```mermaid
+flowchart TD
+    AndroidHost["Android host"] --> Payload["Verified curated runtime payload<br/>rootfs + guest SSH server"]
+    Payload --> PRoot["Packaged PRoot execution bridge"]
+    PRoot --> Supervisor["Android-owned lifecycle and process supervision<br/>foreground service"]
+    Supervisor --> GuestSsh["Guest SSH server<br/>127.0.0.1:22022 + readiness frame"]
+    GuestSsh --> Surfaces["App surfaces<br/>local terminal · Linux system · user web apps"]
 ```
 
 ## Baseline decisions
@@ -56,9 +55,12 @@ The AGP 9.4 baseline requires Gradle 9.6 and JDK 17; the project pins those valu
 
 ## Layers
 
-```text
-presentation  -> application  -> domain
-infrastructure --------------> application/domain
+```mermaid
+flowchart LR
+    Presentation["presentation"] --> Application["application"]
+    Application --> Domain["domain"]
+    Infrastructure["infrastructure"] --> Application
+    Infrastructure --> Domain
 ```
 
 ### `domain/`
@@ -163,13 +165,13 @@ Rules this layer enforces:
 
 The runtime host owns one explicit app session at a time:
 
-```text
-RuntimeHostService.ensureRunning(context)   // idempotent; from a foreground event
-  -> controller.ensureRunning(appId, version, sessionId)
-  -> PRoot + guest OpenSSH daemon on the fixed loopback endpoint (ADR-0013)
-  -> awaitReady()                            // health check, not merely a PID
-  -> publish HostRuntimeStatus on the status bus
-  -> stop()                                  // notification action, or service teardown
+```mermaid
+flowchart TD
+    Activity["RuntimeHostService.ensureRunning(context)<br/>idempotent foreground event"] --> Controller["controller.ensureRunning(appId, version, sessionId)"]
+    Controller --> Daemon["PRoot + guest OpenSSH daemon<br/>fixed loopback endpoint"]
+    Daemon --> Ready["awaitReady()<br/>health check, not merely PID"]
+    Ready --> Publish["publish HostRuntimeStatus<br/>on status bus"]
+    Publish --> Stop["stop()<br/>notification action or service teardown"]
 ```
 
 The guest app must own its listener and report a concrete endpoint after binding.
@@ -191,18 +193,11 @@ Readiness must include:
 The SSH transport slice (ADR-0007) composes four layers. All four are
 implemented and device-verified on Android 10/API 29 arm64.
 
-```text
-1. Execution bridge   packaged standalone PRoot binary in jniLibs/<abi>/
-                      invokes the curated ARM64 rootfs out-of-band (ADR-0004)
-2. Guest SSH server   curated OpenSSH add-on, explicitly added to the runtime
-                      (ADR-0010) — NOT supplied by Ubuntu Base
-                      binds 127.0.0.1:22022; host keys generated at first start
-                      in app-private storage and pinned before readiness
-3. Terminal surface   xterm.js bundle pinned locally (no remote CDN)
-                      loaded in WebView only at its own packaged origin
-                      connects only through LocalSshSessionFactory (ADR-0013)
-4. Supervision        Android-owned foreground service, user-visible Stop
-                      no Linux systemd; FGS type `specialUse`
+```mermaid
+flowchart TD
+    Bridge["Execution bridge<br/>packaged standalone PRoot in jniLibs/<abi>"] --> Guest["Guest SSH server<br/>curated OpenSSH add-on on 127.0.0.1:22022"]
+    Guest --> Terminal["Terminal surface<br/>local xterm.js bundle in owned WebView origin"]
+    Terminal --> Supervision["Supervision<br/>Android foreground service with user-visible Stop"]
 ```
 
 ### Guest SSH server is a required build dependency
@@ -255,16 +250,16 @@ reviewed capability, not the default.
 
 A user web app is a launcher entry, not a runtime the host owns.
 
-```text
-Add app form            name + optional image token + guest port
-  -> WebAppRegistry     validates through the domain, mints the id, persists
-  -> launcher tile      one entry in the grid, no probe at render time
-  -> favicon fallback   http://127.0.0.1:<port>/favicon.ico      [background]
-                        only when the user picked no image, one bounded
-                        request per app, silent on every failure
-  -> open               WebAppReadinessObserver.observe(port)   [background]
-  -> reachable          WebAppWebViewBoundary loads http://127.0.0.1:<port>/
-  -> unreachable        explicit "not running" state with one retry action
+```mermaid
+flowchart TD
+    Form["Add app form<br/>name + optional image token + guest port"] --> Registry["WebAppRegistry<br/>validate, mint id, persist"]
+    Registry --> Tile["Launcher tile<br/>one entry, no render-time probe"]
+    Tile --> Favicon["Favicon fallback<br/>bounded background request when no user image"]
+    Tile --> Open["Open app"]
+    Open --> Observe["WebAppReadinessObserver.observe(port)<br/>background probe"]
+    Observe --> Reachable["Reachable"]
+    Reachable --> WebView["WebAppWebViewBoundary<br/>load exact loopback origin"]
+    Observe --> Unreachable["Unreachable<br/>explicit state + retry"]
 ```
 
 - The endpoint is generated from the validated port and is never user input, so

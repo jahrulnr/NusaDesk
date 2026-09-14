@@ -37,12 +37,12 @@ The implementation does not execute any extracted binary. This is intentional: A
 
 The UI now supports the real install path: [unverified]
 
-```text
-NOT_INSTALLED
-  -> DOWNLOADING
-  -> VERIFYING
-  -> EXTRACTING
-  -> READY
+```mermaid
+flowchart TD
+    NotInstalled["NOT_INSTALLED"] --> Downloading["DOWNLOADING"]
+    Downloading --> Verifying["VERIFYING"]
+    Verifying --> Extracting["EXTRACTING"]
+    Extracting --> Ready["READY"]
 ```
 
 Failures persist as `FAILED` with an actionable detail and `Retry installation`. If the Activity finds an interrupted download/verification/extraction state on restart, it reconciles that state to retryable `FAILED` rather than displaying false success. [unverified]
@@ -57,13 +57,13 @@ xterm.js is a browser terminal emulator, not an SSH client or shell. Its documen
 
 The recommended first target architecture is therefore:
 
-```text
-Android WebView
-  xterm.js + fit/attach or a small typed WebSocket client
-        <exact owned loopback origin>
-  WebSocket terminal bridge
-        server-side SSH client + PTY
-  remote SSH server
+```mermaid
+flowchart TD
+    WebView["Android WebView"] --> Terminal["xterm.js + fit/attach<br/>or typed WebSocket client"]
+    Terminal --> Origin["Exact owned loopback origin"]
+    Origin --> Bridge["WebSocket terminal bridge"]
+    Bridge --> SshClient["Server-side SSH client + PTY"]
+    SshClient --> Remote["Remote SSH server"]
 ```
 
 This avoids implementing SSH cryptography and host-key policy in browser JavaScript. WebSSH2 is a community reference for a server-side SSH2 client proxying a WebSocket/Socket.IO browser connection, with multiple SSH authentication methods and host-key verification features.[4] ttyd is a community reference for a PTY/WebSocket relay and exposes relevant controls such as origin checking, authentication, TLS, client limits, and writable/read-only modes.[5] `node-pty` documents the PTY primitive used by many xterm.js integrations and warns that spawned processes inherit the server's permissions.[6] [unverified]
