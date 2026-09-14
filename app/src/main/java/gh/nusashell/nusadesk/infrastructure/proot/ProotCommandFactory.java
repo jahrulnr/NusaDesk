@@ -41,6 +41,17 @@ public final class ProotCommandFactory {
     public static final String OPT_KILL_ON_EXIT = "--kill-on-exit";
     /** PRoot {@code -0}: fake uid/gid 0 inside the guest for root-requiring daemons. */
     public static final String OPT_FAKE_ROOT = "-0";
+    /**
+     * PRoot {@code --link2symlink}: emulate hard links with symlinks.
+     *
+     * <p>Required on Android: SELinux denies hard-link creation for an app
+     * ({@code untrusted_app}), so the guest cannot hard-link at all —
+     * device-verified {@code ln} failure with {@code Permission denied}. Every
+     * {@code dpkg} install/upgrade creates a backup hard link, which is why
+     * {@code apt upgrade} failed with "unable to make backup link". PRoot's own
+     * help documents the flag as exactly this workaround.</p>
+     */
+    public static final String OPT_LINK2SYMLINK = "--link2symlink";
 
     /** Default fixed system bind mounts: {@code /proc} and {@code /dev}, required for guest operation. */
     public static final List<ProotBindMount> DEFAULT_SYSTEM_BINDS;
@@ -69,6 +80,9 @@ public final class ProotCommandFactory {
         argv.add(spec.getRootfs());
         if (spec.isFakeRoot()) {
             argv.add(OPT_FAKE_ROOT);
+        }
+        if (spec.isLink2Symlink()) {
+            argv.add(OPT_LINK2SYMLINK);
         }
         for (ProotBindMount bind : spec.getBindMounts()) {
             argv.add(OPT_BIND);

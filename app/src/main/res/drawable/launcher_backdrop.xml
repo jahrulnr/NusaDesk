@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launcher backdrop: a subtle two-stop vertical wash plus a soft accent glow
-     near the bottom, so the launcher reads as a home screen instead of a flat
-     list. Both stops resolve per theme, and the glow is a low-alpha accent, so
-     text contrast is unaffected in either theme. -->
+<!-- Launcher backdrop: a subtle two-stop vertical wash. Both stops resolve per
+     theme, so text contrast is unaffected in either theme. The interlocking line
+     texture is drawn on top of this by LinePatternDrawable, which is why there is
+     no glow or decoration baked into this drawable. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
 
     <item>
@@ -12,23 +12,6 @@
                 android:endColor="@color/launcher_backdrop_bottom"
                 android:startColor="@color/launcher_backdrop_top"
                 android:type="linear" />
-        </shape>
-    </item>
-
-    <item
-        android:bottom="0dp"
-        android:gravity="bottom"
-        android:height="260dp"
-        android:left="0dp"
-        android:right="0dp"
-        android:top="0dp">
-        <shape android:shape="oval">
-            <gradient
-                android:centerColor="@color/launcher_backdrop_glow"
-                android:endColor="@android:color/transparent"
-                android:gradientRadius="180dp"
-                android:startColor="@color/launcher_backdrop_glow"
-                android:type="radial" />
         </shape>
     </item>
 </layer-list>

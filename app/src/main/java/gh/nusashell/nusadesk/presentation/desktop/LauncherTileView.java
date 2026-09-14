@@ -21,7 +21,7 @@ import gh.nusashell.nusadesk.R;
  * words, never implied by colour:</p>
  *
  * <ul>
- *   <li>the {@code Add app} action keeps a dashed outline and stays enabled even
+ *   <li>the {@code Add} action stays enabled even
  *       before Linux is installed, because registering a launcher entry needs no
  *       runtime;</li>
  *   <li>a Linux surface or a user web app is enabled only once the curated
@@ -97,8 +97,10 @@ public final class LauncherTileView extends LinearLayout {
         String label = labelOf(entry);
         boolean openable = entry.getKind() == LauncherEntry.Kind.ADD_APP || unlocked;
 
-        setBackgroundResource(entry.getKind() == LauncherEntry.Kind.ADD_APP
-                ? R.drawable.tile_add_surface : R.drawable.tile_surface);
+        // Every tile shares one borderless surface. The "Add" action used to
+        // carry a dashed outline; the product now keeps the grid uniform and
+        // lets the tile's own glyph and label say what it does.
+        setBackgroundResource(R.drawable.tile_surface);
         labelView.setText(label);
         renderGlyph(entry, label, favicon);
         setEnabled(openable);

@@ -31,14 +31,12 @@
     <color name="terminal_ink">#F2F7F6</color>
     <color name="terminal_ink_secondary">#B4C4C4</color>
     <color name="terminal_chrome_surface">#172428</color>
-    <color name="tile_surface">#FFFFFF</color>
     <color name="tile_surface_pressed">#EDF3F3</color>
-    <color name="tile_add_border">#4D0F6269</color>
     <color name="task_bar_surface">#FFFFFF</color>
 
-    <!-- Launcher backdrop. A subtle wash plus a low-alpha accent glow: enough to
-         read as a home screen, never enough to compete with tile labels. -->
+    <!-- Launcher backdrop. A subtle two-stop wash; the interlocking Truchet
+         line texture is drawn over it by LinePatternDrawable. -->
     <color name="launcher_backdrop_top">#F7F9FA</color>
     <color name="launcher_backdrop_bottom">#EDF4F5</color>
-    <color name="launcher_backdrop_glow">#33DDF1EF</color>
+    <color name="launcher_pattern_line">#100F191B</color>
 </resources>

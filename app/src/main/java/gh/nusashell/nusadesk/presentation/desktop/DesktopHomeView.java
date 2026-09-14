@@ -2,7 +2,9 @@ package gh.nusashell.nusadesk.presentation.desktop;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.AttributeSet;
@@ -24,6 +26,7 @@ import gh.nusashell.nusadesk.presentation.ScreenView;
 import gh.nusashell.nusadesk.presentation.SessionStatusAware;
 import gh.nusashell.nusadesk.presentation.widget.InstallPhaseSnapshot;
 import gh.nusashell.nusadesk.presentation.widget.InstallerWizardView;
+import gh.nusashell.nusadesk.presentation.widget.LinePatternDrawable;
 import gh.nusashell.nusadesk.presentation.widget.SetupAction;
 import gh.nusashell.nusadesk.presentation.widget.SetupPhasePolicy;
 
@@ -98,7 +101,12 @@ public final class DesktopHomeView extends ScrollView
     }
 
     private void init() {
-        setBackgroundResource(R.drawable.launcher_backdrop);
+        // Backdrop plus the interlocking line texture drawn in code: the
+        // gradient reads as a home screen, the pattern gives it depth without an
+        // image asset and repeats infinitely at any size or density.
+        setBackground(new LayerDrawable(new Drawable[]{
+                getContext().getDrawable(R.drawable.launcher_backdrop),
+                new LinePatternDrawable(getContext(), R.color.launcher_pattern_line)}));
         LayoutInflater.from(getContext()).inflate(R.layout.widget_desktop_home, this, true);
         setupRuntimeCard = findViewById(R.id.setup_runtime_card);
         wizard = findViewById(R.id.installer_wizard);

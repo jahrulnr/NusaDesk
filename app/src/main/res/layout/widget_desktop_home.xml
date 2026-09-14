@@ -5,7 +5,7 @@
 
      Order follows the launcher reference: search at the top, then the app
      header with its count and the passive Linux readiness pill, then the grid —
-     whose first tile is the dashed "Add app" action. Setup steps appear only
+     whose first tile is the "Add" action. Setup steps appear only
      while they are actually missing, and there is no session control anywhere. -->
 <merge xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -149,7 +149,7 @@
             android:textColor="@color/ink_muted"
             android:textSize="13sp" />
 
-        <!-- The app grid: Add app, the Linux surfaces, then the user's web apps. -->
+        <!-- The app grid: Add, the Linux surfaces, then the user's web apps. -->
         <gh.nusashell.nusadesk.presentation.desktop.LauncherGridView
             android:id="@+id/apps_grid"
             android:layout_width="match_parent"

@@ -23,7 +23,7 @@ public final class LauncherEntry {
 
     /** What an entry is, which is what decides how a tile renders and opens. */
     public enum Kind {
-        /** The dashed "Add app" action tile. Always enabled. */
+        /** The "Add" action tile that opens the new-app form. Always enabled. */
         ADD_APP,
         /** A Linux surface the app ships itself. */
         CURATED,
@@ -35,7 +35,7 @@ public final class LauncherEntry {
     public static final String ADD_APP_ID = "add-app";
 
     private static final LauncherEntry ADD_APP = new LauncherEntry(
-            Kind.ADD_APP, ADD_APP_ID, R.string.webapp_add_title, null,
+            Kind.ADD_APP, ADD_APP_ID, R.string.launcher_add_label, null,
             R.string.webapp_add_glyph, null, R.string.webapp_add_desc, null, null);
 
     private final Kind kind;

@@ -34,21 +34,46 @@ public class ProotCommandFactoryTest {
     @Test
     public void buildArgvProducesExpectedOrder() {
         List<String> argv = new ProotCommandFactory().buildArgv(probeSpec());
-        // [proot, -r, rootfs, -b, /proc:/proc, -b, /dev:/dev, -w, /root, --kill-on-exit, --, /bin/sh, -c, uname -a]
+        // [proot, -r, rootfs, --link2symlink, -b, /proc:/proc, -b, /dev:/dev,
+        //  -w, /root, --kill-on-exit, /bin/sh, -c, uname -a]
         assertEquals(PROOT, argv.get(0));
         assertEquals(ProotCommandFactory.OPT_ROOTFS, argv.get(1));
         assertEquals(ROOTFS, argv.get(2));
-        assertEquals(ProotCommandFactory.OPT_BIND, argv.get(3));
-        assertEquals("/proc:/proc", argv.get(4));
-        assertEquals(ProotCommandFactory.OPT_BIND, argv.get(5));
-        assertEquals("/dev:/dev", argv.get(6));
-        assertEquals(ProotCommandFactory.OPT_WORKDIR, argv.get(7));
-        assertEquals("/root", argv.get(8));
-        assertEquals(ProotCommandFactory.OPT_KILL_ON_EXIT, argv.get(9));
-        assertEquals("/bin/sh", argv.get(10));
-        assertEquals("-c", argv.get(11));
-        assertEquals("uname -a", argv.get(12));
-        assertEquals(13, argv.size());
+        assertEquals(ProotCommandFactory.OPT_LINK2SYMLINK, argv.get(3));
+        assertEquals(ProotCommandFactory.OPT_BIND, argv.get(4));
+        assertEquals("/proc:/proc", argv.get(5));
+        assertEquals(ProotCommandFactory.OPT_BIND, argv.get(6));
+        assertEquals("/dev:/dev", argv.get(7));
+        assertEquals(ProotCommandFactory.OPT_WORKDIR, argv.get(8));
+        assertEquals("/root", argv.get(9));
+        assertEquals(ProotCommandFactory.OPT_KILL_ON_EXIT, argv.get(10));
+        assertEquals("/bin/sh", argv.get(11));
+        assertEquals("-c", argv.get(12));
+        assertEquals("uname -a", argv.get(13));
+        assertEquals(14, argv.size());
+    }
+
+    @Test
+    public void link2symlinkIsEmittedByDefault() {
+        // Android SELinux denies hard links to the app, so every guest launch
+        // needs PRoot's link emulation or dpkg-based installs fail.
+        List<String> argv = new ProotCommandFactory().buildArgv(probeSpec());
+        assertTrue(argv.contains(ProotCommandFactory.OPT_LINK2SYMLINK));
+        assertTrue(probeSpec().isLink2Symlink());
+    }
+
+    @Test
+    public void link2symlinkCanBeDisabledExplicitly() {
+        ProotLaunchSpec spec = ProotLaunchSpec.builder()
+                .prootBinary(PROOT)
+                .rootfs(ROOTFS)
+                .guestArgv(ProotLauncher.GUEST_PROBE_ARGV)
+                .bindMounts(ProotCommandFactory.DEFAULT_SYSTEM_BINDS)
+                .hostWorkingDir("/data/data/gh.nusashell.nusadesk/files")
+                .link2symlink(false)
+                .build();
+        List<String> argv = new ProotCommandFactory().buildArgv(spec);
+        assertFalse(argv.contains(ProotCommandFactory.OPT_LINK2SYMLINK));
     }
 
     @Test

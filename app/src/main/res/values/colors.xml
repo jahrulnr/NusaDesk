@@ -32,16 +32,15 @@
     <color name="terminal_ink">#F2F7F6</color>
     <color name="terminal_ink_secondary">#B4C4C4</color>
     <color name="terminal_chrome_surface">#172428</color>
-    <color name="tile_surface">#172428</color>
     <color name="tile_surface_pressed">#203337</color>
-    <color name="tile_add_border">#4D83DDD6</color>
     <color name="task_bar_surface">#172428</color>
 
-    <!-- Launcher backdrop. A subtle wash plus a low-alpha accent glow: enough to
-         read as a home screen, never enough to compete with tile labels. -->
+    <!-- Launcher backdrop. A subtle two-stop wash; the interlocking Truchet
+         line texture is drawn over it by LinePatternDrawable at roughly 7% ink,
+         so the texture reads as material without competing with tile labels. -->
     <color name="launcher_backdrop_top">#0F191B</color>
     <color name="launcher_backdrop_bottom">#132226</color>
-    <color name="launcher_backdrop_glow">#401C3B3D</color>
+    <color name="launcher_pattern_line">#11F2F7F6</color>
 
     <!-- Terminal accessory keys. The terminal surface is dark in every theme,
          so its key row is fixed chrome too and these are deliberately defined

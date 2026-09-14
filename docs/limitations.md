@@ -54,6 +54,21 @@ PRoot is a compatibility layer, not a hostile-code sandbox. It shares the Androi
 
 PRoot is the adopted execution bridge (ADR-0007/0008): the packaged `libproot.so` + `libproot-loader.so` pair ran a curated guest `/bin/sh` on an Android 10 arm64 device under `untrusted_app`. A modern/16 KB-page device pass remains open.
 
+### Guest hard links are emulated, not real
+
+Android's SELinux policy for the app domain denies hard-link creation, so a
+guest process cannot create a real hard link anywhere in its rootfs
+(device-verified: `ln` inside the guest fails with `Permission denied` even in
+`/tmp`). `dpkg` creates a backup hard link before every unpack, so without a
+workaround no `apt install`/`apt upgrade` can complete. NusaDesk therefore runs
+PRoot with `--link2symlink` (ADR-0020), which emulates hard links with symlinks
+inside the guest.
+
+Consequence to keep in mind: a guest program that needs a *true* hard link —
+comparing inode numbers, or requiring `st_nlink > 1` — will not behave correctly.
+Package installation and upgrades are supported; code that depends on real hard
+link semantics is not.
+
 ### Guest SSH server is not supplied by Ubuntu Base
 
 The SSH-first UX requires a guest SSH server explicitly installed and

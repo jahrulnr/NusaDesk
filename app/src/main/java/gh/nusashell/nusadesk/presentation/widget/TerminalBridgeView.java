@@ -14,6 +14,7 @@ import android.webkit.WebMessage;
 import android.webkit.WebMessagePort;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
@@ -78,6 +79,7 @@ public final class TerminalBridgeView extends FrameLayout {
 
     private final WebView webView;
     private final TextView overlay;
+    private Button scrollBottomButton;
     private final LoopbackWebViewConfig webConfig = new LoopbackWebViewConfig();
 
     private Listener listener;
@@ -141,11 +143,13 @@ public final class TerminalBridgeView extends FrameLayout {
                     return true;
                 }
                 touchScrollStarted = true;
+                scrollBottomButton.setVisibility(VISIBLE);
                 float delta = currentY - touchLastY;
-                if (delta != 0f) {
-                    // The finger moving up should reveal older output, so the
-                    // viewport moves by the inverse of the finger delta.
-                    postToPage(TerminalMessage.scroll(Math.round(-delta)));
+                int scrollDelta = Math.round(-delta);
+                if (scrollDelta != 0) {
+                    // The native event can move by a fractional pixel after
+                    // coordinate conversion; never construct a zero command.
+                    postToPage(TerminalMessage.scroll(scrollDelta));
                 }
                 touchLastY = currentY;
                 return true;
@@ -156,7 +160,7 @@ public final class TerminalBridgeView extends FrameLayout {
                 touchScrollStarted = false;
                 if (!wasScroll && action == MotionEvent.ACTION_UP) {
                     v.performClick();
-                    focus();
+                    focusForUser();
                 }
                 return true;
             }
@@ -172,6 +176,16 @@ public final class TerminalBridgeView extends FrameLayout {
         // Fixed terminal ink, not the theme's: the terminal surface is dark in
         // every theme, so theme ink would be invisible in light mode.
         overlay.setTextColor(getResources().getColor(R.color.terminal_ink, null));
+        scrollBottomButton = new Button(context);
+        scrollBottomButton.setText(R.string.terminal_scroll_to_bottom);
+        scrollBottomButton.setTextSize(12f);
+        scrollBottomButton.setMinHeight((int) (40 * getResources().getDisplayMetrics().density));
+        scrollBottomButton.setMinWidth((int) (88 * getResources().getDisplayMetrics().density));
+        scrollBottomButton.setContentDescription("Scroll terminal to live output");
+        scrollBottomButton.setBackgroundResource(R.drawable.terminal_key_surface);
+        scrollBottomButton.setTextColor(getResources().getColor(R.color.terminal_key_ink, null));
+        scrollBottomButton.setVisibility(GONE);
+        scrollBottomButton.setOnClickListener(v -> scrollToBottom());
         int terminalSurface = getResources().getColor(R.color.terminal_surface, null);
         setBackgroundColor(terminalSurface);
         webView.setBackgroundColor(terminalSurface);
@@ -179,6 +193,13 @@ public final class TerminalBridgeView extends FrameLayout {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         addView(overlay, new LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LayoutParams liveParams = new LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.END);
+        int liveMargin = (int) (12 * getResources().getDisplayMetrics().density + 0.5f);
+        liveParams.setMargins(liveMargin, liveMargin, liveMargin, liveMargin);
+        addView(scrollBottomButton, liveParams);
         // xterm fits itself to the container it is given, so the host must refit
         // whenever the surface actually changes size — rotation, entering or
         // leaving an app surface, or a system font-scale change. Without this the
@@ -221,19 +242,39 @@ public final class TerminalBridgeView extends FrameLayout {
 
     /** Focus the terminal for input. Must be called on the UI thread. */
     public void focus() {
-        // Move Android view focus onto the WebView so hardware/injected key
-        // events reach the terminal instead of a previously focused button.
-        // After an Activity recreation the first request can land before the
-        // WebView is laid out; re-assert it once the layout pass completes,
-        // otherwise a hardware Enter would press the last focused action button
-        // (observed on-device: it stopped the session).
+        requestTerminalFocus(false);
+    }
+
+    /** Focus called only from a user tap; it may request the Android IME. */
+    public void focusForUser() {
+        requestTerminalFocus(true);
+    }
+
+    private void requestTerminalFocus(boolean showKeyboard) {
+        // Moving focus programmatically must not re-submit the WebView's current
+        // composition. The IME is requested only for an explicit user tap.
         webView.requestFocus();
         webView.post(() -> {
             if (!webView.hasFocus() && isAttachedToWindow()) {
                 webView.requestFocus();
             }
+            if (showKeyboard && isAttachedToWindow()) {
+                android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager)
+                                getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null) {
+                    imm.showSoftInput(webView,
+                            android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+                }
+            }
         });
         postToPage(TerminalMessage.signal(TerminalMessage.Type.FOCUS));
+    }
+
+    /** Scrollback-aware shortcut: return to the live prompt after browsing history. */
+    public void scrollToBottom() {
+        scrollBottomButton.setVisibility(GONE);
+        postToPage(TerminalMessage.signal(TerminalMessage.Type.SCROLL_BOTTOM));
     }
 
     /**
@@ -512,6 +553,7 @@ public final class TerminalBridgeView extends FrameLayout {
 +       "case 'fit':term.fit();break;"
 +       "case 'focus':term.focus();break;"
 +       "case 'scroll':if(window.LinuxWrapperTouchScroll&&typeof m.d==='number'){window.LinuxWrapperTouchScroll.scrollBy(m.d);}break;"
++       "case 'scrollBottom':if(window.LinuxWrapperTouchScroll){window.LinuxWrapperTouchScroll.scrollToBottom();}break;"
 +     "}"
 +   "};"
 +   "term.onInput(function(d){send({t:'input',d:d});});"

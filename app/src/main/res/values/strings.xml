@@ -98,6 +98,7 @@
     <!-- Terminal accessory keys (mobile). The row sends the same escape
          sequences a hardware keyboard would; nothing here owns a session. -->
     <string name="terminal_key_row_desc">Terminal keys</string>
+    <string name="terminal_scroll_to_bottom">↓ Live</string>
     <string name="terminal_key_esc">ESC</string>
     <string name="terminal_key_ctrl">CTRL</string>
     <string name="terminal_key_alt">ALT</string>
@@ -119,6 +120,7 @@
          the guest port it serves on. The endpoint is generated from that port;
          there is no URL field, and no host, credential, or profile input. -->
     <string name="webapp_add_title">Add app</string>
+    <string name="launcher_add_label">Add</string>
     <string name="webapp_add_glyph">+</string>
     <string name="webapp_add_desc">Add app. Register a local web app by name, image, and port.</string>
     <string name="webapp_edit_title">Edit app</string>

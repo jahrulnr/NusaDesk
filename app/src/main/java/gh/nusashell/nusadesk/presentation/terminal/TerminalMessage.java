@@ -34,6 +34,8 @@ public final class TerminalMessage {
         FIT,
         /** Host -> page: scroll the xterm viewport by a bounded pixel delta. */
         SCROLL,
+        /** Host -> page: scroll the xterm viewport to the newest output. */
+        SCROLL_BOTTOM,
         /** Host -> page: focus the terminal for input. */
         FOCUS
     }
@@ -81,10 +83,11 @@ public final class TerminalMessage {
 
     /** A native touch-scroll command, bounded to a safe pixel delta. */
     public static TerminalMessage scroll(int deltaPixels) {
-        if (deltaPixels < -2000 || deltaPixels > 2000 || deltaPixels == 0) {
-            throw new IllegalArgumentException("scroll delta must be between -2000 and 2000");
+        if (deltaPixels == 0) {
+            throw new IllegalArgumentException("scroll delta must not be zero");
         }
-        return new TerminalMessage(Type.SCROLL, null, 0, 0, deltaPixels);
+        int bounded = Math.max(-2000, Math.min(2000, deltaPixels));
+        return new TerminalMessage(Type.SCROLL, null, 0, 0, bounded);
     }
 
     public Type getType() {

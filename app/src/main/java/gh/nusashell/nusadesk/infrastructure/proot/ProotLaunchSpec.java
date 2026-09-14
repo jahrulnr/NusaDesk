@@ -30,6 +30,7 @@ public final class ProotLaunchSpec {
     private final String hostWorkingDir;
     private final boolean killOnExit;
     private final boolean fakeRoot;
+    private final boolean link2symlink;
 
     private ProotLaunchSpec(Builder builder) {
         this.prootBinary = builder.prootBinary;
@@ -41,6 +42,7 @@ public final class ProotLaunchSpec {
         this.hostWorkingDir = builder.hostWorkingDir;
         this.killOnExit = builder.killOnExit;
         this.fakeRoot = builder.fakeRoot;
+        this.link2symlink = builder.link2symlink;
     }
 
     public String getProotBinary() {
@@ -84,6 +86,20 @@ public final class ProotLaunchSpec {
         return fakeRoot;
     }
 
+    /**
+     * Whether PRoot {@code --link2symlink} is requested. Android's SELinux
+     * policy denies hard-link creation for an app under {@code untrusted_app}
+     * (device-verified: {@code ln} inside the guest fails with
+     * {@code Permission denied}), which breaks every {@code dpkg} backup step
+     * and therefore {@code apt install}/{@code apt upgrade}. The PRoot
+     * {@code --link2symlink} extension emulates hard links with symlinks for
+     * exactly that case. Defaults to {@code true}; there is no device on which
+     * the app is allowed to create guest hard links.
+     */
+    public boolean isLink2Symlink() {
+        return link2symlink;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -99,6 +115,7 @@ public final class ProotLaunchSpec {
         private String hostWorkingDir;
         private boolean killOnExit = true;
         private boolean fakeRoot;
+        private boolean link2symlink = true;
 
         /** Absolute path to the packaged PRoot PIE executable ({@code libproot.so}). */
         public Builder prootBinary(String prootBinary) {
@@ -182,6 +199,18 @@ public final class ProotLaunchSpec {
          */
         public Builder fakeRoot(boolean fakeRoot) {
             this.fakeRoot = fakeRoot;
+            return this;
+        }
+
+        /**
+         * Whether to pass PRoot {@code --link2symlink} so guest hard links are
+         * emulated with symlinks. Defaults to {@code true}: Android SELinux
+         * denies hard links for the app, and {@code dpkg} cannot work without
+         * them. Only a device whose SELinux policy allows hard links would
+         * benefit from {@code false}.
+         */
+        public Builder link2symlink(boolean link2symlink) {
+            this.link2symlink = link2symlink;
             return this;
         }
 

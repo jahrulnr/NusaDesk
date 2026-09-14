@@ -128,6 +128,17 @@
     return !!root && root.classList.contains("enable-mouse-events");
   }
 
+  function scrollToBottom() {
+    var vp = document.querySelector(".xterm-viewport");
+    if (!vp) return;
+    vp.scrollTop = vp.scrollHeight;
+    if (boundTerminal && typeof boundTerminal.scrollToBottom === "function") {
+      boundTerminal.scrollToBottom();
+    }
+    pendingPixels = 0;
+  }
+
+
 /**
    * Wire touch listeners on the xterm container. Call after `term.open(container)`.
    *
@@ -216,6 +227,7 @@
     install: install,
     enableNativeMode: enableNativeMode,
     scrollBy: scrollBy,
+    scrollToBottom: scrollToBottom,
     SCROLL_THRESHOLD_PX: SCROLL_THRESHOLD_PX
   };
   if (typeof module !== "undefined" && module.exports) {

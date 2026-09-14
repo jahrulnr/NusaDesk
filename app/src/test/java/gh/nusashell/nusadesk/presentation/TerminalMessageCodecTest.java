@@ -55,14 +55,14 @@ public class TerminalMessageCodecTest {
     }
 
     @Test
-    public void scrollCommandRejectsZeroAndUnboundedDeltas() {
-        for (int delta : new int[] { 0, -2001, 2001 }) {
-            try {
-                TerminalMessage.scroll(delta);
-                fail("expected invalid scroll delta: " + delta);
-            } catch (IllegalArgumentException expected) {
-                // expected
-            }
+    public void scrollCommandRejectsZeroButClampsLargeDeltas() {
+        assertEquals(2000, TerminalMessage.scroll(99999).getScrollDelta());
+        assertEquals(-2000, TerminalMessage.scroll(-99999).getScrollDelta());
+        try {
+            TerminalMessage.scroll(0);
+            fail("expected zero scroll delta rejection");
+        } catch (IllegalArgumentException expected) {
+            // expected
         }
     }
 
