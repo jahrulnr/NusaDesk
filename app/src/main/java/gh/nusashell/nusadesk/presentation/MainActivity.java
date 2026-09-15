@@ -814,17 +814,57 @@ public final class MainActivity extends Activity {
                 catalogEntry.getAppId(), state, "", 0, System.currentTimeMillis());
     }
 
+    @SuppressLint("Deprecation")
     private void applySystemBars() {
         Window window = getWindow();
-        window.setStatusBarColor(getColor(R.color.surface));
         window.setNavigationBarColor(getColor(R.color.surface));
         int nightMode = getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK;
-        int systemUiVisibility = nightMode == Configuration.UI_MODE_NIGHT_NO
-                ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                        | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-                : 0;
-        window.getDecorView().setSystemUiVisibility(systemUiVisibility);
+        boolean light = nightMode == Configuration.UI_MODE_NIGHT_NO;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                controller.hide(WindowInsets.Type.statusBars());
+                controller.setSystemBarsBehavior(
+                        android.view.WindowInsetsController
+                                .BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                controller.setSystemBarsAppearance(
+                        light ? android.view.WindowInsetsController
+                                .APPEARANCE_LIGHT_NAVIGATION_BARS : 0,
+                        android.view.WindowInsetsController
+                                .APPEARANCE_LIGHT_NAVIGATION_BARS);
+            }
+            return;
+        }
+        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        int systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+        if (light) {
+            systemUiVisibility |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        }
+        View decor = window.getDecorView();
+        decor.setSystemUiVisibility(systemUiVisibility);
+        decor.setOnSystemUiVisibilityChangeListener(visibility -> {
+            if ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                // API 29 clears FULLSCREEN when the IME takes focus; reassert it
+                // after that transition. A fullscreen window never receives an
+                // IME bottom inset, so keeping the accessory keys above the
+                // keyboard is the visible-frame listener's job in
+                // applyWindowInsets(), not SOFT_INPUT_ADJUST_RESIZE's.
+                decor.postDelayed(this::applySystemBars, 100L);
+            }
+        });
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            // Native selection ActionMode and the IME may temporarily reveal
+            // system chrome. Restore the terminal's fullscreen contract when
+            // focus returns without recreating its WebView/session.
+            applySystemBars();
+        }
     }
 
     /**
@@ -838,6 +878,7 @@ public final class MainActivity extends Activity {
     @SuppressLint("Deprecation")
     private void applyWindowInsets() {
         View shell = findViewById(R.id.shell_container);
+        int[] legacyBarInsets = new int[4];
         shell.setOnApplyWindowInsetsListener((view, insets) -> {
             int left;
             int top;
@@ -854,19 +895,40 @@ public final class MainActivity extends Activity {
                 right = bars.right;
                 bottom = bars.bottom;
             } else {
-                // API 29 has no WindowInsets.Type; these accessors are the only
-                // way to read the bars there and are deprecated from API 30.
+                // A fullscreen API 29 window does not receive an IME bottom
+                // inset, so keep the bar insets here and let the visible-frame
+                // listener below add the keyboard height.
                 left = insets.getSystemWindowInsetLeft();
                 top = insets.getSystemWindowInsetTop();
                 right = insets.getSystemWindowInsetRight();
                 bottom = insets.getSystemWindowInsetBottom();
+                legacyBarInsets[0] = left;
+                legacyBarInsets[1] = top;
+                legacyBarInsets[2] = right;
+                legacyBarInsets[3] = bottom;
             }
-            if (view.getPaddingLeft() != left || view.getPaddingTop() != top
-                    || view.getPaddingRight() != right || view.getPaddingBottom() != bottom) {
-                view.setPadding(left, top, right, bottom);
-            }
+            setShellPadding(view, left, top, right, bottom);
             return insets;
         });
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            android.graphics.Rect visibleFrame = new android.graphics.Rect();
+            shell.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+                shell.getWindowVisibleDisplayFrame(visibleFrame);
+                int rootHeight = shell.getRootView().getHeight();
+                int coveredHeight = Math.max(0, rootHeight - visibleFrame.bottom);
+                int imeHeight = coveredHeight > rootHeight / 4 ? coveredHeight : 0;
+                setShellPadding(shell,
+                        legacyBarInsets[0], legacyBarInsets[1], legacyBarInsets[2],
+                        Math.max(legacyBarInsets[3], imeHeight));
+            });
+        }
         shell.requestApplyInsets();
+    }
+
+    private static void setShellPadding(View view, int left, int top, int right, int bottom) {
+        if (view.getPaddingLeft() != left || view.getPaddingTop() != top
+                || view.getPaddingRight() != right || view.getPaddingBottom() != bottom) {
+            view.setPadding(left, top, right, bottom);
+        }
     }
 }

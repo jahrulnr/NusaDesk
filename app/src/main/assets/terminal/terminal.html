@@ -22,6 +22,8 @@
     size()                    terminal -> host: {cols, rows} actually rendered.
     onInput(callback)         terminal -> host: callback(data:string) for stdin.
     onResize(callback)        terminal -> host: callback(cols, rows) on resize.
+    onScrollState(callback)   terminal -> host: callback(1|0) when the viewport
+                              leaves / returns to the live bottom.
     dispose()                 tear down the terminal.
     ready()                   returns true once the terminal is initialised.
 -->
@@ -36,11 +38,36 @@
     #terminal {
       width: 100vw;
       height: 100vh;
-      /* The gesture adapter handles the vertical drag at the page boundary;
-         this prevents Android WebView from converting it into a tap/overscroll
-         before the capture listener can update the xterm viewport. */
-      touch-action: none;
+      /* The gesture adapter handles the vertical drag at the page boundary and
+         preventDefaults touchmove while scrolling; the page is exactly
+         viewport-sized so there is nothing for the compositor to pan.
+         touch-action must NOT be none here: inside a touch-action:none
+         region Android WebView never runs its long-press word selection. */
       overscroll-behavior: none;
+    }
+    /* xterm 6 renders each row as real DOM text (the DomRenderer is the only
+       bundled renderer). Upstream disables text selection on .xterm and makes
+       the row layer pointer-events:none because desktop xterm owns selection
+       itself; here the platform's own long-press selection action mode is the
+       only copy path, so the rendered text layers stay hit-testable and
+       selectable. Nothing else in this page or the host touches the
+       clipboard. */
+    .xterm {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    .xterm .xterm-screen .xterm-rows,
+    .xterm .xterm-screen .xterm-rows * {
+      pointer-events: auto;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    /* The hidden helper textarea is repositioned onto the cursor cell for IME
+       placement; if it stays hit-testable it wins the hit under a finger and
+       Android shows the editable-context paste menu instead of text
+       selection. It is focused programmatically, never by touch. */
+    .xterm .xterm-helper-textarea {
+      pointer-events: none;
     }
   </style>
 </head>
@@ -49,6 +76,7 @@
   <script src="xterm.js"></script>
   <script src="addon-fit.js"></script>
   <script src="touch-scroll.js"></script>
+  <script src="dom-selection.js"></script>
   <script>
     (function () {
       "use strict";
@@ -61,7 +89,15 @@
         rows: 24,
         cursorBlink: true,
         scrollback: 1000,
-        fontFamily: "monospace",
+        // Compact monospace stack: the bundled WebView ships a default
+        // monospace; the named faces are tried first where present and fall back
+        // to the platform default. A smaller cell than the upstream default
+        // (15px) keeps phone columns from wrapping mid-command while staying
+        // readable on high-DPI screens. lineHeight stays at 1.0 so rows stay
+        // tight without clipping descenders.
+        fontFamily: "'DejaVu Sans Mono','Liberation Mono','Menlo','Consolas',monospace",
+        fontSize: 13,
+        lineHeight: 1.0,
         allowProposedApi: true
       });
       var container = document.getElementById("terminal");
@@ -72,6 +108,21 @@
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         try { fitAddon.fit(); } catch (e) { /* container may not be sized yet */ }
+      }
+
+      var domSelection = window.LinuxWrapperDomSelection
+          ? window.LinuxWrapperDomSelection.install(container)
+          : null;
+      function fitWithoutBreakingSelection() {
+        if (!fitAddon) { return; }
+        var run = function () {
+          try { fitAddon.fit(); } catch (e) { /* container may not be sized yet */ }
+        };
+        if (domSelection) {
+          domSelection.requestFit(run);
+        } else {
+          run();
+        }
       }
 
       // Decode bytes (ArrayBuffer/Uint8Array) or pass strings straight through.
@@ -89,20 +140,49 @@
         if (typeof inputCb === "function") inputCb(data);
       });
       term.onResize(function (size) {
+        emitScrollState();
         if (typeof resizeCb === "function") resizeCb(size.cols, size.rows);
       });
 
-      window.addEventListener("resize", function () {
-        if (fitAddon) { try { fitAddon.fit(); } catch (e) { /* ignore */ } }
-      });
+      window.addEventListener("resize", fitWithoutBreakingSelection);
 
       // Mobile touch-to-scrollback adapter (see touch-scroll.js). xterm.js 6.0.0
       // does not scroll the viewport on a one-finger drag on Android WebView;
       // this translates such a drag into bounded scrollTop changes without
-      // stealing taps, keyboard input, or xterm mouse-tracking gestures.
+      // stealing taps, keyboard input, the platform's own long-press text
+      // selection, or xterm mouse-tracking gestures.
       if (window.LinuxWrapperTouchScroll) {
         window.LinuxWrapperTouchScroll.install(container, term);
       }
+
+      // Tell the host whether the viewport is scrolled away from the live
+      // bottom so it can show or hide its "scroll to live output" button.
+      // Emitted only on transitions, and only for real viewport movement.
+      var scrollStateCb = null;
+      var lastScrolledBack = null;
+      function emitScrollState() {
+        var buf = term.buffer.active;
+        var away = buf.viewportY < buf.baseY;
+        if (lastScrolledBack !== away) {
+          lastScrolledBack = away;
+          if (typeof scrollStateCb === "function") { scrollStateCb(away ? 1 : 0); }
+        }
+      }
+      term.onScroll(emitScrollState);
+      emitScrollState();
+
+      /* xterm registers a desktop-oriented contextmenu listener on .xterm that
+         moves its hidden helper textarea under the pointer and selects it. On
+         Android WebView that collapses the platform selection that the
+         long-press just created and surfaces the editable paste menu instead
+         of the stock selection action mode. Stopping propagation in the
+         capture phase keeps that handler from running; the event is NOT
+         cancelled, so the platform's default selection behavior proceeds. */
+      document.addEventListener("contextmenu", function (e) {
+        if (e.target && e.target.closest && e.target.closest(".xterm")) {
+          e.stopPropagation();
+        }
+      }, true);
 
       window.LinuxWrapperTerminal = {
         ready: function () { return true; },
@@ -111,12 +191,16 @@
         resize: function (cols, rows) {
           try { term.resize(cols, rows); } catch (e) { /* ignore */ }
         },
-        fit: function () { if (fitAddon) { try { fitAddon.fit(); } catch (e) { /* ignore */ } } },
+        fit: fitWithoutBreakingSelection,
         focus: function () { term.focus(); },
         size: function () { return { cols: term.cols, rows: term.rows }; },
         onInput: function (cb) { inputCb = cb; },
         onResize: function (cb) { resizeCb = cb; },
-        dispose: function () { term.dispose(); }
+        onScrollState: function (cb) { scrollStateCb = cb; },
+        dispose: function () {
+          if (domSelection) { domSelection.dispose(); }
+          term.dispose();
+        }
       };
     })();
   </script>

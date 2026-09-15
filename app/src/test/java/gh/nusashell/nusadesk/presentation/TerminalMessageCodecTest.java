@@ -48,22 +48,10 @@ public class TerminalMessageCodecTest {
     }
 
     @Test
-    public void encodesNativeTouchScrollCommand() {
-        assertEquals("{\"t\":\"scroll\",\"d\":-24}",
-                TerminalMessageCodec.encode(TerminalMessage.scroll(-24)));
-        assertEquals(-24, TerminalMessage.scroll(-24).getScrollDelta());
-    }
-
-    @Test
-    public void scrollCommandRejectsZeroButClampsLargeDeltas() {
-        assertEquals(2000, TerminalMessage.scroll(99999).getScrollDelta());
-        assertEquals(-2000, TerminalMessage.scroll(-99999).getScrollDelta());
-        try {
-            TerminalMessage.scroll(0);
-            fail("expected zero scroll delta rejection");
-        } catch (IllegalArgumentException expected) {
-            // expected
-        }
+    public void encodesScrollBottomCommand() {
+        assertEquals("{\"t\":\"scrollBottom\"}",
+                TerminalMessageCodec.encode(
+                        TerminalMessage.signal(TerminalMessage.Type.SCROLL_BOTTOM)));
     }
 
     @Test
@@ -104,6 +92,23 @@ public class TerminalMessageCodecTest {
         assertEquals(TerminalMessage.Type.RESIZE, m.getType());
         assertEquals(80, m.getCols());
         assertEquals(24, m.getRows());
+    }
+
+    @Test
+    public void decodesScrollState() {
+        TerminalMessage away = TerminalMessageCodec.decode("{\"t\":\"scrollState\",\"d\":1}");
+        assertEquals(TerminalMessage.Type.SCROLL_STATE, away.getType());
+        assertEquals(true, away.isScrolledBack());
+        TerminalMessage live = TerminalMessageCodec.decode("{\"t\":\"scrollState\",\"d\":0}");
+        assertEquals(TerminalMessage.Type.SCROLL_STATE, live.getType());
+        assertEquals(false, live.isScrolledBack());
+    }
+
+    @Test
+    public void decodeRejectsBadScrollState() {
+        assertNull(TerminalMessageCodec.decode("{\"t\":\"scrollState\"}")); // no d
+        assertNull(TerminalMessageCodec.decode("{\"t\":\"scrollState\",\"d\":\"1\"}")); // d not number
+        assertNull(TerminalMessageCodec.decode("{\"t\":\"scrollState\",\"d\":2}")); // only 0/1 valid
     }
 
     @Test

@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.1] - 2026-09-16
+
+> Terminal usability pass: platform text selection, fullscreen chrome,
+> hold-to-repeat accessory keys, and rotation continuity without Activity
+> recreation.
+
+### Added
+
+- Terminal text is selected and copied with the platform's own long-press
+  selection and Copy action mode on the real xterm DOM rows; the app ships no
+  custom clipboard code. Row mutation and refit are deferred while a selection
+  is held, then the latest content is applied when it closes.
+- Hold-to-repeat on the arrow accessory keys: a tap emits one key, a held press
+  repeats after a short delay at a fixed interval, and release, cancellation,
+  or sliding the finger off the key stops it at once.
+- A "scroll to live output" button that appears only while the viewport is
+  scrolled back, driven by the page's own reported scroll state.
+
+### Changed
+
+- The shell is fullscreen: the status bar is hidden (transient on swipe) and
+  the navigation bar keeps the surface colour. On API 29 the soft-keyboard
+  overlap is compensated from the window's visible frame because a fullscreen
+  window receives no IME inset.
+- Rotation no longer recreates `MainActivity`
+  (`configChanges="orientation|screenSize|keyboardHidden"`); the terminal's
+  WebView, buffer, and SSH attachment refit in place to the new dimensions.
+- Task-bar and accessory-key heights are more compact on phones (40dp; tablets
+  stay at 48dp) so the terminal keeps usable rows while the soft keyboard is
+  open.
+- The terminal typeface prefers a compact monospace stack at 13px with 1.0
+  line height.
+- One-finger scrollback is handled entirely inside the packaged terminal page;
+  every touch now reaches the WebView unmodified.
+
+### Removed
+
+- The native WebView touch interceptor and the host-to-page `scroll` message,
+  superseded by the in-page touch adapter; page and host ship together.
+
 ## [0.0.0] - 2026-09-14
 
 > Initial NusaDesk release. Runtime evidence currently covers one Android 10 /

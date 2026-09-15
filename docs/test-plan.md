@@ -71,6 +71,10 @@ and persistence.
 | UI-017 | Light and dark OS themes | Launcher, form, system screen, and terminal chrome are legible in both; the terminal surface stays dark by design |
 | UI-018 | TalkBack traversal | One node per tile, per strip, and per task-bar button; a web app tile announces its name and the gestures it supports |
 | UI-019 | No external SSH surface exists | No host, port, profile, or credential input is reachable from any screen |
+| UI-020 | Long-press on terminal text | Platform selection handles and the stock Copy action mode appear; a drag extends the selection instead of scrolling; row output resumes rendering when the selection closes |
+| UI-021 | One-finger drag on the terminal | Scrolls the scrollback without stealing taps; while scrolled back a jump button offers a return to live output and hides again at the bottom |
+| UI-022 | Holding an accessory arrow key | One key on tap, repeats while held, stops on release, cancel, or sliding off the key; TalkBack activation still emits a single key |
+| UI-023 | Rotation with a live terminal | No Activity recreation; the same WebView, buffer, and SSH attachment refit to the new dimensions |
 
 ### User web-app cases
 
@@ -140,7 +144,7 @@ and persistence.
 | SSH-006 | Changed host key | The pinned-host-key-only policy refuses it; there is no first-contact path for the local endpoint |
 | SSH-007 | xterm.js bundle is local | No remote CDN fetch; bundle is pinned and integrity-checked |
 | SSH-008 | Reconnect after controlled restart | WebView reconnects only after new identity/readiness, not on a stale PID |
-| SSH-009 | Activity recreation during connect | Connect/cancellation/resume state survives rotation, not silently dropped |
+| SSH-009 | Activity recreation during connect | Connect/cancellation/resume state survives a real recreation, not silently dropped; rotation alone no longer recreates the Activity — the retained terminal refits in place |
 
 ## Readiness and endpoint cases
 
@@ -311,7 +315,7 @@ Device-verified lifecycle cases (Android 10/API 29, arm64):
 | Case | Observed result |
 | --- | --- |
 | Start session to a live guest shell | `root@localhost:~#` in xterm over the guest OpenSSH endpoint |
-| Activity recreation (rotation) | Session resumed; terminal regained input focus; PTY resized |
+| Activity recreation via rotation (pre-`configChanges` build) | Session resumed; terminal regained input focus; PTY resized |
 | Terminal → Desktop → Terminal | Same session, scrollback preserved, input still works |
 | PTY resize | `stty size` 22x39 portrait vs 24x80 landscape, both directions |
 | Terminal reopened after the launcher redesign | Same session, scrollback preserved, no session card on the surface |

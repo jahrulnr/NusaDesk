@@ -29,6 +29,8 @@ import java.util.Map;
  *   {"t":"setSize","c":80,"r":24}
  *   {"t":"fit"}
  *   {"t":"focus"}
+ *   {"t":"scrollBottom"}
+ *   {"t":"scrollState","d":1}
  * </pre>
  *
  * <p>The {@code t} tag on the wire is a short lowercase name, not the enum name, to
@@ -59,18 +61,13 @@ public final class TerminalMessageCodec {
                 return "{\"t\":\"fit\"}";
             case FOCUS:
                 return "{\"t\":\"focus\"}";
-            case SCROLL:
-                int delta = message.getScrollDelta();
-                if (delta == 0 || delta < -2000 || delta > 2000) {
-                    throw new IllegalArgumentException("invalid scroll delta");
-                }
-                return "{\"t\":\"scroll\",\"d\":" + delta + "}";
             case SCROLL_BOTTOM:
                 return "{\"t\":\"scrollBottom\"}";
             // Page-originated types are not encoded by the host; reject to catch misuse.
             case READY:
             case INPUT:
             case RESIZE:
+            case SCROLL_STATE:
             default:
                 throw new IllegalArgumentException(
                         "encode is for host->page commands; not " + message.getType());
@@ -112,6 +109,8 @@ public final class TerminalMessageCodec {
                 return textOr(fields, TerminalMessage.Type.INPUT);
             case "resize":
                 return sizeOr(fields, TerminalMessage.Type.RESIZE);
+            case "scrollState":
+                return scrollStateOr(fields);
             // Host-originated tags are never accepted from the page.
             default:
                 return null;
@@ -138,6 +137,18 @@ public final class TerminalMessageCodec {
             return null;
         }
         return TerminalMessage.size(type, cols, rows);
+    }
+
+    private static TerminalMessage scrollStateOr(Map<String, Object> fields) {
+        Object d = fields.get("d");
+        if (!(d instanceof Long)) {
+            return null;
+        }
+        long flag = (Long) d;
+        if (flag != 0L && flag != 1L) {
+            return null;
+        }
+        return TerminalMessage.scrollState(flag == 1L);
     }
 
     // ---- minimal JSON for this protocol only ----

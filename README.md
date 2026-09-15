@@ -16,12 +16,6 @@
   <a href="docs/test-plan.md">Test plan</a>
 </p>
 
-> **Project status:** NusaDesk is a Linux workspace for Android. The core
-> runtime and terminal path have been verified on one Android 10 / API 29 ARM64
-> device. The launcher and web-app experience has been UX-verified on an API 35
-> emulator. Broader device, Android-version, OEM, and 16 KB page-size coverage
-> is still open.
-
 ## Overview
 
 NusaDesk brings a focused Linux workspace to Android without trying to imitate a
@@ -87,7 +81,10 @@ runtime requirements.
 
 - A real guest shell presented through a mobile-friendly terminal.
 - Built-in accessory keys for touch devices.
-- Session continuity across navigation and Activity recreation.
+- Terminal text is copied with the platform's own long-press selection and
+  Copy action mode — the app ships no custom clipboard code.
+- Terminal buffer and SSH attachment stay intact across navigation and screen
+  rotation; the existing surface only refits to the new dimensions.
 - Reconnect and failure states that explain what is happening instead of
   pretending everything is running.
 

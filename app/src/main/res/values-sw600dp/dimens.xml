@@ -19,7 +19,8 @@
     <dimen name="tile_glyph_size">22sp</dimen>
     <dimen name="tile_label_size">14sp</dimen>
 
-    <dimen name="task_bar_height">56dp</dimen>
+    <dimen name="task_bar_height">48dp</dimen>
+    <dimen name="task_bar_button_size">48dp</dimen>
 
     <dimen name="terminal_key_height">48dp</dimen>
     <dimen name="terminal_key_gap">6dp</dimen>

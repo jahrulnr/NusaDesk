@@ -1,12 +1,10 @@
 package gh.nusashell.nusadesk.presentation.widget;
 
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.util.AttributeSet;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.ViewGroup;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -93,79 +91,23 @@ public final class TerminalBridgeView extends FrameLayout {
      */
     private boolean pageReady;
     private CharSequence requestedOverlay;
-    private boolean touchGestureActive;
-    private boolean touchScrollStarted;
-    private float touchStartY;
-    private float touchLastY;
-    private final float touchScrollThresholdPx;
 
     public TerminalBridgeView(Context context) {
         this(context, null);
     }
 
-    @SuppressLint("ClickableViewAccessibility")
     public TerminalBridgeView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        touchScrollThresholdPx = 10f * getResources().getDisplayMetrics().density;
         webView = new WebView(context);
         // The terminal must be able to hold view focus in touch mode so that
         // hardware/injected key events reach the shell instead of falling back
         // to a previously focused button (Enter would otherwise click it).
         webView.setFocusableInTouchMode(true);
-        // Let taps and normal xterm input pass through. Once a one-finger drag
-        // crosses the threshold, keep the gesture in this native view and ask
-        // the trusted page to move its viewport. This is more reliable than
-        // relying on Android WebView to dispatch DOM touchmove to xterm.js.
-        webView.setOnTouchListener((v, event) -> {
-            int action = event.getActionMasked();
-            if (action == MotionEvent.ACTION_DOWN) {
-                v.requestFocus();
-                touchGestureActive = event.getPointerCount() == 1;
-                touchScrollStarted = false;
-                touchStartY = touchLastY = event.getY();
-                // Own the complete gesture so xterm/WebView cannot translate
-                // the same drag into a long-press/paste selection. A short tap
-                // is replayed as focus on ACTION_UP below.
-                return true;
-            }
-            if (action == MotionEvent.ACTION_POINTER_DOWN
-                    || event.getPointerCount() != 1) {
-                touchGestureActive = false;
-                touchScrollStarted = false;
-                return true;
-            }
-            if (action == MotionEvent.ACTION_MOVE && touchGestureActive) {
-                float currentY = event.getY();
-                float totalDelta = currentY - touchStartY;
-                if (!touchScrollStarted
-                        && Math.abs(totalDelta) < touchScrollThresholdPx) {
-                    touchLastY = currentY;
-                    return true;
-                }
-                touchScrollStarted = true;
-                scrollBottomButton.setVisibility(VISIBLE);
-                float delta = currentY - touchLastY;
-                int scrollDelta = Math.round(-delta);
-                if (scrollDelta != 0) {
-                    // The native event can move by a fractional pixel after
-                    // coordinate conversion; never construct a zero command.
-                    postToPage(TerminalMessage.scroll(scrollDelta));
-                }
-                touchLastY = currentY;
-                return true;
-            }
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                boolean wasScroll = touchScrollStarted;
-                touchGestureActive = false;
-                touchScrollStarted = false;
-                if (!wasScroll && action == MotionEvent.ACTION_UP) {
-                    v.performClick();
-                    focusForUser();
-                }
-                return true;
-            }
-            return touchGestureActive;
-        });
+        // Every touch reaches the WebView unmodified: xterm 6 renders rows as
+        // real DOM text, so the platform's own long-press selection (and its
+        // Copy action mode) works on it with no app-owned clipboard code, while
+        // the packaged touch-scroll adapter turns one-finger drags into
+        // scrollback scrolling inside the page.
         overlay = new TextView(context);
         overlay.setVisibility(GONE);
         overlay.setBackgroundResource(R.drawable.terminal_overlay);
@@ -242,30 +184,10 @@ public final class TerminalBridgeView extends FrameLayout {
 
     /** Focus the terminal for input. Must be called on the UI thread. */
     public void focus() {
-        requestTerminalFocus(false);
-    }
-
-    /** Focus called only from a user tap; it may request the Android IME. */
-    public void focusForUser() {
-        requestTerminalFocus(true);
-    }
-
-    private void requestTerminalFocus(boolean showKeyboard) {
-        // Moving focus programmatically must not re-submit the WebView's current
-        // composition. The IME is requested only for an explicit user tap.
         webView.requestFocus();
         webView.post(() -> {
             if (!webView.hasFocus() && isAttachedToWindow()) {
                 webView.requestFocus();
-            }
-            if (showKeyboard && isAttachedToWindow()) {
-                android.view.inputmethod.InputMethodManager imm =
-                        (android.view.inputmethod.InputMethodManager)
-                                getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
-                if (imm != null) {
-                    imm.showSoftInput(webView,
-                            android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
-                }
             }
         });
         postToPage(TerminalMessage.signal(TerminalMessage.Type.FOCUS));
@@ -386,9 +308,6 @@ public final class TerminalBridgeView extends FrameLayout {
         // Inject the shim first, then transfer the page's port. The page's MessagePort
         // queues messages until onmessage is set, so there is no delivery race.
         webView.evaluateJavascript(SHIM_JS, null);
-        webView.evaluateJavascript(
-                "window.LinuxWrapperTouchScroll && "
-                        + "window.LinuxWrapperTouchScroll.enableNativeMode();", null);
         webView.postWebMessage(
                 new WebMessage("", new WebMessagePort[]{channel[1]}),
                 Uri.parse(ORIGIN));
@@ -423,6 +342,12 @@ public final class TerminalBridgeView extends FrameLayout {
         switch (decoded.getType()) {
             case INPUT:
                 l.onInput(decoded.getData());
+                break;
+            case SCROLL_STATE:
+                // The page reports whether the viewport sits away from the live
+                // bottom; the button offers a jump back to live output.
+                scrollBottomButton.setVisibility(
+                        decoded.isScrolledBack() ? VISIBLE : GONE);
                 break;
             case RESIZE:
                 l.onTerminalResize(decoded.getCols(), decoded.getRows());
@@ -552,12 +477,12 @@ public final class TerminalBridgeView extends FrameLayout {
 +       "case 'setSize':if(typeof m.c==='number'&&typeof m.r==='number'){term.resize(m.c,m.r);}break;"
 +       "case 'fit':term.fit();break;"
 +       "case 'focus':term.focus();break;"
-+       "case 'scroll':if(window.LinuxWrapperTouchScroll&&typeof m.d==='number'){window.LinuxWrapperTouchScroll.scrollBy(m.d);}break;"
 +       "case 'scrollBottom':if(window.LinuxWrapperTouchScroll){window.LinuxWrapperTouchScroll.scrollToBottom();}break;"
 +     "}"
 +   "};"
 +   "term.onInput(function(d){send({t:'input',d:d});});"
 +   "term.onResize(function(c,r){send({t:'resize',c:c,r:r});});"
++   "term.onScrollState(function(d){send({t:'scrollState',d:d});});"
 +   "send({t:'ready'});"
    // Report the size the page actually renders. xterm only fires onResize on a
    // change, so without this a reloaded page (Activity recreation) whose fit

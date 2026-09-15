@@ -30,10 +30,11 @@
     <dimen name="webapp_form_image_size">64dp</dimen>
 
     <!-- App surface task bar -->
-    <dimen name="task_bar_height">48dp</dimen>
+    <dimen name="task_bar_height">40dp</dimen>
+    <dimen name="task_bar_button_size">40dp</dimen>
 
     <!-- Terminal accessory key row -->
-    <dimen name="terminal_key_height">48dp</dimen>
+    <dimen name="terminal_key_height">40dp</dimen>
     <dimen name="terminal_key_gap">3dp</dimen>
     <dimen name="terminal_key_padding">6dp</dimen>
     <dimen name="terminal_key_text_size">12sp</dimen>

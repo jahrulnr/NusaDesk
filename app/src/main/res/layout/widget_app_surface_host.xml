@@ -25,8 +25,8 @@
 
             <ImageButton
                 android:id="@+id/taskbar_home"
-                android:layout_width="@dimen/touch_target"
-                android:layout_height="@dimen/touch_target"
+                android:layout_width="@dimen/task_bar_button_size"
+                android:layout_height="@dimen/task_bar_button_size"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/taskbar_home_desc"
                 android:padding="12dp"
@@ -47,8 +47,8 @@
 
             <ImageButton
                 android:id="@+id/taskbar_more"
-                android:layout_width="@dimen/touch_target"
-                android:layout_height="@dimen/touch_target"
+                android:layout_width="@dimen/task_bar_button_size"
+                android:layout_height="@dimen/task_bar_button_size"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/taskbar_more_desc"
                 android:padding="12dp"

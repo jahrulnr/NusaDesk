@@ -10,6 +10,7 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
         <item name="android:windowBackground">@color/surface</item>
         <item name="android:colorBackground">@color/surface_elevated</item>
         <item name="android:forceDarkAllowed">false</item>

@@ -6,10 +6,11 @@ package gh.nusashell.nusadesk.presentation.terminal;
  * packaged xterm page.
  *
  * <p>This is a tiny, fixed protocol — not a generic RPC. The native side encodes
- * {@link Type#WRITE}, {@link Type#WRITE_STDERR}, {@link Type#RESIZE},
- * {@link Type#FIT}, {@link Type#FOCUS}, and {@link Type#SCROLL} commands to the page; the page encodes
- * {@link Type#READY}, {@link Type#INPUT} and {@link Type#RESIZE} events back. Only
- * the fields each type uses are meaningful; the others are zero/null.</p>
+ * {@link Type#WRITE}, {@link Type#WRITE_STDERR}, {@link Type#SET_SIZE},
+ * {@link Type#FIT}, {@link Type#FOCUS}, and {@link Type#SCROLL_BOTTOM} commands
+ * to the page; the page encodes {@link Type#READY}, {@link Type#INPUT},
+ * {@link Type#RESIZE} and {@link Type#SCROLL_STATE} events back. Only the
+ * fields each type uses are meaningful; the others are zero/null/false.</p>
  *
  * <p>Carrying no secrets and doing no I/O, this object is safe to unit-test without
  * Android. See {@link TerminalMessageCodec} for the on-wire JSON form and the
@@ -24,6 +25,8 @@ public final class TerminalMessage {
         INPUT,
         /** Page -> host: terminal resized by user/layout ({@link #cols}/{@link #rows}). */
         RESIZE,
+        /** Page -> host: the viewport scrolled away from / back to the live bottom. */
+        SCROLL_STATE,
         /** Host -> page: write SSH stdout to the screen ({@link #data}). */
         WRITE,
         /** Host -> page: write SSH stderr to the screen ({@link #data}). */
@@ -32,8 +35,6 @@ public final class TerminalMessage {
         SET_SIZE,
         /** Host -> page: refit the terminal to its container. */
         FIT,
-        /** Host -> page: scroll the xterm viewport by a bounded pixel delta. */
-        SCROLL,
         /** Host -> page: scroll the xterm viewport to the newest output. */
         SCROLL_BOTTOM,
         /** Host -> page: focus the terminal for input. */
@@ -44,14 +45,14 @@ public final class TerminalMessage {
     private final String data;
     private final int cols;
     private final int rows;
-    private final int scrollDelta;
+    private final boolean scrolledBack;
 
-    private TerminalMessage(Type type, String data, int cols, int rows, int scrollDelta) {
+    private TerminalMessage(Type type, String data, int cols, int rows, boolean scrolledBack) {
         this.type = type;
         this.data = data;
         this.cols = cols;
         this.rows = rows;
-        this.scrollDelta = scrollDelta;
+        this.scrolledBack = scrolledBack;
     }
 
     /** A text-carrying message (READY/INPUT/WRITE/WRITE_STDERR). {@code data} must be non-null. */
@@ -62,7 +63,7 @@ public final class TerminalMessage {
         if (data == null) {
             throw new IllegalArgumentException("data must not be null");
         }
-        return new TerminalMessage(type, data, 0, 0, 0);
+        return new TerminalMessage(type, data, 0, 0, false);
     }
 
     /** A size-carrying message (RESIZE/SET_SIZE). */
@@ -70,7 +71,7 @@ public final class TerminalMessage {
         if (type == null) {
             throw new IllegalArgumentException("type must not be null");
         }
-        return new TerminalMessage(type, null, cols, rows, 0);
+        return new TerminalMessage(type, null, cols, rows, false);
     }
 
     /** A parameterless message (FIT/FOCUS). */
@@ -78,16 +79,12 @@ public final class TerminalMessage {
         if (type == null) {
             throw new IllegalArgumentException("type must not be null");
         }
-        return new TerminalMessage(type, null, 0, 0, 0);
+        return new TerminalMessage(type, null, 0, 0, false);
     }
 
-    /** A native touch-scroll command, bounded to a safe pixel delta. */
-    public static TerminalMessage scroll(int deltaPixels) {
-        if (deltaPixels == 0) {
-            throw new IllegalArgumentException("scroll delta must not be zero");
-        }
-        int bounded = Math.max(-2000, Math.min(2000, deltaPixels));
-        return new TerminalMessage(Type.SCROLL, null, 0, 0, bounded);
+    /** Page -> host: whether the viewport is scrolled away from the live bottom. */
+    public static TerminalMessage scrollState(boolean scrolledBack) {
+        return new TerminalMessage(Type.SCROLL_STATE, null, 0, 0, scrolledBack);
     }
 
     public Type getType() {
@@ -107,8 +104,8 @@ public final class TerminalMessage {
         return rows;
     }
 
-    /** Pixel delta for {@link Type#SCROLL}; zero for every other message. */
-    public int getScrollDelta() {
-        return scrollDelta;
+    /** Scrolled-back flag for {@link Type#SCROLL_STATE}; false for every other message. */
+    public boolean isScrolledBack() {
+        return scrolledBack;
     }
 }

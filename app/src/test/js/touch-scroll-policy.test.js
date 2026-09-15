@@ -15,7 +15,7 @@
 
 const assert = require("assert");
 const path = require("path");
-const { policy, install, enableNativeMode, scrollBy } = require(path.join(
+const { policy, install, scrollBy } = require(path.join(
   __dirname,
   "..",
   "..",
@@ -184,12 +184,50 @@ check(
   { scroll: false, scrollTop: 0, preventDefault: false, cancel: false }
 );
 
-// 10. The native bridge uses xterm's public scrollLines API and preserves
-// fractional row movement across frames.
+// 10. While the platform's own long-press selection holds terminal text, a
+//     drag extends that selection — the adapter must not scroll or
+//     preventDefault (which would fight the stock selection overlay).
+check(
+  "active platform selection defers the drag",
+  policy({
+    isMouseTracking: false,
+    hasSelection: true,
+    touchCount: 1,
+    active: false,
+    absDeltaFromStart: 50,
+    deltaY: -30,
+    scrollTop: 100,
+    maxScroll: 1000,
+    threshold: T,
+  }),
+  { scroll: false, scrollTop: 100, preventDefault: false, cancel: false }
+);
+
+// 11. A scroll in progress stops the moment a selection appears: the gesture
+//     now belongs to the selection handles, not the viewport.
+check(
+  "scroll yields mid-gesture when a selection appears",
+  policy({
+    isMouseTracking: false,
+    hasSelection: true,
+    touchCount: 1,
+    active: true,
+    absDeltaFromStart: 50,
+    deltaY: -30,
+    scrollTop: 100,
+    maxScroll: 1000,
+    threshold: T,
+  }),
+  { scroll: false, scrollTop: 100, preventDefault: false, cancel: false }
+);
+
+// 12. scrollBy uses xterm's public scrollLines API and preserves fractional
+//     row movement across frames.
 const viewport = { clientHeight: 100, scrollHeight: 1100, scrollTop: 1000 };
 const xtermRoot = { classList: { contains: () => false } };
 const listeners = {};
 const fakeContainer = {
+  ownerDocument: { getSelection: () => null },
   querySelector: (selector) => selector === ".xterm-viewport" ? viewport : xtermRoot,
   addEventListener: (name, handler) => { listeners[name] = handler; },
 };
@@ -199,9 +237,8 @@ global.document = {
   querySelector: (selector) => selector === ".xterm-viewport" ? viewport : xtermRoot,
 };
 install(fakeContainer, fakeTerminal);
-enableNativeMode();
-check("native pixel delta scrolls whole xterm rows", scrollBy(-25), true);
-check("native scroll uses xterm public API", lineMoves, [-2]);
+check("pixel delta scrolls whole xterm rows", scrollBy(-25), true);
+check("scroll uses xterm public API", lineMoves, [-2]);
 check("fractional pixels accumulate to the next row", scrollBy(-5), true);
 check("accumulated movement emits one more row", lineMoves, [-2, -1]);
 delete global.document;

@@ -114,12 +114,6 @@
     position: relative;
 }
 
-.xterm .xterm-screen canvas {
-    position: absolute;
-    left: 0;
-    top: 0;
-}
-
 .xterm-char-measure-element {
     display: inline-block;
     visibility: hidden;

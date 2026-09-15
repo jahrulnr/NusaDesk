@@ -11,16 +11,20 @@
  *     guest program (vim/tmux/less) has requested mouse tracking. In that
  *     mode touch must pass through to xterm, which translates it to mouse
  *     events for the program; the adapter never steals that gesture.
+ *   - It never acts while the platform's own text selection is active on the
+ *     terminal rows: a drag then extends that selection (long-press + drag is
+ *     Android's stock select gesture) and must not also move the viewport.
  *   - It only acts on a single touch. A second finger cancels the active
  *     scroll and defers to xterm, so multi-touch / pinch and mouse-tracking
  *     touch are preserved.
  *   - It applies a movement threshold before a drag becomes a scroll, so a
  *     tap (down + up with little movement) is never stolen: xterm still gets
  *     the full tap sequence for focus / cursor positioning.
- *   - It never preventDefault on touchstart, so focus, keyboard, and the
- *     accessory key row (a native Android view, not in the WebView) are
- *     unaffected. It only preventDefault on touchmove once a scroll is
- *     actually in progress, to stop page bounce/zoom without blocking taps.
+ *   - It never preventDefault on touchstart, so focus, keyboard, the stock
+ *     long-press selection, and the accessory key row (a native Android view,
+ *     not in the WebView) are unaffected. It only preventDefault on touchmove
+ *     once a scroll is actually in progress, to stop page bounce/zoom without
+ *     blocking taps.
  *   - scrollTop is clamped to [0, scrollHeight - clientHeight].
  *
  * The pure decision logic lives in `policy(opts)` so it can be unit-tested in
@@ -39,6 +43,7 @@
    *
    * @param {object} opts
    * @param {boolean} opts.isMouseTracking  true when xterm is in mouse-tracking mode
+   * @param {boolean} opts.hasSelection     true while a DOM selection exists on the terminal rows
    * @param {number}  opts.touchCount        number of current touches
    * @param {boolean} opts.active            whether a scroll is already in progress
    * @param {number}  opts.absDeltaFromStart |currentY - startY|
@@ -49,7 +54,7 @@
    * @returns {{scroll:boolean, scrollTop:number, preventDefault:boolean, cancel:boolean}}
    */
   function policy(opts) {
-    if (opts.isMouseTracking) {
+    if (opts.isMouseTracking || opts.hasSelection) {
       return { scroll: false, scrollTop: opts.scrollTop, preventDefault: false, cancel: false };
     }
     if (opts.touchCount !== 1) {
@@ -76,19 +81,13 @@
 
   /** Pixel distance a drag must travel before it becomes a scroll. */
   var SCROLL_THRESHOLD_PX = 10;
-  var nativeMode = false;
   var boundTerminal = null;
   var pendingPixels = 0;
 
-  /** Enable native WebView gesture delivery, avoiding duplicate DOM scrolling. */
-  function enableNativeMode() {
-    nativeMode = true;
-  }
-
   /**
-   * Scroll by a native touch delta. Native Android sends the inverted finger
-   * movement (finger-up is positive scroll) so the same clamp policy is used.
-   * @param {number} amount positive moves toward older scrollback
+   * Scroll by a pixel delta via the public scrollLines API: a finger-up drag
+   * yields a positive amount and moves the viewport toward newer lines.
+   * @param {number} amount positive moves toward newer output
    * @returns {boolean} whether the viewport moved
    */
   function scrollBy(amount) {
@@ -116,11 +115,7 @@
       boundTerminal.scrollLines(lines);
       return true;
     }
-    // Defensive fallback for an incomplete xterm initialisation.
-    var before = vp.scrollTop;
-    var max = Math.max(0, vp.scrollHeight - vp.clientHeight);
-    vp.scrollTop = Math.max(0, Math.min(max, before + amount));
-    return vp.scrollTop !== before;
+    return false;
   }
 
   function isMouseTrackingFromDom() {
@@ -129,9 +124,6 @@
   }
 
   function scrollToBottom() {
-    var vp = document.querySelector(".xterm-viewport");
-    if (!vp) return;
-    vp.scrollTop = vp.scrollHeight;
     if (boundTerminal && typeof boundTerminal.scrollToBottom === "function") {
       boundTerminal.scrollToBottom();
     }
@@ -158,21 +150,57 @@
       return container.querySelector(".xterm-viewport");
     }
 
+    /* Scroll position and range in pixels, derived from xterm's buffer.
+       .xterm-viewport itself cannot be used: xterm 6 wraps the screen in a
+       virtual .xterm-scrollable-element and the viewport element has no
+       overflowing content, so its scrollTop range is always zero. The real
+       scroll state is buffer.active.viewportY over [0, length - rows]
+       lines, which term.scrollLines() moves. */
+    function scrollMetrics() {
+      var rows = boundTerminal && boundTerminal.rows > 0 ? boundTerminal.rows : 0;
+      var buf = boundTerminal && boundTerminal.buffer ? boundTerminal.buffer.active : null;
+      var vp = viewport();
+      var cellH = vp && rows > 0 ? vp.clientHeight / rows : 0;
+      if (!buf || cellH <= 0) {
+        return { scrollTop: 0, maxScroll: 0 };
+      }
+      return {
+        scrollTop: buf.viewportY * cellH,
+        maxScroll: Math.max(0, (buf.length - rows) * cellH)
+      };
+    }
+
     function isMouseTracking() {
       var root = container.querySelector(".xterm");
       return !!root && root.classList.contains("enable-mouse-events");
     }
 
+    /* The platform's own selection wins the gesture: while Android's stock
+       long-press selection holds terminal text, a drag extends the selection
+       and must not scroll. Only a selection anchored on xterm's rendered DOM
+       rows counts because its hidden helper textarea may hold a selection of
+       its own. */
+    function hasDomSelection() {
+      var doc = container.ownerDocument;
+      var sel = doc && doc.getSelection ? doc.getSelection() : null;
+      if (!sel || sel.isCollapsed) {
+        return false;
+      }
+      var holds = function (el) {
+        return !!el && (el.contains(sel.anchorNode) || el.contains(sel.focusNode));
+      };
+      return holds(container.querySelector(".xterm-rows"));
+    }
+
     /* Listen on the page container in capture phase. The xterm viewport and
-       xterm screen are sibling elements, so attaching only to `.xterm-viewport`
-       misses drags that begin on the canvas. Capture at #terminal sees both. */
+       rendered DOM rows are siblings, so attaching only to `.xterm-viewport`
+       misses drags that begin on terminal text. Capture at #terminal sees
+       both. */
     var target = container;
 
     target.addEventListener("touchstart", function (e) {
-      if (nativeMode) {
-        return;
-      }
-      // Never preventDefault here: taps must reach xterm for focus/cursor.
+      // Never preventDefault here: taps must reach xterm for focus/cursor and
+      // the platform's long-press selection must see an untouched gesture.
       if (isMouseTracking() || e.touches.length !== 1) {
         state.active = false;
         return;
@@ -182,22 +210,21 @@
     }, { passive: true, capture: true });
 
     target.addEventListener("touchmove", function (e) {
-      if (nativeMode) {
-        return;
-      }
       var vp = viewport();
       if (!vp) {
         return;
       }
       var y = e.touches.length > 0 ? e.touches[0].clientY : state.lastY;
+      var metrics = scrollMetrics();
       var decision = policy({
         isMouseTracking: isMouseTracking(),
+        hasSelection: hasDomSelection(),
         touchCount: e.touches.length,
         active: state.active,
         absDeltaFromStart: Math.abs(y - state.startY),
         deltaY: y - state.lastY,
-        scrollTop: vp.scrollTop,
-        maxScroll: vp.scrollHeight - vp.clientHeight,
+        scrollTop: metrics.scrollTop,
+        maxScroll: metrics.maxScroll,
         threshold: SCROLL_THRESHOLD_PX
       });
       if (decision.cancel) {
@@ -207,7 +234,7 @@
       }
       if (decision.scroll) {
         state.active = true;
-        scrollBy(decision.scrollTop - vp.scrollTop);
+        scrollBy(decision.scrollTop - metrics.scrollTop);
         if (decision.preventDefault) {
           e.preventDefault();
         }
@@ -225,7 +252,6 @@
   var api = {
     policy: policy,
     install: install,
-    enableNativeMode: enableNativeMode,
     scrollBy: scrollBy,
     scrollToBottom: scrollToBottom,
     SCROLL_THRESHOLD_PX: SCROLL_THRESHOLD_PX

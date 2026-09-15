@@ -159,7 +159,10 @@ Rules this layer enforces:
 - **Retained surfaces.** A destination stays attached and is switched by
   visibility, which is what keeps a live terminal's WebView and scrollback — and
   a web app's page — alive across a trip back to the launcher. Surfaces are
-  created lazily on first open.
+  created lazily on first open. Rotation does not recreate them either:
+  `MainActivity` declares `configChanges="orientation|screenSize|keyboardHidden"`,
+  so the same surface refits to the new dimensions instead of resuming from a
+  destroyed Activity.
 
 ## Runtime boundary
 

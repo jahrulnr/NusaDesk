@@ -1,8 +1,13 @@
 package gh.nusashell.nusadesk.presentation.terminal;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -51,6 +56,17 @@ public final class TerminalKeyRowView extends LinearLayout {
     private boolean shellAttached;
     private int laidOutWidth = -1;
 
+    private final Handler repeatHandler = new Handler(Looper.getMainLooper());
+    private final Runnable repeatTick = new Runnable() {
+        @Override
+        public void run() {
+            fireRepeatTick();
+        }
+    };
+    private TerminalKeyRepeat activeRepeat;
+    private TerminalKey activeRepeatKey;
+    private Button activeRepeatButton;
+
     public TerminalKeyRowView(Context context) {
         super(context);
         init();
@@ -86,6 +102,7 @@ public final class TerminalKeyRowView extends LinearLayout {
         }
         shellAttached = attached;
         if (!attached) {
+            cancelRepeat();
             clearModifiers();
         }
         renderEnabledState();
@@ -113,6 +130,9 @@ public final class TerminalKeyRowView extends LinearLayout {
             button.setContentDescription(getContext().getString(
                     R.string.terminal_key_desc, getContext().getString(key.getLabelRes())));
             button.setOnClickListener(view -> onKeyPressed(key));
+            if (TerminalKeyRepeat.isRepeating(key)) {
+                attachHoldRepeat(button, key);
+            }
             keys.add(button);
             if (key == TerminalKey.TAB) {
                 ctrlButton = newModifier(R.string.terminal_key_ctrl, true);
@@ -176,6 +196,101 @@ public final class TerminalKeyRowView extends LinearLayout {
                 getContext().getString(labelRes)));
     }
 
+    // ---- Arrow key hold-to-repeat ----
+
+    /**
+     * Wires hold-to-repeat for one arrow key. A tap sends exactly one key (the
+     * immediate press); a held press repeats after the initial delay and then
+     * at a fixed interval. Release, cancellation, or sliding the finger off the
+     * key stops the repeat at once. The {@code OnClickListener} is kept for
+     * accessibility (TalkBack) and is not re-triggered by a real touch.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private void attachHoldRepeat(Button button, TerminalKey key) {
+        button.setOnTouchListener((v, event) -> {
+            if (!shellAttached) {
+                return false;
+            }
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    cancelRepeat();
+                    activeRepeatButton = button;
+                    activeRepeatKey = key;
+                    activeRepeat = new TerminalKeyRepeat();
+                    emitRepeat(key, activeRepeat.press(SystemClock.uptimeMillis()));
+                    v.setPressed(true);
+                    scheduleRepeat();
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    if (activeRepeatButton == button
+                            && outsideBounds(v, event.getX(), event.getY())) {
+                        cancelRepeat();
+                        v.setPressed(false);
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (activeRepeatButton == button) {
+                        cancelRepeat();
+                    }
+                    v.setPressed(false);
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    if (activeRepeatButton == button) {
+                        cancelRepeat();
+                    }
+                    v.setPressed(false);
+                    return true;
+                default:
+                    return false;
+            }
+        });
+    }
+
+    private static boolean outsideBounds(View v, float x, float y) {
+        return x < 0 || y < 0 || x > v.getWidth() || y > v.getHeight();
+    }
+
+    private void scheduleRepeat() {
+        if (activeRepeat == null) {
+            return;
+        }
+        long delay = Math.max(1L, activeRepeat.nextEmitAt() - SystemClock.uptimeMillis());
+        repeatHandler.postDelayed(repeatTick, delay);
+    }
+
+    private void fireRepeatTick() {
+        TerminalKeyRepeat repeat = activeRepeat;
+        if (repeat == null || !repeat.isPressed()) {
+            return;
+        }
+        if (activeRepeatButton == null || !activeRepeatButton.isAttachedToWindow()) {
+            cancelRepeat();
+            return;
+        }
+        long now = SystemClock.uptimeMillis();
+        long count = repeat.tick(now);
+        if (count > 0) {
+            emitRepeat(activeRepeatKey, count);
+        }
+        if (repeat.isPressed()) {
+            long delay = Math.max(1L, repeat.nextEmitAt() - now);
+            repeatHandler.postDelayed(repeatTick, delay);
+        }
+    }
+
+    private void emitRepeat(TerminalKey key, long count) {
+        for (long i = 0; i < count; i++) {
+            onKeyPressed(key);
+        }
+    }
+
+    private void cancelRepeat() {
+        repeatHandler.removeCallbacks(repeatTick);
+        activeRepeat = null;
+        activeRepeatKey = null;
+        activeRepeatButton = null;
+    }
+
     private void renderEnabledState() {
         for (Button key : keys) {
             key.setEnabled(shellAttached);
@@ -184,6 +299,12 @@ public final class TerminalKeyRowView extends LinearLayout {
                 ? getContext().getString(R.string.terminal_key_row_desc)
                 : getContext().getString(R.string.terminal_key_row_desc)
                         + " " + getContext().getString(R.string.terminal_key_no_shell));
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        cancelRepeat();
+        super.onDetachedFromWindow();
     }
 
     // ---- Wrapping layout ----
