@@ -3,9 +3,10 @@ name: NusaDesk debug release
 on:
   push:
     branches: ["master"]
+    # A release is created only when the release version changes. Changelog-only
+    # and documentation commits must not retry an existing version tag.
     paths:
       - VERSION
-      - CHANGELOG.md
   workflow_dispatch:
 
 permissions:
@@ -26,34 +27,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          # v3/v4 default to installing the removed `tools` package. The
-          # project installs only the pinned SDK components below.
-          packages: ''
-
-      - name: Install Android build dependencies
-        run: |
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-37.0" \
-            "build-tools;36.0.0"
-          yes | sdkmanager --licenses >/dev/null || true
-
-      - name: Validate VERSION and extract changelog notes
+      - name: Validate VERSION
         id: metadata
         shell: bash
         run: |
@@ -65,22 +39,6 @@ jobs:
             exit 1
           fi
 
-          if ! grep -qE "^## \[$version\]( |$)" CHANGELOG.md; then
-            echo "CHANGELOG.md has no section for VERSION=$version" >&2
-            exit 1
-          fi
-
-          awk -v version="$version" '
-            $0 ~ "^## \\[" version "\\]( |$)" { found=1; next }
-            found && /^## \[/ { exit }
-            found { print }
-          ' CHANGELOG.md > release-notes.md
-
-          if [ ! -s release-notes.md ]; then
-            echo "The changelog section for $version is empty" >&2
-            exit 1
-          fi
-
           tag="v$version"
           {
             echo "version=$version"
@@ -88,27 +46,88 @@ jobs:
             echo "release_asset=NusaDesk-$tag-debug.apk"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Refuse an existing release tag
+      - name: Check release tag
+        id: release_gate
         shell: bash
         env:
           TAG: ${{ steps.metadata.outputs.tag }}
         run: |
           set -euo pipefail
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists; refusing to overwrite an existing release." >&2
+            echo "Release tag $TAG already exists; skipping this release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate changelog and extract release notes
+        if: steps.release_gate.outputs.should_release == 'true'
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! grep -qE "^## \[$VERSION\]( |$)" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for VERSION=$VERSION" >&2
             exit 1
           fi
 
+          awk -v version="$VERSION" '
+            $0 ~ "^## \\[" version "\\]( |$)" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            echo "The changelog section for $VERSION is empty" >&2
+            exit 1
+          fi
+
+      - name: Set up Java 17
+        if: steps.release_gate.outputs.should_release == 'true'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Node.js
+        if: steps.release_gate.outputs.should_release == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Set up Android SDK
+        if: steps.release_gate.outputs.should_release == 'true'
+        uses: android-actions/setup-android@v4
+        with:
+          # v3/v4 default to installing the removed `tools` package. The
+          # project installs only the pinned SDK components below.
+          packages: ''
+
+      - name: Install Android build dependencies
+        if: steps.release_gate.outputs.should_release == 'true'
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-37.0" \
+            "build-tools;36.0.0"
+          yes | sdkmanager --licenses >/dev/null || true
+
       - name: Run tests, lint, and assemble debug APK
+        if: steps.release_gate.outputs.should_release == 'true'
         run: make check
 
       - name: Rename debug APK for the release asset
+        if: steps.release_gate.outputs.should_release == 'true'
         shell: bash
         env:
           ASSET: ${{ steps.metadata.outputs.release_asset }}
         run: cp app/build/outputs/apk/debug/app-debug.apk "$ASSET"
 
       - name: Create annotated tag
+        if: steps.release_gate.outputs.should_release == 'true'
         shell: bash
         env:
           TAG: ${{ steps.metadata.outputs.tag }}
@@ -121,6 +140,7 @@ jobs:
           git push origin "$TAG"
 
       - name: Publish GitHub release with debug APK
+        if: steps.release_gate.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.metadata.outputs.tag }}
