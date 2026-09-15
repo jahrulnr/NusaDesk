@@ -88,7 +88,7 @@ Scope:
 - [ ] Curated runtime web-app profile (Phase 3): a packaged, source-reviewed app
       that ships inside the runtime rather than being registered by the user.
 
-## Phase 1 — SSH execution + terminal spike
+## Phase 1 — SSH execution + terminal validation
 
 **Status:** implemented and device-verified on Android 10/API 29 arm64 (live
 guest shell, readiness, FGS, resize, reconnect after recreation, stop/restart,
@@ -115,9 +115,9 @@ Exit criteria:
 - Process crash reaches `FAILED` or `RECOVERING`, never false `RUNNING`.
 - Foreground service is stoppable and does not claim 24/7 survival.
 
-## Phase 2 — local server/WebView spike
+## Phase 2 — local server/WebView validation
 
-This isolated dummy-server spike may be run **before** Phase 1 as a cheaper
+This isolated dummy-server validation may be run **before** Phase 1 as a cheaper
 way to de-risk the WebView boundary, or folded into Phase 1's real terminal
 slice. It is retained as an option, not a mandatory separate phase.
 
@@ -180,7 +180,7 @@ Scope:
 
 - Evaluate candidates one at a time against the compatibility matrix.
 - Verify Linux ARM64 native modules, libc, browser, channel, and service requirements per candidate.
-- Keep browser automation, voice, local models, desktop GUI, and LAN exposure as separate capability spikes.
+- Keep browser automation, voice, local models, desktop GUI, and LAN exposure as separate capability validation tracks.
 - Do not label a candidate supported until its profile passes the device test plan.
 
 ## Phase 6 — multi-app catalog
@@ -193,7 +193,7 @@ Only after multiple profiles are reliable:
 - capability declarations;
 - disk quotas and cleanup;
 - atomic activation and rollback;
-- compatibility labels: `supported`, `experimental`, `unsupported`;
+- compatibility labels: `supported`, `untested`, `unsupported`;
 - app-specific diagnostics and export.
 
 Arbitrary images, arbitrary shell commands, and public/LAN binding remain opt-in capabilities with explicit security review.

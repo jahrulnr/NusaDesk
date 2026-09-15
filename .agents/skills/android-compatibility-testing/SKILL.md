@@ -9,7 +9,7 @@ Use this skill for device-test planning and release gates. Emulator-only evidenc
 
 ## Evidence boundary
 
-Record which configurations have device-verified runtime behavior and which are emulator-only or untested. Do not claim support for a configuration that has no recorded device run. An emulator's ARM translation is not runtime evidence for an ARM target. Mark each configuration `supported`, `experimental`, or `unsupported` rather than implying blanket coverage.
+Record which configurations have device-verified runtime behavior and which are emulator-only or untested. Do not claim support for a configuration that has no recorded device run. An emulator's ARM translation is not runtime evidence for an ARM target. Mark each configuration `supported`, `untested`, or `unsupported` rather than implying blanket coverage.
 
 ## Minimum matrix
 
@@ -58,7 +58,7 @@ Record which configurations have device-verified runtime behavior and which are 
 
 ## Evidence
 
-For every device run record: app build, runtime/app version, Android release/API, ABI, page size, OEM/model, available disk/RAM, network condition, state transitions, endpoint, logs, and screenshots. Mark `supported`, `experimental`, or `unsupported`; do not hide a failed device behind a generic pass rate.
+For every device run record: app build, runtime/app version, Android release/API, ABI, page size, OEM/model, available disk/RAM, network condition, state transitions, endpoint, logs, and screenshots. Mark `supported`, `untested`, or `unsupported`; do not hide a failed device behind a generic pass rate.
 
 ## Exit gate
 

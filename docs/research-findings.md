@@ -83,7 +83,7 @@ The project does not select a named target application in the foundation phase. 
 | Persistence | State directory, migration/rollback behavior, backup expectations |
 | Background behavior | Foreground-only, recoverable, or explicitly unsupported |
 | Optional capabilities | Workspace, LAN, browser, microphone, filesystem, and network permissions |
-| Support label | `supported`, `experimental`, or `unsupported` with evidence |
+| Support label | `supported`, `untested`, or `unsupported` with evidence |
 
 ### First profile
 

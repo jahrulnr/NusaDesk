@@ -7,10 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.0] - 2026-09-14
 
-> First product foundation release. NusaDesk is experimental and the current
-> runtime evidence covers one Android 10 / API 29 ARM64 device. See the
-> [limitations](docs/limitations.md) and [test plan](docs/test-plan.md) for the
-> complete evidence boundary.
+> Initial NusaDesk release. Runtime evidence currently covers one Android 10 /
+> API 29 ARM64 device. See the [limitations](docs/limitations.md) and [test
+> plan](docs/test-plan.md) for the complete evidence boundary.
 
 ### Added
 

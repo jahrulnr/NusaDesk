@@ -10,7 +10,7 @@ The first proof slice is now deliberately narrower:
 - Install one product-owned, version-pinned Ubuntu Base ARM64 rootfs on demand. [unverified]
 - Verify HTTPS transfer size and SHA-256, safely extract into app-private staging, validate the rootfs, and atomically activate it. [unverified]
 - Show `READY` only after activation checks pass; do not claim that a Linux process, HTTP server, WebView, or SSH session is running. [unverified]
-- Treat the first target UI as an xterm.js-style web terminal for SSH, but keep the SSH bridge and execution bridge behind unresolved application boundaries until their spikes pass. [unverified]
+- Treat the first target UI as an xterm.js-style web terminal for SSH, but keep the SSH bridge and execution bridge behind unresolved application boundaries until their validation is complete. [unverified]
 
 The current install proof uses Ubuntu Base 24.04.5 ARM64, with the catalog digest pinned to the official `SHA256SUMS` entry.[10] Ubuntu's image documentation distinguishes root tarballs from VM disk formats and documents SHA256/GPG metadata for verification.[9] The catalog uses a 104,728,695-byte extraction budget: 100,784,109 bytes of regular archive files plus the two hard-link copies materialized on Android. [unverified]
 
@@ -80,7 +80,7 @@ This avoids implementing SSH cryptography and host-key policy in browser JavaScr
 
 ### Execution bridge
 
-PRoot is a user-space compatibility layer that can run a guest rootfs without privilege and can use QEMU user-mode for another architecture, but it still shares the host kernel and is not a security VM.[8] The project still needs a real Android 10+ execution-bridge spike before any `STARTING` or `RUNNING` implementation is honest. [unverified]
+PRoot is a user-space compatibility layer that can run a guest rootfs without privilege and can use QEMU user-mode for another architecture, but it still shares the host kernel and is not a security VM.[8] The Android 10+ execution-bridge validation is complete for one device; broader API-level, page-size, and OEM coverage remains untested before any wider claim. [unverified]
 
 ### SSH bridge implementation
 
@@ -100,11 +100,11 @@ Ubuntu Base is the first proof artifact because its official ARM64 root tarball 
 
 The target profile still needs a decision for whether reconnect restores the same remote SSH/PTTY session (for example through a guest-side multiplexer) or creates a new session. The UI should not promise session persistence until the bridge proves it. [unverified]
 
-## Next experiments
+## Next steps
 
 1. Package the smallest execution bridge into the APK or select a redistributable bridge; prove `/bin/sh` and a loopback health server on Android 10 arm64.
 2. Run a deterministic local WebSocket/PTY dummy server and verify exact-origin WebView loading, resize, reconnect, invalid-origin rejection, and process death.
-3. Prototype one server-side SSH bridge with host-key verification, public-key authentication, PTY resize, bounded output, and clean disconnect.
+3. Implement and validate one server-side SSH bridge with host-key verification, public-key authentication, PTY resize, bounded output, and clean disconnect.
 4. Add the xterm.js static bundle only after the bridge contract is fixed; avoid a remote CDN and pin the frontend assets.
 
 ## Sources

@@ -2,7 +2,7 @@
 
 ## Project status
 
-NusaDesk is an experimental Android/Linux workspace foundation. The current
+NusaDesk is an Android/Linux workspace. The current
 version is `0.0.0`, and runtime evidence is limited to one Android 10 / API 29
 ARM64 device. Security behavior on other Android versions, OEMs, and 16 KB
 page-size devices is not yet covered by the same evidence.
@@ -96,4 +96,4 @@ verified with the repository baseline checks:
 ./gradlew assembleDebug
 ```
 
-No fixed response or remediation SLA is promised for this experimental version.
+No fixed response or remediation SLA is promised for this version.

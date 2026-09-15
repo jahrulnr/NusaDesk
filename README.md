@@ -16,7 +16,7 @@
   <a href="docs/test-plan.md">Test plan</a>
 </p>
 
-> **Project status:** NusaDesk is an experimental product foundation. The core
+> **Project status:** NusaDesk is a Linux workspace for Android. The core
 > runtime and terminal path have been verified on one Android 10 / API 29 ARM64
 > device. The launcher and web-app experience has been UX-verified on an API 35
 > emulator. Broader device, Android-version, OEM, and 16 KB page-size coverage
