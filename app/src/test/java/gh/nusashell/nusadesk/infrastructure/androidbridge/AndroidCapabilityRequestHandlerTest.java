@@ -55,7 +55,9 @@ public class AndroidCapabilityRequestHandlerTest {
                         + "contacts.list,calllog.list,sms.inbox,"
                         + "telephony.info,telephony.cellinfo,location.stream.start,"
                         + "location.stream.poll,location.stream.stop,"
-                        + "media.start,media.status,media.stop",
+                        + "media.start,media.camera.start,media.microphone.start,"
+                        + "media.status,media.stop,"
+                        + "calendar.list,calendar.insert,calendar.update,calendar.delete",
                 info.getFields().get("capabilities"));
 
         AndroidCapabilityProtocol.Response battery = handler.handle(
@@ -465,6 +467,63 @@ public class AndroidCapabilityRequestHandlerTest {
                         + "\"method\":\"" + method + "\"}");
     }
 
+    /** Request carrying a raw bounded {@code params} object. */
+    private static AndroidCapabilityProtocol.Request request(String id, String method,
+                                                             String paramsJson) {
+        return AndroidCapabilityProtocol.decodeRequest(
+                "{\"v\":1,\"id\":\"" + id + "\",\"token\":\"right-token\","
+                        + "\"method\":\"" + method + "\",\"params\":" + paramsJson + "}");
+    }
+
+    /** Calendar read fake: scriptable snapshot and observable query. */
+    private static final class FakeCalendarSource implements CalendarSource {
+        CalendarEventSnapshot result = CalendarEventSnapshot.reading(
+                java.util.Collections.emptyList(), false);
+        RuntimeException failure;
+        CalendarQuery lastQuery;
+        int calls;
+
+        @Override
+        public CalendarEventSnapshot read(CalendarQuery query) {
+            calls++;
+            lastQuery = query;
+            if (failure != null) {
+                throw failure;
+            }
+            return result;
+        }
+    }
+
+    /** Calendar write fake: scriptable result and recorded validated requests. */
+    private static final class FakeCalendarWriter implements CalendarWriter {
+        CalendarWriteResult result = CalendarWriteResult.ok(7L);
+        RuntimeException failure;
+        final java.util.List<CalendarWriteRequest> requests = new java.util.ArrayList<>();
+
+        @Override
+        public CalendarWriteResult insert(CalendarWriteRequest request) {
+            return record(request);
+        }
+
+        @Override
+        public CalendarWriteResult update(CalendarWriteRequest request) {
+            return record(request);
+        }
+
+        @Override
+        public CalendarWriteResult delete(CalendarWriteRequest request) {
+            return record(request);
+        }
+
+        private CalendarWriteResult record(CalendarWriteRequest request) {
+            requests.add(request);
+            if (failure != null) {
+                throw failure;
+            }
+            return result;
+        }
+    }
+
     /** Handler with a default non-interacting fake for every new capability source. */
     private static AndroidCapabilityRequestHandler handler(String token,
                                                            BatteryStatusSource battery,
@@ -476,7 +535,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 query -> SmsSnapshot.unavailable(),
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
-                new FakeLocationStream(), new FakeLiveMediaController());
+                new FakeLocationStream(), new FakeLiveMediaController(),
+                new FakeCalendarSource(), new FakeCalendarWriter());
     }
 
     private static AndroidCapabilityRequestHandler handler(String token,
@@ -489,7 +549,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 kind -> SensorReading.unavailable(kind.getName()),
                 () -> LocationSnapshot.unavailable(),
                 contacts, callLog, sms, telephonyInfo,
-                cellInfo, new FakeLocationStream(), new FakeLiveMediaController());
+                cellInfo, new FakeLocationStream(), new FakeLiveMediaController(),
+                new FakeCalendarSource(), new FakeCalendarWriter());
     }
 
     private static AndroidCapabilityRequestHandler handler(String token, ContactsSource contacts) {
@@ -501,7 +562,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 query -> SmsSnapshot.unavailable(),
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
-                new FakeLocationStream(), new FakeLiveMediaController());
+                new FakeLocationStream(), new FakeLiveMediaController(),
+                new FakeCalendarSource(), new FakeCalendarWriter());
     }
 
     private static AndroidCapabilityRequestHandler handler(String token,
@@ -514,7 +576,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 query -> SmsSnapshot.unavailable(),
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
-                stream, new FakeLiveMediaController());
+                stream, new FakeLiveMediaController(),
+                new FakeCalendarSource(), new FakeCalendarWriter());
     }
 
     private static AndroidCapabilityRequestHandler handler(String token,
@@ -527,14 +590,174 @@ public class AndroidCapabilityRequestHandlerTest {
                 query -> SmsSnapshot.unavailable(),
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
-                new FakeLocationStream(), media);
+                new FakeLocationStream(), media,
+                new FakeCalendarSource(), new FakeCalendarWriter());
+    }
+
+    private static AndroidCapabilityRequestHandler calendarHandler(
+            FakeCalendarSource source, FakeCalendarWriter writer) {
+        return new AndroidCapabilityRequestHandler("right-token", () -> BATTERY,
+                kind -> SensorReading.unavailable(kind.getName()),
+                () -> LocationSnapshot.unavailable(),
+                query -> ContactsSnapshot.unavailable(),
+                query -> CallLogSnapshot.unavailable(),
+                query -> SmsSnapshot.unavailable(),
+                () -> TelephonyDeviceInfo.unavailable(),
+                () -> TelephonyCellInfo.unavailable(),
+                new FakeLocationStream(), new FakeLiveMediaController(),
+                source, writer);
+    }
+
+    @Test
+    public void calendarListReturnsBoundedRowsAndUsesTheSevenDayWindow() {
+        FakeCalendarSource source = new FakeCalendarSource();
+        long begin = System.currentTimeMillis() + 3_600_000L;
+        source.result = CalendarEventSnapshot.reading(java.util.List.of(
+                new CalendarEventSnapshot.EventEntry(11L, "Rapat", begin,
+                        begin + 3_600_000L, false, 3L, "Pribadi",
+                        "Asia/Jakarta", "Ruang 2")), false);
+        AndroidCapabilityRequestHandler handler =
+                calendarHandler(source, new FakeCalendarWriter());
+
+        AndroidCapabilityProtocol.Response response = handler.handle(
+                request("1", "calendar.list"));
+
+        assertTrue(response.isOk());
+        assertEquals(true, response.getFields().get("available"));
+        assertEquals(1L, response.getFields().get("count"));
+        assertEquals(false, response.getFields().get("truncated"));
+        String rows = String.valueOf(response.getFields().get("rows"));
+        assertTrue("rows carry the event", rows.contains("\"title\":\"Rapat\""));
+        assertTrue(rows.contains("\"calendar_name\":\"Pribadi\""));
+        assertTrue("attendees never cross the bridge",
+                !rows.contains("attendee") && !rows.contains("email"));
+        assertEquals("the guest cannot choose a window", 1, source.calls);
+        long window = source.lastQuery.getEndMillis() - source.lastQuery.getBeginMillis();
+        assertEquals(CalendarQuery.DEFAULT_WINDOW_MILLIS, window);
+    }
+
+    @Test
+    public void calendarListMapsPermissionAndProviderStatesToTypedErrors() {
+        FakeCalendarSource source = new FakeCalendarSource();
+        AndroidCapabilityRequestHandler handler =
+                calendarHandler(source, new FakeCalendarWriter());
+
+        source.result = CalendarEventSnapshot.permissionRequired();
+        assertError(handler, "1", "calendar.list", "calendar-permission-required");
+        source.result = CalendarEventSnapshot.permissionDenied();
+        assertError(handler, "2", "calendar.list", "calendar-permission-denied");
+        source.result = CalendarEventSnapshot.unavailable();
+        assertError(handler, "3", "calendar.list", "calendar-unavailable");
+        source.result = CalendarEventSnapshot.error();
+        assertError(handler, "4", "calendar.list", "capability-unavailable");
+        source.failure = new IllegalStateException("provider detail must not cross");
+        assertError(handler, "5", "calendar.list", "capability-unavailable");
+    }
+
+    @Test
+    public void calendarInsertAppliesValidatedParamsAndReportsTheEventId() {
+        FakeCalendarWriter writer = new FakeCalendarWriter();
+        writer.result = CalendarWriteResult.ok(42L);
+        AndroidCapabilityRequestHandler handler =
+                calendarHandler(new FakeCalendarSource(), writer);
+        long begin = System.currentTimeMillis() + 3_600_000L;
+
+        AndroidCapabilityProtocol.Response response = handler.handle(request("1",
+                "calendar.insert", "{\"title\":\"Rapat\",\"begin_ms\":" + begin
+                        + ",\"end_ms\":" + (begin + 3_600_000L) + "}"));
+
+        assertTrue(response.isOk());
+        assertEquals(Boolean.TRUE, response.getFields().get("written"));
+        assertEquals(42L, response.getFields().get("event_id"));
+        assertEquals(1, writer.requests.size());
+        CalendarWriteRequest recorded = writer.requests.get(0);
+        assertEquals(CalendarWriteRequest.Op.INSERT, recorded.getOp());
+        assertEquals("Rapat", recorded.getTitle());
+        assertEquals(Long.valueOf(begin), recorded.getBeginMillis());
+        assertEquals(Long.valueOf(begin + 3_600_000L), recorded.getEndMillis());
+    }
+
+    @Test
+    public void calendarWriteRejectsInvalidParamsWithATypedCode() {
+        FakeCalendarWriter writer = new FakeCalendarWriter();
+        AndroidCapabilityRequestHandler handler =
+                calendarHandler(new FakeCalendarSource(), writer);
+        long begin = System.currentTimeMillis() + 3_600_000L;
+
+        // Missing title.
+        assertParamsError(handler, "1", "calendar.insert",
+                "{\"begin_ms\":" + begin + ",\"end_ms\":" + (begin + 60_000L) + "}");
+        // End before begin.
+        assertParamsError(handler, "2", "calendar.insert",
+                "{\"title\":\"X\",\"begin_ms\":" + begin + ",\"end_ms\":"
+                        + (begin - 60_000L) + "}");
+        // Over-long title.
+        assertParamsError(handler, "3", "calendar.insert",
+                "{\"title\":\"" + "x".repeat(201) + "\",\"begin_ms\":" + begin
+                        + ",\"end_ms\":" + (begin + 60_000L) + "}");
+        // Unknown key fails closed.
+        assertParamsError(handler, "4", "calendar.insert",
+                "{\"title\":\"X\",\"begin_ms\":" + begin + ",\"end_ms\":"
+                        + (begin + 60_000L) + ",\"attendees\":\"a@b.c\"}");
+        // Wrong type.
+        assertParamsError(handler, "5", "calendar.delete", "{\"event_id\":\"7\"}");
+        // Too far in the future.
+        assertParamsError(handler, "6", "calendar.insert",
+                "{\"title\":\"X\",\"begin_ms\":"
+                        + (System.currentTimeMillis() + 400L * 24L * 3600_000L)
+                        + ",\"end_ms\":"
+                        + (System.currentTimeMillis() + 400L * 24L * 3600_000L + 60_000L) + "}");
+        assertEquals("no invalid request reaches the writer", 0, writer.requests.size());
+    }
+
+    @Test
+    public void paramsOnAMethodThatDeclaresNoneAreRejected() {
+        AndroidCapabilityRequestHandler handler = handler("right-token",
+                new FakeLiveMediaController());
+
+        AndroidCapabilityProtocol.Response response = handler.handle(
+                request("1", "media.status", "{\"title\":\"X\"}"));
+
+        assertFalse(response.isOk());
+        assertEquals("unsupported-parameter", response.getError());
+    }
+
+    @Test
+    public void calendarWriteFailureStaysATypedCode() {
+        FakeCalendarWriter writer = new FakeCalendarWriter();
+        writer.result = CalendarWriteResult.failed(CalendarWriteResult.ERROR_READ_ONLY);
+        AndroidCapabilityRequestHandler handler =
+                calendarHandler(new FakeCalendarSource(), writer);
+
+        assertParamsError(handler, "1", "calendar.delete", "{\"event_id\":7}",
+                "calendar-read-only");
+
+        writer.failure = new IllegalStateException("provider detail must not cross");
+        assertParamsError(handler, "2", "calendar.delete", "{\"event_id\":7}",
+                "calendar-failed");
+    }
+
+    /** Assert a typed error for a request that carries bounded params. */
+    private static void assertParamsError(AndroidCapabilityRequestHandler handler,
+                                          String id, String method, String paramsJson) {
+        assertParamsError(handler, id, method, paramsJson, "calendar-invalid-argument");
+    }
+
+    private static void assertParamsError(AndroidCapabilityRequestHandler handler,
+                                          String id, String method, String paramsJson,
+                                          String expectedError) {
+        AndroidCapabilityProtocol.Response response = handler.handle(
+                request(id, method, paramsJson));
+        assertFalse("expected a typed error for " + method + " " + paramsJson,
+                response.isOk());
+        assertEquals(expectedError, response.getError());
     }
 
     @Test
     public void mediaStartSuccessCarriesTheFlatRunningContractFields() {
         FakeLiveMediaController media = new FakeLiveMediaController();
-        media.startResult = LiveMediaStatus.running(
-                "rtsp://127.0.0.1:39871/", "h264", "aac", 1280, 720, 30, 2);
+        media.startResult = LiveMediaStatus.running(LiveMediaMode.BOTH,
+                "rtsp://127.0.0.1:39871/", "h264", 1280, 720, 30, "aac", 2);
         AndroidCapabilityRequestHandler handler = handler("right-token", media);
 
         AndroidCapabilityProtocol.Response response = handler.handle(
@@ -542,6 +765,7 @@ public class AndroidCapabilityRequestHandlerTest {
         assertTrue(response.isOk());
         Map<String, Object> fields = response.getFields();
         assertEquals("running", fields.get("state"));
+        assertEquals("both", fields.get("mode"));
         assertEquals("rtsp://127.0.0.1:39871/", fields.get("rtsp_url"));
         assertEquals("h264", fields.get("video_codec"));
         assertEquals("aac", fields.get("audio_codec"));
@@ -552,6 +776,56 @@ public class AndroidCapabilityRequestHandlerTest {
         assertFalse("the success response must not carry a file path",
                 fields.keySet().stream().anyMatch(key -> key.contains("path")));
         assertEquals(1, media.startCalls);
+        assertEquals("media.start is the combined mode",
+                LiveMediaMode.BOTH, media.lastStartMode);
+    }
+
+    @Test
+    public void mediaCameraStartUsesTheCameraModeAndOmitsAudioFields() {
+        FakeLiveMediaController media = new FakeLiveMediaController();
+        media.startResult = LiveMediaStatus.running(LiveMediaMode.CAMERA,
+                "rtsp://127.0.0.1:39871/", "h264", 1280, 720, 30, null, 2);
+        AndroidCapabilityRequestHandler handler = handler("right-token", media);
+
+        AndroidCapabilityProtocol.Response response = handler.handle(
+                request("1", "media.camera.start"));
+
+        assertTrue(response.isOk());
+        assertEquals(LiveMediaMode.CAMERA, media.lastStartMode);
+        assertEquals("camera", response.getFields().get("mode"));
+        assertEquals("h264", response.getFields().get("video_codec"));
+        assertFalse("a camera-only response carries no audio codec",
+                response.getFields().containsKey("audio_codec"));
+    }
+
+    @Test
+    public void mediaMicrophoneStartUsesTheMicrophoneModeAndOmitsVideoFields() {
+        FakeLiveMediaController media = new FakeLiveMediaController();
+        media.startResult = LiveMediaStatus.running(LiveMediaMode.MICROPHONE,
+                "rtsp://127.0.0.1:39871/", null, 0, 0, 0, "aac", 2);
+        AndroidCapabilityRequestHandler handler = handler("right-token", media);
+
+        AndroidCapabilityProtocol.Response response = handler.handle(
+                request("1", "media.microphone.start"));
+
+        assertTrue(response.isOk());
+        assertEquals(LiveMediaMode.MICROPHONE, media.lastStartMode);
+        assertEquals("microphone", response.getFields().get("mode"));
+        assertEquals("aac", response.getFields().get("audio_codec"));
+        assertFalse("a microphone-only response carries no video codec",
+                response.getFields().containsKey("video_codec"));
+        assertFalse(response.getFields().containsKey("video_width"));
+    }
+
+    @Test
+    public void mediaModeConflictIsATypedErrorOnEveryStartMethod() {
+        FakeLiveMediaController media = new FakeLiveMediaController();
+        media.startResult = LiveMediaStatus.failed(LiveMediaMode.CAMERA,
+                LiveMediaError.MODE_CONFLICT);
+        AndroidCapabilityRequestHandler handler = handler("right-token", media);
+
+        assertError(handler, "1", "media.camera.start", "media-mode-conflict");
+        assertError(handler, "2", "media.microphone.start", "media-mode-conflict");
     }
 
     @Test
@@ -595,7 +869,7 @@ public class AndroidCapabilityRequestHandlerTest {
         assertTrue(stopped.isOk());
         assertEquals("stopped", stopped.getFields().get("state"));
 
-        media.statusResult = LiveMediaStatus.starting();
+        media.statusResult = LiveMediaStatus.starting(LiveMediaMode.CAMERA);
         AndroidCapabilityProtocol.Response starting = handler.handle(
                 request("2", "media.status"));
         assertTrue(starting.isOk());
@@ -703,11 +977,13 @@ public class AndroidCapabilityRequestHandlerTest {
         RuntimeException stopFailure;
         int startCalls;
         int stopCalls;
+        LiveMediaMode lastStartMode;
         boolean closed;
 
         @Override
-        public LiveMediaStatus start() {
+        public LiveMediaStatus start(LiveMediaMode mode) {
             startCalls++;
+            lastStartMode = mode;
             if (startFailure != null) {
                 throw startFailure;
             }

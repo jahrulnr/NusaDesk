@@ -7,10 +7,15 @@ import java.util.Map;
 
 /**
  * Authorizes one parsed request and dispatches only the allowlisted capability
- * methods. There is deliberately no command, URI, class, or shell dispatch,
- * and no method takes request parameters: the strict envelope ({@code v},
- * {@code id}, {@code token}, {@code method}) stays unchanged, so every guest
- * call is one fixed allowlist string with host-owned defaults.
+ * methods. There is deliberately no command, URI, class, or shell dispatch and
+ * no guest-supplied method name, so every call is one fixed allowlist string
+ * with host-owned defaults. The envelope ({@code v}, {@code id}, {@code token},
+ * {@code method}) is param-free except for the declaring calendar writes, which
+ * may carry one bounded flat {@code params} object: a method that does not
+ * declare parameters answers {@link #ERROR_UNSUPPORTED_PARAMETER} when one is
+ * sent, an unknown or malformed parameter inside a declaring method is
+ * {@link CalendarWriteRequest#ERROR_INVALID_ARGUMENT}, and a top-level field
+ * other than {@code params} is rejected while decoding.
  *
  * <p>The unified live media session ({@code media.start} / {@code media.status}
  * / {@code media.stop}) is live-only: Android captures camera + microphone
@@ -30,6 +35,14 @@ import java.util.Map;
  * and a location foreground-service start are deliberately not wired in this
  * phase: the stream lives only while the bridge session is live, and closing
  * the bridge stops it.</p>
+ *
+ * <p>The calendar slice is bounded in both directions. {@code calendar.list}
+ * reads a fixed seven-day window of the provider's instance table with a
+ * minimal projection (no description, attendee, organizer, or reminder
+ * column), and {@code calendar.insert} / {@code calendar.update} /
+ * {@code calendar.delete} validate every parameter before a provider call,
+ * target only a calendar the user can write, and never write an attendee row
+ * or send an invitation. A write logs only its operation and ids.</p>
  */
 public final class AndroidCapabilityRequestHandler {
     public static final String METHOD_INFO = "bridge.info";
@@ -42,10 +55,16 @@ public final class AndroidCapabilityRequestHandler {
     public static final String METHOD_SMS_INBOX = "sms.inbox";
     public static final String METHOD_TELEPHONY_INFO = "telephony.info";
     public static final String METHOD_TELEPHONY_CELL_INFO = "telephony.cellinfo";
+    public static final String METHOD_CALENDAR_LIST = "calendar.list";
+    public static final String METHOD_CALENDAR_INSERT = "calendar.insert";
+    public static final String METHOD_CALENDAR_UPDATE = "calendar.update";
+    public static final String METHOD_CALENDAR_DELETE = "calendar.delete";
     public static final String METHOD_LOCATION_STREAM_START = "location.stream.start";
     public static final String METHOD_LOCATION_STREAM_POLL = "location.stream.poll";
     public static final String METHOD_LOCATION_STREAM_STOP = "location.stream.stop";
     public static final String METHOD_MEDIA_START = "media.start";
+    public static final String METHOD_MEDIA_CAMERA_START = "media.camera.start";
+    public static final String METHOD_MEDIA_MICROPHONE_START = "media.microphone.start";
     public static final String METHOD_MEDIA_STATUS = "media.status";
     public static final String METHOD_MEDIA_STOP = "media.stop";
 
@@ -63,6 +82,12 @@ public final class AndroidCapabilityRequestHandler {
      */
     public static final long LOCATION_POLL_TIMEOUT_MILLIS = 2_000L;
 
+    /** Typed error for a method that carries parameters it does not declare. */
+    public static final String ERROR_UNSUPPORTED_PARAMETER = "unsupported-parameter";
+    /** Methods that accept a bounded {@code params} object. */
+    private static final java.util.Set<String> PARAMETER_METHODS = java.util.Set.of(
+            METHOD_CALENDAR_INSERT, METHOD_CALENDAR_UPDATE, METHOD_CALENDAR_DELETE);
+
     /** Stable comma-separated capability list reported by {@code bridge.info}. */
     public static final String CAPABILITIES = METHOD_BATTERY + ","
             + METHOD_SENSOR_ACCELEROMETER + "," + METHOD_SENSOR_GYROSCOPE + ","
@@ -71,7 +96,10 @@ public final class AndroidCapabilityRequestHandler {
             + METHOD_TELEPHONY_INFO + "," + METHOD_TELEPHONY_CELL_INFO + ","
             + METHOD_LOCATION_STREAM_START + "," + METHOD_LOCATION_STREAM_POLL + ","
             + METHOD_LOCATION_STREAM_STOP + "," + METHOD_MEDIA_START + ","
-            + METHOD_MEDIA_STATUS + "," + METHOD_MEDIA_STOP;
+            + METHOD_MEDIA_CAMERA_START + "," + METHOD_MEDIA_MICROPHONE_START + ","
+            + METHOD_MEDIA_STATUS + "," + METHOD_MEDIA_STOP + ","
+            + METHOD_CALENDAR_LIST + "," + METHOD_CALENDAR_INSERT + ","
+            + METHOD_CALENDAR_UPDATE + "," + METHOD_CALENDAR_DELETE;
 
     private final String expectedToken;
     private final BatteryStatusSource batterySource;
@@ -84,6 +112,8 @@ public final class AndroidCapabilityRequestHandler {
     private final TelephonyCellSource telephonyCellSource;
     private final LocationStreamSession locationStream;
     private final LiveMediaController mediaController;
+    private final CalendarSource calendarSource;
+    private final CalendarWriter calendarWriter;
 
     public AndroidCapabilityRequestHandler(String expectedToken,
                                            BatteryStatusSource batterySource,
@@ -95,7 +125,9 @@ public final class AndroidCapabilityRequestHandler {
                                            TelephonyInfoSource telephonyInfoSource,
                                            TelephonyCellSource telephonyCellSource,
                                            LocationStreamSession locationStream,
-                                           LiveMediaController mediaController) {
+                                           LiveMediaController mediaController,
+                                           CalendarSource calendarSource,
+                                           CalendarWriter calendarWriter) {
         if (expectedToken == null || expectedToken.isEmpty()) {
             throw new IllegalArgumentException("expectedToken must not be blank");
         }
@@ -109,6 +141,8 @@ public final class AndroidCapabilityRequestHandler {
         requireNonNull(telephonyCellSource, "telephonyCellSource");
         requireNonNull(locationStream, "locationStream");
         requireNonNull(mediaController, "mediaController");
+        requireNonNull(calendarSource, "calendarSource");
+        requireNonNull(calendarWriter, "calendarWriter");
         this.expectedToken = expectedToken;
         this.batterySource = batterySource;
         this.sensorSource = sensorSource;
@@ -120,6 +154,8 @@ public final class AndroidCapabilityRequestHandler {
         this.telephonyCellSource = telephonyCellSource;
         this.locationStream = locationStream;
         this.mediaController = mediaController;
+        this.calendarSource = calendarSource;
+        this.calendarWriter = calendarWriter;
     }
 
     /** Return a bounded protocol response for the request, never throw to the socket loop. */
@@ -132,6 +168,13 @@ public final class AndroidCapabilityRequestHandler {
         }
         if (!constantTimeEquals(expectedToken, request.getToken())) {
             return AndroidCapabilityProtocol.Response.error(request.getId(), "unauthorized");
+        }
+        if (!request.getParams().isEmpty()
+                && !PARAMETER_METHODS.contains(request.getMethod())) {
+            // Only the methods that declare parameters may carry them; every
+            // other method fails closed instead of silently ignoring input.
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), ERROR_UNSUPPORTED_PARAMETER);
         }
         if (METHOD_INFO.equals(request.getMethod())) {
             Map<String, Object> fields = new LinkedHashMap<>();
@@ -177,13 +220,31 @@ public final class AndroidCapabilityRequestHandler {
             return locationStreamStop(request);
         }
         if (METHOD_MEDIA_START.equals(request.getMethod())) {
-            return mediaStart(request);
+            return mediaStart(request, LiveMediaMode.BOTH);
+        }
+        if (METHOD_MEDIA_CAMERA_START.equals(request.getMethod())) {
+            return mediaStart(request, LiveMediaMode.CAMERA);
+        }
+        if (METHOD_MEDIA_MICROPHONE_START.equals(request.getMethod())) {
+            return mediaStart(request, LiveMediaMode.MICROPHONE);
         }
         if (METHOD_MEDIA_STATUS.equals(request.getMethod())) {
             return mediaStatus(request);
         }
         if (METHOD_MEDIA_STOP.equals(request.getMethod())) {
             return mediaStop(request);
+        }
+        if (METHOD_CALENDAR_LIST.equals(request.getMethod())) {
+            return calendarReading(request);
+        }
+        if (METHOD_CALENDAR_INSERT.equals(request.getMethod())) {
+            return calendarWrite(request, CalendarWriteRequest.Op.INSERT);
+        }
+        if (METHOD_CALENDAR_UPDATE.equals(request.getMethod())) {
+            return calendarWrite(request, CalendarWriteRequest.Op.UPDATE);
+        }
+        if (METHOD_CALENDAR_DELETE.equals(request.getMethod())) {
+            return calendarWrite(request, CalendarWriteRequest.Op.DELETE);
         }
         if (MessagingReadPolicy.isSideEffectMethod(request.getMethod())) {
             // Reserved side-effecting methods are never dispatched: the
@@ -487,18 +548,21 @@ public final class AndroidCapabilityRequestHandler {
     }
 
     /**
-     * Start the unified live media stream with the host-owned fixed defaults.
+     * Start a live media session in the requested mode with the host-owned
+     * fixed defaults. The mode comes from the fixed allowlist method
+     * ({@code media.start} = camera + microphone, {@code media.camera.start},
+     * {@code media.microphone.start}); there is still no request parameter.
      * The controller blocks for a bounded start result, so a success response
      * is only returned once the RTSP listener is bound on loopback and the
-     * encoder metadata is ready. A failed start is a typed error response
-     * (the {@code media-*} codes); a controller exception maps to
-     * {@code media-start-failed} and never crosses the wire.
+     * metadata of every track the mode carries is ready. A failed start is a
+     * typed error response (the {@code media-*} codes, including
+     * {@code media-mode-conflict} when another mode is already running).
      */
     private AndroidCapabilityProtocol.Response mediaStart(
-            AndroidCapabilityProtocol.Request request) {
+            AndroidCapabilityProtocol.Request request, LiveMediaMode mode) {
         LiveMediaStatus status;
         try {
-            status = mediaController.start();
+            status = mediaController.start(mode);
         } catch (RuntimeException e) {
             return AndroidCapabilityProtocol.Response.error(
                     request.getId(), "media-start-failed");
@@ -548,6 +612,101 @@ public final class AndroidCapabilityRequestHandler {
         }
         return AndroidCapabilityProtocol.Response.success(request.getId(),
                 LiveMediaStatus.stopped().responseFields());
+    }
+
+    /**
+     * Read the next seven days of calendar events through the provider's
+     * instance table. Permission, unavailable, and provider-error states are
+     * typed errors; only a reading carries fields and rows.
+     */
+    private AndroidCapabilityProtocol.Response calendarReading(
+            AndroidCapabilityProtocol.Request request) {
+        CalendarEventSnapshot snapshot;
+        try {
+            snapshot = calendarSource.read(
+                    CalendarQuery.upcoming(System.currentTimeMillis()));
+        } catch (RuntimeException e) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), "capability-unavailable");
+        }
+        if (snapshot == null) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), "capability-unavailable");
+        }
+        switch (snapshot.getState()) {
+            case READING:
+                return AndroidCapabilityProtocol.Response.success(request.getId(),
+                        readingFields(snapshot.responseFields(), snapshot.encodeRows()));
+            case PERMISSION_REQUIRED:
+                return AndroidCapabilityProtocol.Response.error(
+                        request.getId(), "calendar-permission-required");
+            case PERMISSION_DENIED:
+                return AndroidCapabilityProtocol.Response.error(
+                        request.getId(), "calendar-permission-denied");
+            case UNAVAILABLE:
+                return AndroidCapabilityProtocol.Response.error(
+                        request.getId(), "calendar-unavailable");
+            default:
+                return AndroidCapabilityProtocol.Response.error(
+                        request.getId(), "capability-unavailable");
+        }
+    }
+
+    /**
+     * Validate the bounded {@code params} of one calendar write and apply it.
+     * A rejected parameter is the typed {@code calendar-invalid-argument}, and
+     * every write failure stays a bounded code — a provider exception never
+     * crosses the wire. Success reports the affected {@code event_id}.
+     */
+    private AndroidCapabilityProtocol.Response calendarWrite(
+            AndroidCapabilityProtocol.Request request, CalendarWriteRequest.Op op) {
+        Map<String, Object> params = request.getParams();
+        long now = System.currentTimeMillis();
+        CalendarWriteRequest.Parse parsed;
+        switch (op) {
+            case INSERT:
+                parsed = CalendarWriteRequest.insert(params, now);
+                break;
+            case UPDATE:
+                parsed = CalendarWriteRequest.update(params, now);
+                break;
+            default:
+                parsed = CalendarWriteRequest.delete(params);
+                break;
+        }
+        if (!parsed.isOk()) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), parsed.getErrorCode());
+        }
+        CalendarWriteResult result;
+        try {
+            switch (op) {
+                case INSERT:
+                    result = calendarWriter.insert(parsed.getRequest());
+                    break;
+                case UPDATE:
+                    result = calendarWriter.update(parsed.getRequest());
+                    break;
+                default:
+                    result = calendarWriter.delete(parsed.getRequest());
+                    break;
+            }
+        } catch (RuntimeException e) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), CalendarWriteResult.ERROR_FAILED);
+        }
+        if (result == null) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), CalendarWriteResult.ERROR_FAILED);
+        }
+        if (!result.isOk()) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), result.getErrorCode());
+        }
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("written", true);
+        fields.put("event_id", result.getEventId());
+        return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
     }
 
     private static AndroidCapabilityProtocol.Response mediaStatusResponse(

@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-17
+
 ### Added
+
+- Live media now offers three track modes instead of one: `media.start` keeps
+  the combined camera + microphone session, and `media.camera.start` /
+  `media.microphone.start` add camera-only and microphone-only sessions. The
+  mode decides everything downstream — the runtime grant the bridge checks
+  (camera-only never asks for the microphone, microphone-only never for the
+  camera), the foreground-service types the service claims, the sources the
+  pipeline starts, the tracks the SDP advertises, and the status fields
+  (`mode` plus `video_*` only for a video mode and `audio_codec` only for an
+  audio mode). One session runs at a time; starting another mode while one is
+  live answers the new typed `media-mode-conflict`. The guest CLI exposes the
+  modes as `nusadesk-android media start [--camera|--microphone]`, and the
+  runtime permission, foreground type, and notification for each mode were
+  device-verified on the S10e (ADR-0031, ACB-021).
 
 - The Android capability bridge is implemented in the existing guest session
   lifecycle as an authenticated, ephemeral `127.0.0.1` TCP JSON contract for
@@ -44,6 +60,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apt-installed native files cannot silently shadow the product implementation;
   rootfs-owned files remain physically intact.
 
+- Calendar access for the guest: `calendar.list` reads a fixed seven-day window
+  from the platform's instance table (at most 50 rows, `truncated` flag, no
+  description/attendee/organizer columns), and `calendar.insert`,
+  `calendar.update`, and `calendar.delete` write into the user's own writable
+  calendars with validated fields and typed errors. The request envelope gains
+  an optional bounded `params` object that only declaring methods accept — a
+  flat map of at most 8 safe short keys with bounded scalar values, rejected
+  wholesale when malformed, and `unsupported-parameter` on any other method. The
+  manifest declares `WRITE_CALENDAR`, the guest CLI gains
+  `nusadesk-android calendar list|add|update|delete` commands that build the
+  bounded parameters from typed flags (never a raw JSON argument), and the
+  generated guest docs gain `calendar.md` plus the params rules in `bridge.md`
+  (ADR-0032, ACB-023/ACB-024).
+
+- Systemd **user** units now come up with the guest session. The session
+  manager only starts system units, so a `systemctl --user` unit — a registered
+  web app enabled into `default.target`, for example — never started on its own
+  and only ran until the login shell that started it by hand exited. The
+  bridge payload now ships a product-owned `lw-user-manager.service` plus its
+  launcher, enabled at wire-up like the compose supervisor: it runs the same
+  vendored replacement in `--user` mode with `HOME=/root`,
+  `XDG_RUNTIME_DIR=/run/user/0`, and
+  `SYSTEMD_DEFAULT_TARGET=default.target`, and a session teardown stops the
+  enabled user units again (ADR-0024, SYS-002/SYS-003).
+
 ### Changed
 
 - The launcher now labels the curated settings surface `System`, hides the
@@ -57,15 +98,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   H.264/AAC stream, bounded client queues, and no capture files or artifact
   binds. The former snapshot/record paths are retired.
 
+### Fixed
+
+- A `systemctl --user` unit is no longer stranded after a session restart. Only
+  the system manager ran, so an enabled user unit stayed dead until someone
+  started it by hand in a terminal, and that hand-start died with the login
+  shell that issued it. A registered web app therefore answered nothing after a
+  force-close and relaunch. The product-owned user manager (see Added) now
+  starts the enabled user units with the session and stops them with it
+  (ADR-0024, SYS-002).
+- Stale `.status` marks are wiped for **user** instances too. The replacement
+  keeps user marks in `/run/user/<uid>/run/*.status`, which the previous
+  session-start wipe did not touch, so a mark whose pid the kernel later
+  recycled could make `systemctl --user is-active` report an active service
+  that this session never started (SYS-003).
+  provider requires it: the begin and end times travel in the `Instances` URI
+  path instead of a selection argument. The selection form made the provider
+  throw, which surfaced to the guest as `capability-unavailable` even though the
+  grant was present — a JVM fake provider could not catch it because it ignores
+  the URI shape (ACB-024).
+- Calendar inserts always write an `eventTimezone` (UTC for an all-day event,
+  the calendar's zone otherwise, falling back to the device zone). Relying on
+  the optional calendar-zone read meant an insert could fail with the provider's
+  `Event values must include an eventTimezone` and surface as `calendar-failed`.
+- The request decoder rejects any fifth top-level field that is not `params`.
+  Adding the optional `params` object had widened the accepted envelope, so an
+  unknown field was silently dropped instead of failing closed; the existing
+  protocol test caught it.
+- A single-track RTSP session now honours the interleaved channel pair the
+  client requests at SETUP (remembered per session) instead of insisting on
+  the fixed video 0-1 / audio 2-3 mapping. A microphone-only stream, whose
+  first advertised track is audio, was therefore rejected with
+  `461 Unsupported Transport` by ffprobe/ffmpeg; the RTCP sender reports now
+  use the same requested pair (ACB-022).
+- Live video now carries correct RTP timestamps. The H.264 track converted a
+  microsecond presentation time to the 90 kHz RTP clock by multiplying by 90
+  instead of 90/1000, so consecutive frames landed ~33 s apart in stream time
+  while audio advanced normally. A decoder therefore showed a single frozen
+  picture (or nothing) for a stream that was actually being transmitted. The
+  conversion is now `presentationTimeUs * 90 / 1000`, the existing RTSP test
+  asserts the 90 000-tick-per-second contract, and the physical pass decodes a
+  continuous 5 s clip (105 video frames, video duration matching audio).
+- A video pump that stops is logged instead of failing silently (bounded
+  diagnostic; the guest contract is unchanged).
+- `calllog.list` no longer fails on devices whose CallLog provider rejects a
+  SQL `LIMIT` token in the sort order (Samsung answers it with
+  `IllegalArgumentException: Invalid token LIMIT`, which surfaced to the guest
+  as `capability-unavailable`). The read now asks for a plain newest-first
+  order and enforces the row cap in Java, so the bound no longer depends on the
+  provider's SQL dialect; the same portability change was applied to the SMS
+  inbox read. A swallowed provider failure in this adapter is also logged now
+  instead of disappearing.
+
 ### Verification
 
 - `./gradlew test lintDebug assembleDebug --no-daemon --rerun-tasks` passes with
-  1142 JVM tests, zero failures/errors, and no lint issues.
+  1215 JVM tests, zero failures/errors/skips, and no lint issues. A previously
+  racy assertion in `GuestSshdStderrMonitorTest` waits for the drain instead of
+  a line count, so the suite is deterministic.
 - Samsung S10e SM-G970F (Android 12/API 31) passed the guest CLI
   `media.start/status/stop` flow with test-only camera/microphone grants;
   `ffprobe` saw H.264 1280x720 plus AAC 44.1 kHz mono through the loopback
   RTSP URL, and `ffmpeg -t 3 -f null -` decoded successfully. Grants were
   revoked and the media service was gone after stop.
+- The same device passed the calendar cycle with the generated guest CLI:
+  `calendar list` read an empty window before the test, `calendar add` returned
+  `event_id 138`, the next read showed that event, `calendar update` changed it,
+  `calendar delete` returned the window to empty, and an all-day insert came
+  back as `all_day true` with `timezone "UTC"` and was cleaned up. A 25-hour
+  request was rejected as `calendar-invalid-argument`, and with `WRITE_CALENDAR`
+  revoked the write answered `calendar-permission-required` while the read kept
+  working. Logcat carried only `calendar write op=… event=… calendar=…` lines
+  with no event content.
+- The same device reproduced and then cleared the reported user-unit failure:
+  before the fix `systemctl --user is-active nusashell.service` read `inactive`
+  and `127.0.0.1:10994` refused connections after a force-close and relaunch.
+  After the fix the session came up with the tree `libproot → system manager →
+  user manager → nusashell`, the marks read `MainPID=<user manager>` and
+  `MainPID=<the web app>`, and port 10994 answered `HTTP 200` with no manual
+  start. SIGTERM to the session manager stopped the user manager, the user unit,
+  its mark, and the port; a planted stale user mark (`MainPID=999999`) was gone
+  after the next wire-up.
 
 ## [0.1.0] - 2026-09-16
 

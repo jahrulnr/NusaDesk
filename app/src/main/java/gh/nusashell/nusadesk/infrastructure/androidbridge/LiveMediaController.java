@@ -13,15 +13,18 @@ package gh.nusashell.nusadesk.infrastructure.androidbridge;
  */
 public interface LiveMediaController extends AutoCloseable {
     /**
-     * Start the unified stream with the host-owned fixed defaults.
+     * Start a stream in the requested {@link LiveMediaMode} with the
+     * host-owned fixed defaults.
      *
      * <p>Bounded: returns within {@link LiveMediaDefaults#START_RESULT_TIMEOUT_MILLIS}
-     * of the foreground-service start. An already-running session is an
-     * idempotent success with the current status; a start already in flight
-     * is {@link LiveMediaError#BUSY}; a closed controller is
-     * {@link LiveMediaError#UNAVAILABLE}.</p>
+     * of the foreground-service start. An already-running session in the same
+     * mode is an idempotent success with the current status; a running
+     * session in another mode is {@link LiveMediaError#MODE_CONFLICT}; a
+     * start already in flight is {@link LiveMediaError#BUSY}; a closed
+     * controller is {@link LiveMediaError#UNAVAILABLE}. Only the permissions
+     * the mode needs are checked.</p>
      */
-    LiveMediaStatus start();
+    LiveMediaStatus start(LiveMediaMode mode);
 
     /** Current session status; always a valid status, never an exception. */
     LiveMediaStatus status();

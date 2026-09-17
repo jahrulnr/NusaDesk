@@ -78,13 +78,15 @@ public class GuestAddonPayloadProfileTest {
         assertTrue("the python3.12 interpreter package must be pinned", foundPython);
 
         List<VendoredFile> vendored = profile.getVendoredFiles();
-        assertEquals(14, vendored.size());
+        assertEquals(16, vendored.size());
         boolean foundSystemctl = false;
         boolean foundLicence = false;
         boolean foundService = false;
         boolean foundProcUptime = false;
         boolean foundProcStat = false;
         boolean foundSupervisor = false;
+        boolean foundUserManager = false;
+        boolean foundUserManagerUnit = false;
         for (VendoredFile file : vendored) {
             assertEquals(64, file.getSha256().length());
             assertTrue(file.getAssetPath().startsWith("services/")
@@ -122,6 +124,23 @@ public class GuestAddonPayloadProfileTest {
                 foundSupervisor = true;
                 assertTrue(file.isExecutable());
             }
+            // The user-service manager (ADR-0024): its launcher runs the
+            // vendored systemctl3 in --user mode, and its unit is what the
+            // session manager starts.
+            if ("usr/local/bin/lw-user-manager".equals(file.getOverlayPath())) {
+                foundUserManager = true;
+                assertTrue(file.isExecutable());
+                assertEquals(
+                        "c50ce5b3192a8f90c0b0ace9427081ae8872dbd221b9f72d3268f0085d2e8b3d",
+                        file.getSha256());
+            }
+            if ("etc/systemd/system/lw-user-manager.service".equals(file.getOverlayPath())) {
+                foundUserManagerUnit = true;
+                assertFalse(file.isExecutable());
+                assertEquals(
+                        "bef810d075eedfc8d71f541b3601f9d90b558ca386f0002b99a8815827255fc9",
+                        file.getSha256());
+            }
         }
         assertTrue("systemctl must be vendored and executable", foundSystemctl);
         assertTrue("the EUPL licence text must be vendored", foundLicence);
@@ -129,6 +148,9 @@ public class GuestAddonPayloadProfileTest {
         assertTrue("the /proc/uptime stand-in must be vendored", foundProcUptime);
         assertTrue("the /proc/stat stand-in must be vendored", foundProcStat);
         assertTrue("the session supervisor must be vendored and executable", foundSupervisor);
+        assertTrue("the user-service manager launcher must be vendored and executable",
+                foundUserManager);
+        assertTrue("the user-service manager unit must be vendored", foundUserManagerUnit);
 
         assertTrue(profile.getRequiredFiles().contains("usr/bin/systemctl"));
         assertTrue(profile.getRequiredFiles().contains("usr/bin/python3"));

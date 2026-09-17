@@ -1,7 +1,6 @@
 package gh.nusashell.nusadesk.infrastructure.service;
 
 import android.app.Notification;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 
@@ -21,6 +20,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaError;
+import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaMode;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaState;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaStatus;
 
@@ -29,13 +29,13 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Foreground-service lifecycle seams of the live media service on the JVM:
- * the camera|microphone foreground type, the user-visible notification, the
- * typed start result published to the registry, and the clean stop. The real
- * capture pipeline is replaced by a deterministic fake; this test does not
- * pretend to prove real camera encoders. SDK 30 is used so the runtime
- * foreground types (camera/microphone, API 30+) are exercised; on API 29 the
- * service falls back to the manifest-declared type by design.
+ * Foreground-service lifecycle seams of the live media service on the JVM: the
+ * per-mode camera/microphone foreground type, the user-visible per-mode
+ * notification, the typed start result published to the registry, and the
+ * clean stop. The real capture pipeline is replaced by a deterministic fake;
+ * this test does not pretend to prove real camera encoders. SDK 30 is used so
+ * the runtime foreground types (camera/microphone, API 30+) are exercised; on
+ * API 29 the service falls back to the manifest-declared type by design.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 30)
@@ -56,72 +56,103 @@ public class LiveMediaServiceTest {
     }
 
     @Test
-    public void startPromotesToForegroundWithCameraMicrophoneTypeAndPublishesRunning()
-            throws Exception {
+    public void bothModePromotesWithCameraAndMicrophoneTypes() throws Exception {
         FakePipeline pipeline = new FakePipeline();
-        pipeline.result = LiveMediaStatus.running(
-                "rtsp://127.0.0.1:12345/", "h264", "aac", 1280, 720, 30, 2);
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.BOTH,
+                "rtsp://127.0.0.1:12345/", "h264", 1280, 720, 30, "aac", 2);
         LiveMediaService.pipelineOverride = pipeline;
 
-        ServiceController<LiveMediaService> controller =
-                Robolectric.buildService(LiveMediaService.class, startIntent())
-                        .create();
-        controller.startCommand(0, 1);
-
-        ShadowService shadow = Shadow.extract(controller.get());
-        // The shadow's type getter is protected, so reflection reaches it and
-        // the runtime startForeground type bits stay asserted.
-        java.lang.reflect.Method typeMethod = ShadowService.class
-                .getDeclaredMethod("getForegroundServiceType");
-        typeMethod.setAccessible(true);
-        int type = (Integer) typeMethod.invoke(shadow);
-        assertTrue("camera foreground type must be declared at runtime",
+        ServiceController<LiveMediaService> controller = startService(LiveMediaMode.BOTH);
+        int type = foregroundType(controller);
+        assertTrue("camera type must be declared for the combined mode",
                 (type & ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) != 0);
-        assertTrue("microphone foreground type must be declared at runtime",
+        assertTrue("microphone type must be declared for the combined mode",
                 (type & ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0);
-        Notification notification = shadow.getLastForegroundNotification();
-        assertNotNull("a user-visible notification must be posted while streaming",
-                notification);
 
-        LiveMediaStatus result = LiveMediaRegistry.getInstance()
-                .awaitStartResult(2_000);
+        LiveMediaStatus result = LiveMediaRegistry.getInstance().awaitStartResult(2_000);
         assertEquals(LiveMediaState.RUNNING, result.getState());
+        assertEquals(LiveMediaMode.BOTH, result.getMode());
         assertEquals("rtsp://127.0.0.1:12345/", result.getRtspUrl());
         assertEquals(2L, result.getClientLimit());
         assertEquals(1, pipeline.startCalls);
-        assertEquals("the URL must be loopback", true,
-                result.getRtspUrl().startsWith("rtsp://127.0.0.1:"));
+        assertEquals("the service must start the pipeline in the requested mode",
+                LiveMediaMode.BOTH, pipeline.lastMode);
+        assertTrue(notificationText(controller).contains("Camera and microphone"));
+    }
+
+    @Test
+    public void cameraOnlyPromotesWithTheCameraTypeOnlyAndNamesOnlyTheCamera()
+            throws Exception {
+        FakePipeline pipeline = new FakePipeline();
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.CAMERA,
+                "rtsp://127.0.0.1:12345/", "h264", 1280, 720, 30, null, 2);
+        LiveMediaService.pipelineOverride = pipeline;
+
+        ServiceController<LiveMediaService> controller = startService(LiveMediaMode.CAMERA);
+        int type = foregroundType(controller);
+        assertTrue("camera type must be declared",
+                (type & ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) != 0);
+        assertEquals("a camera-only session must not claim the microphone type",
+                0, type & ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+
+        LiveMediaStatus result = LiveMediaRegistry.getInstance().awaitStartResult(2_000);
+        assertEquals(LiveMediaMode.CAMERA, result.getMode());
+        assertEquals(LiveMediaMode.CAMERA, pipeline.lastMode);
+        String text = notificationText(controller);
+        assertTrue("the notification names the camera: " + text, text.contains("Camera"));
+        assertTrue("the notification must not claim the microphone: " + text,
+                !text.contains("microphone"));
+    }
+
+    @Test
+    public void microphoneOnlyPromotesWithTheMicrophoneTypeOnlyAndNamesOnlyTheMicrophone()
+            throws Exception {
+        FakePipeline pipeline = new FakePipeline();
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.MICROPHONE,
+                "rtsp://127.0.0.1:12345/", null, 0, 0, 0, "aac", 2);
+        LiveMediaService.pipelineOverride = pipeline;
+
+        ServiceController<LiveMediaService> controller =
+                startService(LiveMediaMode.MICROPHONE);
+        int type = foregroundType(controller);
+        assertTrue("microphone type must be declared",
+                (type & ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0);
+        assertEquals("a microphone-only session must not claim the camera type",
+                0, type & ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
+
+        LiveMediaStatus result = LiveMediaRegistry.getInstance().awaitStartResult(2_000);
+        assertEquals(LiveMediaMode.MICROPHONE, result.getMode());
+        assertEquals(LiveMediaMode.MICROPHONE, pipeline.lastMode);
+        String text = notificationText(controller);
+        assertTrue("the notification names the microphone: " + text,
+                text.contains("Microphone"));
+        assertTrue("the notification must not claim the camera: " + text,
+                !text.contains("Camera"));
     }
 
     @Test
     public void failedStartPublishesTheTypedErrorAndStopsItself() throws Exception {
         FakePipeline pipeline = new FakePipeline();
-        pipeline.result = LiveMediaStatus.failed(LiveMediaError.PERMISSION_REQUIRED);
+        pipeline.result = LiveMediaStatus.failed(LiveMediaMode.CAMERA,
+                LiveMediaError.PERMISSION_REQUIRED);
         LiveMediaService.pipelineOverride = pipeline;
 
-        ServiceController<LiveMediaService> controller =
-                Robolectric.buildService(LiveMediaService.class, startIntent())
-                        .create();
-        controller.startCommand(0, 1);
+        ServiceController<LiveMediaService> controller = startService(LiveMediaMode.CAMERA);
 
-        LiveMediaStatus result = LiveMediaRegistry.getInstance()
-                .awaitStartResult(2_000);
+        LiveMediaStatus result = LiveMediaRegistry.getInstance().awaitStartResult(2_000);
         assertEquals(LiveMediaState.FAILED, result.getState());
         assertEquals("media-permission-required", result.getError());
-        awaitStoppedBySelf(controller);
+        awaitStopped(controller);
     }
 
     @Test
     public void stopActionTearsDownThePipelineAndPublishesStopped() throws Exception {
         FakePipeline pipeline = new FakePipeline();
-        pipeline.result = LiveMediaStatus.running(
-                "rtsp://127.0.0.1:12345/", "h264", "aac", 1280, 720, 30, 2);
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.BOTH,
+                "rtsp://127.0.0.1:12345/", "h264", 1280, 720, 30, "aac", 2);
         LiveMediaService.pipelineOverride = pipeline;
 
-        ServiceController<LiveMediaService> controller =
-                Robolectric.buildService(LiveMediaService.class, startIntent())
-                        .create();
-        controller.startCommand(0, 1);
+        ServiceController<LiveMediaService> controller = startService(LiveMediaMode.BOTH);
         LiveMediaRegistry.getInstance().awaitStartResult(2_000);
 
         // The controller applies the intent set via withIntent per command.
@@ -136,16 +167,13 @@ public class LiveMediaServiceTest {
     @Test
     public void stopDuringPipelineStartStillStopsTheInFlightPipeline() throws Exception {
         FakePipeline pipeline = new FakePipeline();
-        pipeline.result = LiveMediaStatus.running(
-                "rtsp://127.0.0.1:12345/", "h264", "aac", 1280, 720, 30, 2);
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.BOTH,
+                "rtsp://127.0.0.1:12345/", "h264", 1280, 720, 30, "aac", 2);
         pipeline.startGate = new CountDownLatch(1);
         pipeline.startEntered = new CountDownLatch(1);
         LiveMediaService.pipelineOverride = pipeline;
 
-        ServiceController<LiveMediaService> controller =
-                Robolectric.buildService(LiveMediaService.class, startIntent())
-                        .create();
-        controller.startCommand(0, 1);
+        ServiceController<LiveMediaService> controller = startService(LiveMediaMode.BOTH);
         assertTrue("pipeline start must be in flight",
                 pipeline.startEntered.await(2, TimeUnit.SECONDS));
 
@@ -162,14 +190,11 @@ public class LiveMediaServiceTest {
     @Test
     public void destroyWithoutExplicitStopStillTearsDown() throws Exception {
         FakePipeline pipeline = new FakePipeline();
-        pipeline.result = LiveMediaStatus.running(
-                "rtsp://127.0.0.1:12345/", "h264", "aac", 1280, 720, 30, 2);
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.BOTH,
+                "rtsp://127.0.0.1:12345/", "h264", 1280, 720, 30, "aac", 2);
         LiveMediaService.pipelineOverride = pipeline;
 
-        ServiceController<LiveMediaService> controller =
-                Robolectric.buildService(LiveMediaService.class, startIntent())
-                        .create();
-        controller.startCommand(0, 1);
+        ServiceController<LiveMediaService> controller = startService(LiveMediaMode.BOTH);
         LiveMediaRegistry.getInstance().awaitStartResult(2_000);
 
         controller.destroy();
@@ -179,9 +204,36 @@ public class LiveMediaServiceTest {
                 LiveMediaRegistry.getInstance().currentStatus().getState());
     }
 
-    private static Intent startIntent() {
+    private static ServiceController<LiveMediaService> startService(LiveMediaMode mode) {
+        ServiceController<LiveMediaService> controller =
+                Robolectric.buildService(LiveMediaService.class, startIntent(mode)).create();
+        controller.startCommand(0, 1);
+        return controller;
+    }
+
+    /** The shadow's type getter is protected, so reflection reaches it. */
+    private static int foregroundType(ServiceController<LiveMediaService> controller)
+            throws Exception {
+        ShadowService shadow = Shadow.extract(controller.get());
+        java.lang.reflect.Method typeMethod = ShadowService.class
+                .getDeclaredMethod("getForegroundServiceType");
+        typeMethod.setAccessible(true);
+        return (Integer) typeMethod.invoke(shadow);
+    }
+
+    private static String notificationText(ServiceController<LiveMediaService> controller)
+            throws Exception {
+        ShadowService shadow = Shadow.extract(controller.get());
+        Notification notification = shadow.getLastForegroundNotification();
+        assertNotNull("a user-visible notification must be posted while streaming",
+                notification);
+        return String.valueOf(notification.extras.get(Notification.EXTRA_TEXT));
+    }
+
+    private static Intent startIntent(LiveMediaMode mode) {
         return new Intent(RuntimeEnvironment.getApplication(), LiveMediaService.class)
-                .setAction(LiveMediaService.ACTION_START);
+                .setAction(LiveMediaService.ACTION_START)
+                .putExtra(LiveMediaService.EXTRA_MODE, mode.name());
     }
 
     private static Intent stopIntent() {
@@ -199,10 +251,6 @@ public class LiveMediaServiceTest {
                 shadow.isStoppedBySelf());
     }
 
-    private static void awaitStoppedBySelf(ServiceController<LiveMediaService> controller) {
-        awaitStopped(controller);
-    }
-
     private static void sleep(long millis) {
         try {
             Thread.sleep(millis);
@@ -211,17 +259,19 @@ public class LiveMediaServiceTest {
         }
     }
 
-    /** Deterministic pipeline fake with an observable stop. */
+    /** Deterministic pipeline fake with an observable start mode and stop. */
     public static final class FakePipeline implements LiveMediaPipeline {
         public LiveMediaStatus result = LiveMediaStatus.failed(LiveMediaError.START_FAILED);
         public volatile int startCalls;
         public volatile boolean stopped;
+        public volatile LiveMediaMode lastMode;
         public volatile CountDownLatch startEntered;
         public volatile CountDownLatch startGate;
 
         @Override
-        public LiveMediaStatus start() {
+        public LiveMediaStatus start(LiveMediaMode mode) {
             startCalls++;
+            lastMode = mode;
             CountDownLatch entered = startEntered;
             if (entered != null) {
                 entered.countDown();

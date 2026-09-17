@@ -1,5 +1,6 @@
 package gh.nusashell.nusadesk.infrastructure.service;
 
+import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaMode;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaStatus;
 
 /**
@@ -15,8 +16,12 @@ import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaStatus;
  */
 public interface LiveMediaPipeline {
 
-    /** Start the pipeline; bounded, terminal result only (running or failed). */
-    LiveMediaStatus start();
+    /**
+     * Start the pipeline in the requested mode; bounded, terminal result only
+     * (running or failed). Only the tracks the mode carries are started, so a
+     * camera-only session never opens the microphone.
+     */
+    LiveMediaStatus start(LiveMediaMode mode);
 
     /** Tear the pipeline down. Idempotent. */
     void stop();

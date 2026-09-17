@@ -26,12 +26,16 @@ import java.util.concurrent.TimeUnit;
  * Small loopback-only RTSP/RTP server for the unified live media stream,
  * Android-free and JVM-testable.
  *
- * <p>This is deliberately not a general RTSP server: it serves exactly one
- * H.264 + AAC-LC stream on the fixed path {@code /} to at most
+ * <p>This is deliberately not a general RTSP server: it serves the tracks of
+ * exactly one live media session on the fixed path {@code /} to at most
  * {@code clientLimit} local consumers, and it enforces the product security
  * boundary by construction — the listener always binds the explicit IPv4
  * loopback address passed to the constructor, and the constructor rejects
- * any non-loopback address. The transport is RTP over TCP interleaving
+ * any non-loopback address. Video (H.264) and audio (AAC-LC) are independent:
+ * a session may carry only one of them, in which case the SDP advertises only
+ * that track, {@code SETUP} for the other answers 404, {@code PLAY} requires
+ * only the advertised tracks, and only those tracks get RTCP. The transport
+ * is RTP over TCP interleaving
  * only (RFC 2326 interleaved mode), so no UDP port range is ever opened and
  * a single local guest consumer (ffplay/ffmpeg
  * {@code -rtsp_transport tcp}) is the intended peer.</p>
@@ -140,6 +144,11 @@ public final class LoopbackRtspServer implements AutoCloseable {
         return sps != null && pps != null;
     }
 
+    /** True once the SDP can describe the audio track. */
+    public boolean hasAudioFormat() {
+        return audioConfig != null;
+    }
+
     /** Provide the H.264 SPS/PPS (raw NAL units) and the coded dimensions. */
     public void setVideoFormat(byte[] spsNalu, byte[] ppsNalu, int width, int height) {
         if (spsNalu == null || spsNalu.length == 0 || ppsNalu == null || ppsNalu.length == 0) {
@@ -171,13 +180,16 @@ public final class LoopbackRtspServer implements AutoCloseable {
                                                long presentationTimeUs,
                                                boolean keyframe) {
         ensurePublishing();
-        long rtpTimestamp = presentationTimeUs * 90L;
+        // RTP clock for H.264 is 90 kHz, so microseconds convert as
+        // us * 90_000 / 1_000_000. Multiplying by 90 alone puts every frame
+        // ~33 s apart on the wire, which decoders read as a frozen picture.
+        long rtpTimestamp = presentationTimeUs * 90L / 1_000L;
         List<RtpPacket> packets = packetizeVideo(nalus, rtpTimestamp);
         recordVideo(packets);
         if (keyframe) {
             storeKeyframe(nalus, rtpTimestamp);
         }
-        relay(packets, CHANNEL_VIDEO_RTP);
+        relay(packets, true);
     }
 
     /** Publish one raw AAC frame (no ADTS) with its presentation time in microseconds. */
@@ -195,7 +207,7 @@ public final class LoopbackRtspServer implements AutoCloseable {
         audio.lastFrameTimestamp = rtpTimestamp;
         List<RtpPacket> packets = new ArrayList<>(1);
         packets.add(packet);
-        relay(packets, CHANNEL_AUDIO_RTP);
+        relay(packets, false);
     }
 
     /**
@@ -273,13 +285,16 @@ public final class LoopbackRtspServer implements AutoCloseable {
         video.storedKeyframeTimestamp = rtpTimestamp;
     }
 
-    private void relay(List<RtpPacket> packets, int channel) {
+    private void relay(List<RtpPacket> packets, boolean videoTrack) {
         if (packets.isEmpty()) {
             return;
         }
-        List<byte[]> wireFrames = wireFrames(packets, channel);
+        // The interleaved channel is chosen by the client at SETUP, so the wire
+        // framing happens per session: an audio-only session whose SETUP used
+        // 0-1 must not be answered on channel 2.
         for (ClientSession session : new ArrayList<>(sessions)) {
-            if (!session.enqueue(wireFrames)) {
+            int channel = videoTrack ? session.videoRtpChannel : session.audioRtpChannel;
+            if (!session.enqueue(wireFrames(packets, channel))) {
                 session.disconnect();
             }
         }
@@ -500,7 +515,7 @@ public final class LoopbackRtspServer implements AutoCloseable {
     }
 
     private byte[] describe(ClientSession session, String cseq, Request request) {
-        if (!hasVideoFormat()) {
+        if (!hasVideoFormat() && !hasAudioFormat()) {
             return response(session, "404 Not Found", cseq, null, null);
         }
         String body = buildSdp();
@@ -517,17 +532,31 @@ public final class LoopbackRtspServer implements AutoCloseable {
         if (!videoTrack && !audioTrack) {
             return response(session, "404 Not Found", cseq, null, null);
         }
+        // A track that this session does not carry does not exist for the
+        // client, so a camera-only stream has no trackID=1 and vice versa.
+        if ((videoTrack && !hasVideoFormat()) || (audioTrack && !hasAudioFormat())) {
+            return response(session, "404 Not Found", cseq, null, null);
+        }
         int rtpChannel = videoTrack ? CHANNEL_VIDEO_RTP : CHANNEL_AUDIO_RTP;
         int rtcpChannel = rtpChannel + 1;
-        String expectedInterleaved = rtpChannel + "-" + rtcpChannel;
         String transport = request.header("Transport");
         if (transport == null
-                || !transport.toUpperCase(Locale.ROOT).contains("RTP/AVP/TCP")
-                || !transport.contains("interleaved=" + expectedInterleaved)) {
+                || !transport.toUpperCase(Locale.ROOT).contains("RTP/AVP/TCP")) {
             // Only interleaved TCP is supported: no UDP port range is ever
-            // opened, and a foreign channel mapping cannot be relayed.
+            // opened.
             return response(session, "461 Unsupported Transport", cseq, null, null);
         }
+        // The client picks the interleaved channel pair at SETUP and numbers it
+        // in the order it sets the advertised tracks up, so an audio-only
+        // session is normally asked for on 0-1 (not the audio default 2-3).
+        // Honour the request and remember it for this session's relay.
+        int[] requested = requestedInterleaved(transport);
+        if (requested == null) {
+            return response(session, "461 Unsupported Transport", cseq, null, null);
+        }
+        rtpChannel = requested[0];
+        rtcpChannel = requested[1];
+        String interleaved = rtpChannel + "-" + rtcpChannel;
         boolean alreadySetup = videoTrack ? session.videoSetup : session.audioSetup;
         if (alreadySetup) {
             return response(session, "455 Method Not Valid In This State",
@@ -535,16 +564,54 @@ public final class LoopbackRtspServer implements AutoCloseable {
         }
         if (videoTrack) {
             session.videoSetup = true;
+            session.videoRtpChannel = rtpChannel;
         } else {
             session.audioSetup = true;
+            session.audioRtpChannel = rtpChannel;
         }
         String transportReply = "Transport: RTP/AVP/TCP;unicast;interleaved="
-                + expectedInterleaved + ";mode=play";
+                + interleaved + ";mode=play";
         return response(session, "200 OK", cseq, transportReply, null);
     }
 
+    /**
+     * Parse the client's {@code interleaved=<rtp>-<rtcp>} request into a
+     * channel pair. Requires two non-negative 8-bit channels where the RTCP
+     * channel follows the RTP one; {@code null} when the value is absent or
+     * unusable.
+     */
+    private static int[] requestedInterleaved(String transport) {
+        int start = transport.toLowerCase(Locale.ROOT).indexOf("interleaved=");
+        if (start < 0) {
+            return null;
+        }
+        String value = transport.substring(start + "interleaved=".length());
+        int commaOrSemicolon = value.indexOf(';');
+        if (commaOrSemicolon >= 0) {
+            value = value.substring(0, commaOrSemicolon);
+        }
+        int dash = value.indexOf('-');
+        if (dash <= 0) {
+            return null;
+        }
+        try {
+            int rtp = Integer.parseInt(value.substring(0, dash).trim());
+            int rtcp = Integer.parseInt(value.substring(dash + 1).trim());
+            if (rtp < 0 || rtp > 254 || rtcp != rtp + 1) {
+                return null;
+            }
+            return new int[] {rtp, rtcp};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     private byte[] play(ClientSession session, String cseq, Request request) {
-        if (!session.videoSetup || !session.audioSetup) {
+        boolean hasVideo = hasVideoFormat();
+        boolean hasAudio = hasAudioFormat();
+        // Only the tracks this session actually carries must be set up: a
+        // camera-only stream plays after a single video SETUP.
+        if ((hasVideo && !session.videoSetup) || (hasAudio && !session.audioSetup)) {
             return response(session, "455 Method Not Valid In This State",
                     cseq, null, null);
         }
@@ -556,16 +623,16 @@ public final class LoopbackRtspServer implements AutoCloseable {
             session.playing = true;
             // Replay the stored keyframe (and the last audio frame) so a new
             // consumer starts on a decodable point, then live frames follow.
-            if (video.storedKeyframeNalus != null) {
+            if (hasVideo && video.storedKeyframeNalus != null) {
                 List<RtpPacket> replay = packetizeVideo(
                         video.storedKeyframeNalus, video.storedKeyframeTimestamp);
                 recordVideo(replay);
-                if (!session.enqueue(wireFrames(replay, CHANNEL_VIDEO_RTP))) {
+                if (!session.enqueue(wireFrames(replay, session.videoRtpChannel))) {
                     session.teardown = true;
                     return response(session, "200 OK", cseq, null, null);
                 }
             }
-            if (audio.lastFrame != null) {
+            if (hasAudio && audio.lastFrame != null) {
                 RtpPacket packet = AacRtpPacketizer.packetize(audio.lastFrame,
                         audio.lastFrameTimestamp, audio.nextSequence, audio.ssrc);
                 audio.nextSequence = (audio.nextSequence + 1) & 0xFFFF;
@@ -573,7 +640,7 @@ public final class LoopbackRtspServer implements AutoCloseable {
                 audio.octetsSent += packet.payloadOctets();
                 List<RtpPacket> packets = new ArrayList<>(1);
                 packets.add(packet);
-                if (!session.enqueue(wireFrames(packets, CHANNEL_AUDIO_RTP))) {
+                if (!session.enqueue(wireFrames(packets, session.audioRtpChannel))) {
                     session.teardown = true;
                     return response(session, "200 OK", cseq, null, null);
                 }
@@ -581,13 +648,21 @@ public final class LoopbackRtspServer implements AutoCloseable {
             // The writer thread is started by serveSession after the PLAY
             // response is flushed, so the control reply precedes the data.
         }
-        String rtpInfo = "RTP-Info: url=rtsp://127.0.0.1:" + getPort()
-                + "/trackID=0;seq=" + seqVideoAtPlay
-                + ";rtptime=" + video.lastRtpTimestamp
-                + ",url=rtsp://127.0.0.1:" + getPort()
-                + "/trackID=1;seq=" + seqAudioAtPlay
-                + ";rtptime=" + audio.lastRtpTimestamp;
-        return response(session, "200 OK", cseq, rtpInfo, null);
+        StringBuilder rtpInfo = new StringBuilder("RTP-Info: ");
+        if (hasVideo) {
+            rtpInfo.append("url=rtsp://127.0.0.1:").append(getPort())
+                    .append("/trackID=0;seq=").append(seqVideoAtPlay)
+                    .append(";rtptime=").append(video.lastRtpTimestamp);
+        }
+        if (hasAudio) {
+            if (hasVideo) {
+                rtpInfo.append(',');
+            }
+            rtpInfo.append("url=rtsp://127.0.0.1:").append(getPort())
+                    .append("/trackID=1;seq=").append(seqAudioAtPlay)
+                    .append(";rtptime=").append(audio.lastRtpTimestamp);
+        }
+        return response(session, "200 OK", cseq, rtpInfo.toString(), null);
     }
 
     private void writeLoop(ClientSession session) {
@@ -602,8 +677,16 @@ public final class LoopbackRtspServer implements AutoCloseable {
                 }
                 long now = System.currentTimeMillis();
                 if (now - lastRtcp >= rtcpIntervalMillis) {
-                    output.write(wireFrame(CHANNEL_VIDEO_RTCP, rtcpSenderReport(video)));
-                    output.write(wireFrame(CHANNEL_AUDIO_RTCP, rtcpSenderReport(audio)));
+                    // Sender reports only for the tracks this session carries,
+                    // on the channel pair the client asked for at SETUP.
+                    if (hasVideoFormat()) {
+                        output.write(wireFrame(session.videoRtpChannel + 1,
+                                rtcpSenderReport(video)));
+                    }
+                    if (hasAudioFormat()) {
+                        output.write(wireFrame(session.audioRtpChannel + 1,
+                                rtcpSenderReport(audio)));
+                    }
                     output.flush();
                     lastRtcp = now;
                 }
@@ -643,9 +726,6 @@ public final class LoopbackRtspServer implements AutoCloseable {
     }
 
     private String buildSdp() {
-        String profileLevelId = H264RtpPacketizer.profileLevelId(sps);
-        String sprop = Base64.getEncoder().encodeToString(sps)
-                + "," + Base64.getEncoder().encodeToString(pps);
         StringBuilder sdp = new StringBuilder();
         sdp.append("v=0\r\n");
         sdp.append("o=- 1 1 IN IP4 127.0.0.1\r\n");
@@ -653,13 +733,18 @@ public final class LoopbackRtspServer implements AutoCloseable {
         sdp.append("c=IN IP4 127.0.0.1\r\n");
         sdp.append("t=0 0\r\n");
         sdp.append("a=control:*\r\n");
-        sdp.append("m=video 0 RTP/AVP ").append(PAYLOAD_TYPE_VIDEO).append("\r\n");
-        sdp.append("a=rtpmap:").append(PAYLOAD_TYPE_VIDEO).append(" H264/90000\r\n");
-        sdp.append("a=fmtp:").append(PAYLOAD_TYPE_VIDEO)
-                .append(" packetization-mode=1;profile-level-id=").append(profileLevelId)
-                .append(";sprop-parameter-sets=").append(sprop).append("\r\n");
-        sdp.append("a=control:trackID=0\r\n");
-        if (audioConfig != null) {
+        if (hasVideoFormat()) {
+            String profileLevelId = H264RtpPacketizer.profileLevelId(sps);
+            String sprop = Base64.getEncoder().encodeToString(sps)
+                    + "," + Base64.getEncoder().encodeToString(pps);
+            sdp.append("m=video 0 RTP/AVP ").append(PAYLOAD_TYPE_VIDEO).append("\r\n");
+            sdp.append("a=rtpmap:").append(PAYLOAD_TYPE_VIDEO).append(" H264/90000\r\n");
+            sdp.append("a=fmtp:").append(PAYLOAD_TYPE_VIDEO)
+                    .append(" packetization-mode=1;profile-level-id=").append(profileLevelId)
+                    .append(";sprop-parameter-sets=").append(sprop).append("\r\n");
+            sdp.append("a=control:trackID=0\r\n");
+        }
+        if (hasAudioFormat()) {
             sdp.append("m=audio 0 RTP/AVP ").append(PAYLOAD_TYPE_AUDIO).append("\r\n");
             sdp.append("a=rtpmap:").append(PAYLOAD_TYPE_AUDIO)
                     .append(" MPEG4-GENERIC/").append(audioSampleRate)
@@ -737,6 +822,9 @@ public final class LoopbackRtspServer implements AutoCloseable {
         volatile boolean teardown;
         volatile boolean dead;
         volatile Thread writerThread;
+        /** Interleaved RTP channels the client requested (RTCP is +1). */
+        volatile int videoRtpChannel = CHANNEL_VIDEO_RTP;
+        volatile int audioRtpChannel = CHANNEL_AUDIO_RTP;
 
         ClientSession(Socket socket, int queueCapacity) {
             this.socket = socket;

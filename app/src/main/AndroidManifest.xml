@@ -158,6 +158,12 @@
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Calendar write access for the bounded calendar.insert/update/delete
+         methods. The bridge never opens a consent UI: the grant is the user's
+         own decision from Android App Info, and a missing grant answers a
+         typed calendar-permission-required / calendar-permission-denied
+         instead of prompting. -->
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <!-- Keep the CPU alive during a user-invoked automation run. Normal
          permission, granted at install; the runtime still releases it. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />

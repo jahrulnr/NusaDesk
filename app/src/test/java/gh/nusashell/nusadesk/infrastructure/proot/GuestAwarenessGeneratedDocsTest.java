@@ -12,13 +12,14 @@ import static org.junit.Assert.assertTrue;
 public class GuestAwarenessGeneratedDocsTest {
 
     @Test
-    public void readmeLinksToAllFiveFixedDocs() {
+    public void readmeLinksToEveryTopicDoc() {
         String readme = GuestAwarenessReadmeWriter.content("0.1.0");
         assertTrue(readme.contains("(docs/README.md)"));
         assertTrue(readme.contains("(docs/bridge.md)"));
         assertTrue(readme.contains("(docs/media.md)"));
         assertTrue(readme.contains("(docs/battery-sensors-location.md)"));
         assertTrue(readme.contains("(docs/messaging-telephony.md)"));
+        assertTrue(readme.contains("(docs/calendar.md)"));
         assertTrue(readme.contains("App version: 0.1.0"));
         assertTrue(lineCount(readme) < 32);
     }
@@ -30,8 +31,13 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(index.contains("(media.md)"));
         assertTrue(index.contains("(battery-sensors-location.md)"));
         assertTrue(index.contains("(messaging-telephony.md)"));
+        assertTrue(index.contains("(calendar.md)"));
         assertTrue(index.contains("/usr/local/bin/nusadesk-android"));
-        assertTrue(index.contains("nusadesk-android media start|status|stop"));
+        assertTrue(index.contains("nusadesk-android calendar list"));
+        assertTrue(index.contains("nusadesk-android calendar add --title"));
+        assertTrue(index.contains("nusadesk-android calendar delete EVENT_ID"));
+        assertTrue(index.contains(
+                "nusadesk-android media start [--camera|--microphone]"));
         assertTrue(index.contains("nusadesk-android bridge info"));
     }
 
@@ -51,6 +57,14 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(bridge.contains("media.stop"));
         assertTrue(bridge.contains("token is never"));
         assertTrue(bridge.contains("16 KiB"));
+        // The envelope is no longer param-free: the calendar writes declare one
+        // bounded params object, and the doc must state that instead of the
+        // retired "no method takes request parameters" claim.
+        assertTrue(bridge.contains("## Bounded params"));
+        assertTrue(bridge.contains("Only `calendar.insert`, `calendar.update`, and `calendar.delete`"));
+        assertTrue(bridge.contains("calendar-invalid-argument"));
+        assertFalse("the retired param-free claim must not come back",
+                bridge.contains("no method takes request parameters"));
     }
 
     @Test
@@ -95,9 +109,18 @@ public class GuestAwarenessGeneratedDocsTest {
         for (String error : new String[]{
                 "media-permission-required", "media-permission-denied",
                 "media-foreground-required", "media-unavailable", "media-busy",
-                "media-encoder-unavailable", "media-start-failed"}) {
+                "media-mode-conflict", "media-encoder-unavailable",
+                "media-start-failed"}) {
             assertTrue("media doc must list " + error, media.contains("`" + error + "`"));
         }
+
+        // All three track modes are documented, including the CLI flags and the
+        // rule that a status/notification never claims a track that is off.
+        assertTrue(media.contains("media start --camera"));
+        assertTrue(media.contains("media start --microphone"));
+        assertTrue(media.contains("`mode`"));
+        assertTrue(media.contains("A microphone-only session therefore reports no video size"));
+        assertTrue(media.contains("camera-only session reports no audio codec"));
 
         // No claim that the stream was physically verified on a device.
         String lower = media.toLowerCase();
@@ -140,6 +163,37 @@ public class GuestAwarenessGeneratedDocsTest {
     }
 
     @Test
+    public void calendarDocCoversReadWriteBoundsAndPermissions() {
+        String doc = GuestAwarenessReadmeWriter.calendarDocContent("0.1.0");
+
+        for (String method : new String[]{
+                "calendar.list", "calendar.insert", "calendar.update", "calendar.delete"}) {
+            assertTrue("doc must list " + method, doc.contains(method));
+        }
+        assertTrue(doc.contains("READ_CALENDAR"));
+        assertTrue(doc.contains("WRITE_CALENDAR"));
+        assertTrue(doc.contains("seven days"));
+        assertTrue(doc.contains("count"));
+        assertTrue(doc.contains("truncated"));
+        for (String error : new String[]{
+                "calendar-permission-required", "calendar-permission-denied",
+                "calendar-unavailable", "calendar-invalid-argument",
+                "calendar-read-only", "calendar-not-found", "calendar-failed"}) {
+            assertTrue("doc must list " + error, doc.contains("`" + error + "`"));
+        }
+        assertTrue("the bounded write rules must be stated",
+                doc.contains("at most 24 hours long"));
+        assertTrue(doc.contains("contributor or better"));
+        assertTrue("attendee writes stay out of contract",
+                doc.contains("never sends an invitation"));
+        assertTrue(doc.contains("nusadesk-android calendar add --title"));
+        assertTrue(doc.contains("nusadesk-android calendar update"));
+        assertTrue(doc.contains("nusadesk-android calendar delete"));
+        assertFalse("no claim that calendar access was device-verified",
+                doc.toLowerCase().contains("verified"));
+    }
+
+    @Test
     public void everyGeneratedDocIsBoundedAndVersioned() {
         String version = "0.1.0";
         String[] docs = {
@@ -147,7 +201,8 @@ public class GuestAwarenessGeneratedDocsTest {
                 GuestAwarenessReadmeWriter.bridgeDocContent(version),
                 GuestAwarenessReadmeWriter.mediaDocContent(version),
                 GuestAwarenessReadmeWriter.batterySensorsLocationDocContent(version),
-                GuestAwarenessReadmeWriter.messagingTelephonyDocContent(version)
+                GuestAwarenessReadmeWriter.messagingTelephonyDocContent(version),
+                GuestAwarenessReadmeWriter.calendarDocContent(version)
         };
         for (String doc : docs) {
             assertTrue("docs must carry the app version", doc.contains("version " + version));
@@ -155,7 +210,9 @@ public class GuestAwarenessGeneratedDocsTest {
                     doc.contains("Docs generated by the NusaDesk Android app"));
             assertTrue("docs must warn about regeneration",
                     doc.contains("Manual edits may be overwritten"));
-            assertTrue("docs must stay bounded", lineCount(doc) < 120);
+            // The media doc is the largest topic (three track modes), so the
+            // single bound leaves headroom without letting a doc run away.
+            assertTrue("docs must stay bounded", lineCount(doc) < 130);
         }
     }
 

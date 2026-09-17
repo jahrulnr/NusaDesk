@@ -161,6 +161,32 @@ public final class GuestServiceBridge {
             "../lw-compose-supervisor.service";
 
     /**
+     * Guest-relative path of the product-owned user-service manager unit. The
+     * session manager only starts *system* units, so without this unit a
+     * {@code systemctl --user} unit — a web app enabled into
+     * {@code default.target}, for example — never came up with the session.
+     * Like the compose supervisor it is enabled at wire-up, because the
+     * vendored systemctl3 snapshots the enabled-unit set at
+     * {@code systemctl init}.
+     */
+    private static final String USER_MANAGER_UNIT =
+            "etc/systemd/system/lw-user-manager.service";
+    /** Enablement link for {@link #USER_MANAGER_UNIT}. */
+    private static final String USER_MANAGER_WANTS =
+            "etc/systemd/system/multi-user.target.wants/lw-user-manager.service";
+    private static final String USER_MANAGER_WANTS_TARGET =
+            "../lw-user-manager.service";
+
+    /**
+     * Guest-relative {@code /run} subtree that holds the replacement's
+     * <em>user</em> status marks ({@code /run/user/<uid>/<unit>.status}).
+     * These are wiped at session start for the same reason as the system
+     * marks: a mark left by a dead session would otherwise make
+     * {@code systemctl --user is-active} report a service that is not running.
+     */
+    private static final String RUN_USER_DIR = "run/user";
+
+    /**
      * Overlay members re-exposed at the same guest path. Every entry is a
      * path relative to both the overlay root and the guest root; an entry is
      * wired only when the overlay actually carries it.
@@ -183,8 +209,10 @@ public final class GuestServiceBridge {
             // the global supervisor unit is wired then enabled below.
             "usr/local/bin/udocker",
             "usr/local/bin/lw-compose-supervisor",
+            "usr/local/bin/lw-user-manager",
             "usr/local/lib/nusadesk/compose",
-            COMPOSE_SUPERVISOR_UNIT));
+            COMPOSE_SUPERVISOR_UNIT,
+            USER_MANAGER_UNIT));
 
     /**
      * Guest-relative directory whose flat {@code .so} members are each linked
@@ -313,8 +341,13 @@ public final class GuestServiceBridge {
                 }
             }
         }
-        if (wireComposeSupervisorEnabled(rootfsDir)) {
+        if (wireEnabled(rootfsDir, COMPOSE_SUPERVISOR_UNIT, COMPOSE_SUPERVISOR_WANTS,
+                COMPOSE_SUPERVISOR_WANTS_TARGET)) {
             linked.add(COMPOSE_SUPERVISOR_WANTS);
+        }
+        if (wireEnabled(rootfsDir, USER_MANAGER_UNIT, USER_MANAGER_WANTS,
+                USER_MANAGER_WANTS_TARGET)) {
+            linked.add(USER_MANAGER_WANTS);
         }
         Files.createDirectories(rootfsDir.resolve(RUN_SYSTEMD_SYSTEM));
         wipeStaleStatusMarks(rootfsDir);
@@ -322,22 +355,21 @@ public final class GuestServiceBridge {
     }
 
     /**
-     * Enable the global compose supervisor before the next
-     * {@code systemctl init}: once the unit exists in the rootfs — the
-     * freshly wired overlay link or real guest content — create the
-     * conventional wants link with its relative target. Same conflict rules
-     * as {@link #wireGuestPath}: only symlinks are replaced, and a real file
-     * at the wants path is guest-owned and never overwritten.
+     * Enable one product-owned unit before the next {@code systemctl init}:
+     * once the unit exists in the rootfs — the freshly wired overlay link or
+     * real guest content — create the conventional wants link with its
+     * relative target. Same conflict rules as {@link #wireGuestPath}: only
+     * symlinks are replaced, and a real file at the wants path is guest-owned
+     * and never overwritten.
      */
-    private boolean wireComposeSupervisorEnabled(Path rootfsDir) throws IOException {
-        if (!Files.exists(rootfsDir.resolve(COMPOSE_SUPERVISOR_UNIT),
-                LinkOption.NOFOLLOW_LINKS)) {
+    private boolean wireEnabled(Path rootfsDir, String unitPath, String wantsPath,
+                                String wantsTarget) throws IOException {
+        if (!Files.exists(rootfsDir.resolve(unitPath), LinkOption.NOFOLLOW_LINKS)) {
             return false;
         }
-        Path wants = rootfsDir.resolve(COMPOSE_SUPERVISOR_WANTS);
+        Path wants = rootfsDir.resolve(wantsPath);
         if (Files.isSymbolicLink(wants)) {
-            if (Files.readSymbolicLink(wants).toString()
-                    .equals(COMPOSE_SUPERVISOR_WANTS_TARGET)) {
+            if (Files.readSymbolicLink(wants).toString().equals(wantsTarget)) {
                 return false;
             }
             Files.delete(wants);
@@ -345,21 +377,49 @@ public final class GuestServiceBridge {
             return false;
         }
         Files.createDirectories(wants.getParent());
-        Files.createSymbolicLink(wants, Paths.get(COMPOSE_SUPERVISOR_WANTS_TARGET));
+        Files.createSymbolicLink(wants, Paths.get(wantsTarget));
         return true;
     }
 
     /**
-     * A session start is the guest's "boot": {@code .status} marks under
-     * {@code /run} left by a previous session describe dead processes and are
-     * deleted so {@code is-active}/{@code status} never read stale state.
+     * A session start is the guest's "boot": {@code .status} marks left by a
+     * previous session describe dead processes and are deleted so
+     * {@code is-active}/{@code status} never read stale state. Both mark
+     * locations are covered — the system dir ({@code /run/*.status}) and the
+     * per-uid user dirs the {@code --user} instance writes
+     * ({@code /run/user/<uid>/*.status}).
      */
     private void wipeStaleStatusMarks(Path rootfsDir) throws IOException {
         Path runDir = rootfsDir.resolve(RUN_DIR);
         if (!Files.isDirectory(runDir)) {
             return;
         }
-        try (Stream<Path> entries = Files.list(runDir)) {
+        wipeStatusFiles(runDir);
+        Path userRunDir = rootfsDir.resolve(RUN_USER_DIR);
+        if (!Files.isDirectory(userRunDir)) {
+            return;
+        }
+        try (Stream<Path> entries = Files.list(userRunDir)) {
+            for (Path entry : (Iterable<Path>) entries::iterator) {
+                if (!Files.isDirectory(entry)) {
+                    continue;
+                }
+                wipeStatusFiles(entry);
+                // The replacement's PID dir for a non-root instance is its
+                // runtime dir plus "run", so today's user marks live in
+                // /run/user/<uid>/run; the flat form above covers other
+                // layouts. Both are runtime marks only.
+                Path compatDir = entry.resolve("run");
+                if (Files.isDirectory(compatDir)) {
+                    wipeStatusFiles(compatDir);
+                }
+            }
+        }
+    }
+
+    /** Delete the {@code <unit>.status} marks directly inside one directory. */
+    private static void wipeStatusFiles(Path dir) throws IOException {
+        try (Stream<Path> entries = Files.list(dir)) {
             for (Path entry : (Iterable<Path>) entries::iterator) {
                 if (!Files.isDirectory(entry)
                         && entry.getFileName().toString().endsWith(".status")) {

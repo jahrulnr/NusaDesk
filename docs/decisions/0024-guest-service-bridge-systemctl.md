@@ -106,6 +106,30 @@ run the guest service manager inside the session's single PRoot tree.**
   through their pid files. A manager exit mid-session is a degradation —
   logged loudly via the exit-marker watcher — not a session stop.
 
+- **User units get their own manager instance.** The session manager starts
+  *system* units, so a `systemctl --user` unit — a web app enabled into
+  `default.target`, for example — never came up with the session: it stayed
+  dead until someone started it by hand, and a hand-start forks under that
+  login shell and dies with it. The product therefore ships a second,
+  product-owned unit, `lw-user-manager.service`, enabled at wire-up like the
+  compose supervisor. It runs `/usr/local/bin/lw-user-manager`, which sets the
+  three things the replacement needs and then replaces itself with the
+  manager: `HOME=/root` (user unit folders are resolved relative to home;
+  without it the manager answers `Unit … not found` for a unit that exists),
+  `XDG_RUNTIME_DIR=/run/user/0` (its status/pid dir), and
+  `SYSTEMD_DEFAULT_TARGET=default.target` (its built-in default,
+  `multi-user.target`, never exists in a user unit set). A SIGTERM to the
+  unit — which is how the session's system manager stops it — makes the user
+  manager stop every enabled user unit again, so user services share the
+  session's lifetime instead of a login shell's.
+- **Both mark locations are wiped at session start.** System marks live in
+  `/run/*.status`; the replacement's PID dir for a user instance is its runtime
+  dir plus `run`, so user marks live in `/run/user/<uid>/run/*.status` today
+  (the flat `/run/user/<uid>/*.status` form is wiped too, for other layouts).
+  A reader validates the mark's pid, so a dead pid already reads inactive — the
+  case the wipe removes is the dangerous one: a pid the kernel handed to an
+  unrelated later process would make a previous session's mark look active.
+
 ## Supported subset — what this is NOT
 
 `systemctl3.py` is a partial replacement written for containers. Supported:
@@ -119,7 +143,10 @@ service under the invoking shell, so a manually started service lives with
 that login session; services the *manager* starts (enabled units at session
 start) live for the session. Cross-tree signalling is impossible by PRoot
 design — a `systemctl` run in a *second* PRoot (not the product's session)
-cannot reach the manager's services.
+cannot reach the manager's services. The same rules hold for `--user` units
+through the product's user-manager unit, with two additions: the user manager
+needs a usable `HOME`, and `SYSTEMD_DEFAULT_TARGET` decides which target's
+wants directory it brings up (`default.target` for user units).
 
 ## Consequences
 
@@ -180,3 +207,37 @@ Production process tree after session start (single tracer):
   live session; a package-installed native-file shadowing case remains a
   targeted follow-up because neither connected rootfs currently carries that
   replacement.
+
+## Device evidence — systemd user units (Samsung S10e, `R39M209Q3TM`, 2026-09-17)
+
+The pass started from the user's own report: after a force-close and relaunch,
+a registered web app never answered, and its unit was a `systemctl --user` unit
+(`/root/.config/systemd/user/nusashell.service`, enabled into
+`default.target`, listening on `127.0.0.1:10994`).
+
+- **Root cause, observed before the fix.** With the session up,
+  `systemctl --user is-active nusashell.service` read `inactive` and
+  `127.0.0.1:10994` refused connections: the session manager starts system
+  units only, and nothing ran a `--user` instance. A user-mode lookup also needs
+  a usable `HOME` — the same command in a raw `run-as` shell without it answers
+  `Unit nusashell.service not found` for a unit that exists.
+- **Mechanism validated in one shot.** Running the replacement by hand as
+  `HOME=/root SYSTEMD_DEFAULT_TARGET=default.target systemctl --user init`
+  started the enabled unit (`active (running)`) and `GET /` returned
+  `HTTP/1.0 200 OK`; with the replacement's built-in default target
+  (`multi-user.target`) nothing was started, which is what fixed the design.
+- **After the fix, the user's exact flow.** `am force-stop` → `am start`:
+  the app re-installed the bridge payload (it gained two vendored files), the
+  session came up, and the process tree read
+  `libproot → python3.12 /opt/lw-services/usr/bin/systemctl init (n) →
+  python3.12 /usr/bin/systemctl --user init (n+8) → nusashell (n+13)`.
+  `/run/lw-user-manager.service.status` carried the user manager's `MainPID`,
+  and `curl` on the device loopback returned `HTTP 200` for port 10994 — the
+  web app is reachable again with no manual start.
+- **Graceful stop.** SIGTERM to the session manager (what the host's teardown
+  does) stopped `lw-user-manager.service`, which stopped the user unit and
+  removed its status mark, and port 10994 stopped answering — user services now
+  share the session's lifetime instead of a login shell's.
+- **Stale mark hygiene.** A mark planted for the next session
+  (`/run/user/0/run/nusashell.service.status` = `MainPID=999999`) was gone after
+  the next wire-up and replaced by the live pid's mark.

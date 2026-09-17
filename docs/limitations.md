@@ -147,6 +147,26 @@ vendored `systemctl3` bridge remains the effective user-facing implementation
 without deleting package-owned files (ADR-0024). The strict-bind behavior still
 needs a fresh device pass over an apt-installed replacement.
 
+### Systemd user units need the product's user manager
+
+Only the manager instance the session starts with a target brings a unit up
+automatically. The session's system manager starts *system* units, so a unit a
+user enables with `systemctl --user enable` (a web app enabled into
+`default.target`, for example) is started by the product-owned
+`lw-user-manager.service` unit, which runs the same replacement in `--user`
+mode with `HOME=/root`, `XDG_RUNTIME_DIR=/run/user/0`, and
+`SYSTEMD_DEFAULT_TARGET=default.target` (ADR-0024). Consequences to keep in
+mind:
+
+- A user unit enabled *during* a session runs only from the next session: the
+  replacement snapshots the enabled-unit set at `systemctl init`.
+- `systemctl --user` still needs a usable `HOME`; a process launched outside the
+  guest login shell (for example a raw adb `run-as` invocation) answers
+  `Unit … not found` for a unit that exists.
+- A hand-started service (`systemctl --user start` in a terminal) still forks
+  under that login shell and dies with it; only manager-started units live for
+  the whole session.
+
 ### Guest `/tmp` is session-temporary
 
 The active rootfs is persistent app-private storage, so its guest `/tmp` would
@@ -203,14 +223,20 @@ The protocol is intentionally small and dependency-free:
 - `sensor.accelerometer` and `sensor.gyroscope` perform one-shot,
   permission-free `SensorManager` reads with finite x/y/z values, bounded
   accuracy text, platform timestamp, and explicit unavailable/timeout errors.
-- `media.start`, `media.status`, and `media.stop` control one unified live
-  camera + microphone session. Camera2 and AudioRecord feed H.264 and AAC-LC
-  hardware encoders; a loopback-only RTSP-over-TCP listener returns a bounded
-  `rtsp://127.0.0.1:<port>/` URL. NusaDesk writes no JPEG, M4A, MP4, or other
+- `media.start`, `media.camera.start`, `media.microphone.start`, `media.status`,
+  and `media.stop` control one live camera/microphone session per mode. Camera2
+  and AudioRecord feed H.264 and AAC-LC hardware encoders; a loopback-only
+  RTSP-over-TCP listener returns a bounded `rtsp://127.0.0.1:<port>/` URL and
+  advertises only the tracks the active mode carries. A camera-only session
+  needs no microphone grant and claims no microphone foreground-service type,
+  and a microphone-only session needs no camera grant: the mode decides the
+  required grants, the foreground types, the SDP tracks, and the status fields
+  (`mode`, plus `video_*` only for a video mode and `audio_codec` only for an
+  audio mode). One session runs at a time — a start in another mode answers the
+  typed `media-mode-conflict`. NusaDesk writes no JPEG, M4A, MP4, or other
   capture artifact; consumers save manually if desired. The user-visible
-  camera|microphone foreground service returns typed `media-*` errors for
-  missing/denied grants, background starts, busy hardware, unavailable devices,
-  and encoder failures.
+  foreground service returns typed `media-*` errors for missing/denied grants,
+  background starts, busy hardware, unavailable devices, and encoder failures.
 - `contacts.list`, `calllog.list`, `sms.inbox`, `telephony.info`, and
   `telephony.cellinfo` are bounded read-only methods. SMS send and phone call
   remain typed `action-unsupported`.
@@ -275,6 +301,14 @@ Physical passes (2026-09-16 to 2026-09-17):
   foreground service disappeared, and both test-only grants were revoked.
   No capture file was written.
 
+- On the same S10e pass the three media modes were verified independently:
+  `media start --camera` ran with RECORD_AUDIO **revoked** and served only the
+  H.264 track (ffprobe `h264,video`; 181 decoded frames in 6 s), `media start
+  --microphone` ran with CAMERA **revoked** and served only the AAC track
+  (ffprobe `aac,audio,44100,1`; a 5 s recording with 216 audio frames and no
+  decode errors), the combined `media start` still served both tracks, and a
+  start in another mode while one was live answered `media-mode-conflict`.
+
 
 The manifest still declares the permission set a user-invoked
 automation surface may need: camera, microphone, location (foreground and
@@ -312,9 +346,10 @@ Current capability status:
 | Accelerometer/gyroscope | Implemented one-shot through `sensor.accelerometer`/`sensor.gyroscope`; no runtime grant; streaming/backpressure remains future work. |
 | Other sensors | Limitation for now; Android `SensorManager` types and rate/backpressure need explicit contracts. |
 | Location | Implemented foreground one-shot `location.get` and bounded location stream with explicit permission/status errors; no background GPS contract. |
-| Live camera + microphone | Implemented live-only `media.start/status/stop` with Camera2 + H.264/AAC and loopback RTSP-over-TCP; positive H.264/AAC consumer verification passed on Samsung S10e API 31, while wider OEM/API coverage remains open and no files are written. |
+| Live camera + microphone | Implemented live-only with three modes (`media.start` both, `media.camera.start`, `media.microphone.start`) over Camera2 + H.264/AAC and loopback RTSP-over-TCP; all three modes consumer-verified on Samsung S10e API 31, while wider OEM/API coverage remains open and no files are written. |
 | Contacts/call log/SMS/telephony | Implemented bounded read-only methods with per-method permissions, redaction, row/byte caps; real provider data verification remains pending. |
-| Bluetooth, calendar, usage stats, overlay | Limitation for now; permission declarations alone do not implement or authorize these APIs. |
+| Calendar | Implemented bounded read (`calendar.list`: fixed seven-day window, at most 50 rows, `truncated` flag, no description/attendee/organizer columns) and bounded writes (`calendar.insert`/`calendar.update`/`calendar.delete`) with per-method grants, validated fields, and typed errors; verified on Samsung S10e API 31. No attendee/invitation support, no calendar creation or listing, no guest-chosen window, and no reminder fields; wider OEM/API coverage remains open because the provider's instance/timezone shape is OEM-sensitive. |
+| Bluetooth, usage stats, overlay | Limitation for now; permission declarations alone do not implement or authorize these APIs. |
 | Notification listener/accessibility | Deliberately not declared; each is a special user-enabled service with a much broader data boundary. |
 
 `WRITE_EXTERNAL_STORAGE` is also left out: it grants nothing extra on API 30+

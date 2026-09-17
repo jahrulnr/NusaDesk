@@ -21,16 +21,26 @@ public final class AndroidCapabilityProtocol {
 
     /** One authenticated guest request. */
     public static final class Request {
+        /** Max keys in one {@code params} object. */
+        public static final int MAX_PARAM_KEYS = 8;
+        /** Max length of one {@code params} key. */
+        public static final int MAX_PARAM_KEY_CHARS = 32;
+        /** Max length of one string {@code params} value. */
+        public static final int MAX_PARAM_STRING_CHARS = 256;
+
         private final long version;
         private final String id;
         private final String token;
         private final String method;
+        private final Map<String, Object> params;
 
-        private Request(long version, String id, String token, String method) {
+        private Request(long version, String id, String token, String method,
+                        Map<String, Object> params) {
             this.version = version;
             this.id = id;
             this.token = token;
             this.method = method;
+            this.params = params == null ? new LinkedHashMap<>() : params;
         }
 
         public long getVersion() {
@@ -47,6 +57,15 @@ public final class AndroidCapabilityProtocol {
 
         public String getMethod() {
             return method;
+        }
+
+        /**
+         * Bounded, flat per-method parameters; empty when the frame carried
+         * none. Only methods that declare parameters may accept a non-empty
+         * map — the handler rejects the rest with a typed error.
+         */
+        public Map<String, Object> getParams() {
+            return new LinkedHashMap<>(params);
         }
     }
 
@@ -102,7 +121,7 @@ public final class AndroidCapabilityProtocol {
         }
         try {
             Map<String, Object> fields = parseObject(raw);
-            if (fields == null || fields.size() != 4
+            if (fields == null || fields.size() < 4 || fields.size() > 5
                     || !fields.containsKey("v")
                     || !fields.containsKey("id")
                     || !fields.containsKey("token")
@@ -128,10 +147,69 @@ public final class AndroidCapabilityProtocol {
                     || !boundedText(methodText, 64)) {
                 return null;
             }
-            return new Request(VERSION, idText, tokenText, methodText);
+            if (!fields.containsKey("params")) {
+                if (fields.size() != 4) {
+                    // An unknown top-level field fails closed instead of being
+                    // ignored: only `params` may extend the envelope.
+                    return null;
+                }
+                return new Request(VERSION, idText, tokenText, methodText, null);
+            }
+            Map<String, Object> params = boundedParams(fields.get("params"));
+            if (params == null) {
+                return null;
+            }
+            return new Request(VERSION, idText, tokenText, methodText, params);
         } catch (ParseException e) {
             return null;
         }
+    }
+
+    /**
+     * Validate the optional {@code params} object: a flat, small map of string,
+     * integer, or boolean values with safe short keys. Anything else (nested
+     * objects or arrays, oversized keys or strings, control characters) is
+     * rejected so a request can never smuggle an unbounded structure.
+     */
+    private static Map<String, Object> boundedParams(Object raw) {
+        if (!(raw instanceof Map)) {
+            return null;
+        }
+        Map<?, ?> candidate = (Map<?, ?>) raw;
+        if (candidate.size() > Request.MAX_PARAM_KEYS) {
+            return null;
+        }
+        Map<String, Object> params = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : candidate.entrySet()) {
+            if (!(entry.getKey() instanceof String)) {
+                return null;
+            }
+            String key = (String) entry.getKey();
+            if (!isSafeFieldName(key) || key.length() > Request.MAX_PARAM_KEY_CHARS) {
+                return null;
+            }
+            Object value = entry.getValue();
+            if (value instanceof String) {
+                String text = (String) value;
+                if (text.length() > Request.MAX_PARAM_STRING_CHARS
+                        || containsControlCharacter(text)) {
+                    return null;
+                }
+            } else if (!(value instanceof Long) && !(value instanceof Boolean)) {
+                return null;
+            }
+            params.put(key, value);
+        }
+        return params;
+    }
+
+    private static boolean containsControlCharacter(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (Character.isISOControl(value.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Encode a response as one newline-free JSON frame. */
@@ -225,8 +303,24 @@ public final class AndroidCapabilityProtocol {
     }
 
     private static Map<String, Object> parseObject(String json) throws ParseException {
+        int[] end = new int[1];
+        Map<String, Object> result = parseObjectAt(json, 0, end);
+        if (result == null) {
+            return null;
+        }
+        return skipSpace(json, end[0]) == json.length() ? result : null;
+    }
+
+    /**
+     * Parse one object beginning at {@code start}; {@code end[0]} receives the
+     * index just past its closing brace. Nested objects are parsed so the
+     * bounded {@code params} object is expressible, and the caller bounds their
+     * shape strictly.
+     */
+    private static Map<String, Object> parseObjectAt(String json, int start, int[] end)
+            throws ParseException {
         int length = json.length();
-        int index = skipSpace(json, 0);
+        int index = skipSpace(json, start);
         if (index >= length || json.charAt(index) != '{') {
             return null;
         }
@@ -234,17 +328,17 @@ public final class AndroidCapabilityProtocol {
         Map<String, Object> result = new LinkedHashMap<>();
         index = skipSpace(json, index);
         if (index < length && json.charAt(index) == '}') {
-            index++;
-            return skipSpace(json, index) == length ? result : null;
+            end[0] = index + 1;
+            return result;
         }
         while (index < length) {
             index = skipSpace(json, index);
             if (index >= length || json.charAt(index) != '"') {
                 throw new ParseException("expected key");
             }
-            int[] end = new int[1];
-            String key = parseString(json, index, end);
-            index = skipSpace(json, end[0]);
+            int[] valueEnd = new int[1];
+            String key = parseString(json, index, valueEnd);
+            index = skipSpace(json, valueEnd[0]);
             if (index >= length || json.charAt(index) != ':') {
                 throw new ParseException("expected colon");
             }
@@ -255,8 +349,14 @@ public final class AndroidCapabilityProtocol {
             Object value;
             char first = json.charAt(index);
             if (first == '"') {
-                value = parseString(json, index, end);
-                index = end[0];
+                value = parseString(json, index, valueEnd);
+                index = valueEnd[0];
+            } else if (first == '{') {
+                value = parseObjectAt(json, index, valueEnd);
+                if (value == null) {
+                    throw new ParseException("bad nested object");
+                }
+                index = valueEnd[0];
             } else if (first == 't' || first == 'f') {
                 boolean trueValue = json.startsWith("true", index);
                 String literal = trueValue ? "true" : "false";
@@ -266,8 +366,8 @@ public final class AndroidCapabilityProtocol {
                 value = trueValue;
                 index += literal.length();
             } else if (first == '-' || first >= '0' && first <= '9') {
-                value = parseNumber(json, index, end);
-                index = end[0];
+                value = parseNumber(json, index, valueEnd);
+                index = valueEnd[0];
             } else {
                 throw new ParseException("unsupported value");
             }
@@ -280,8 +380,8 @@ public final class AndroidCapabilityProtocol {
                 continue;
             }
             if (index < length && json.charAt(index) == '}') {
-                index++;
-                return skipSpace(json, index) == length ? result : null;
+                end[0] = index + 1;
+                return result;
             }
             throw new ParseException("expected comma or end");
         }

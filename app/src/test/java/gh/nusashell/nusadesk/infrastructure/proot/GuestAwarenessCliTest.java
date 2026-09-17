@@ -48,15 +48,37 @@ public class GuestAwarenessCliTest {
         assertTrue(content.contains("MAX_RESPONSE_BYTES = 16384"));
         assertTrue(content.contains("MAX_CONFIG_LINE_BYTES = 1024"));
         assertTrue(content.contains("secrets.token_urlsafe(8)"));
-        assertTrue(content.contains("usage: nusadesk-android media start|status|stop | bridge info"));
+        assertTrue(content.contains(
+                "usage: nusadesk-android media start [--camera|--microphone]"
+                        + " | media status | media stop | bridge info"
+                        + " | calendar list"
+                        + " | calendar add --title TITLE --begin-ms EPOCH_MS"
+                        + " --end-ms EPOCH_MS [--all-day] [--location LOCATION]"
+                        + " | calendar update EVENT_ID [--title TITLE]"
+                        + " [--begin-ms EPOCH_MS --end-ms EPOCH_MS]"
+                        + " [--all-day|--timed] [--location LOCATION]"
+                        + " | calendar delete EVENT_ID"));
 
-        // The fixed allowlist is exactly the four supported commands.
+        // The fixed allowlist is exactly the supported fixed commands; the
+        // calendar writes are parsed from typed flags instead of a table key.
         Map<String, String> expected = new LinkedHashMap<>();
         expected.put("media start", "media.start");
+        expected.put("media start --camera", "media.camera.start");
+        expected.put("media start --microphone", "media.microphone.start");
         expected.put("media status", "media.status");
         expected.put("media stop", "media.stop");
         expected.put("bridge info", "bridge.info");
+        expected.put("calendar list", "calendar.list");
         assertEquals(expected, commandMapping(content));
+
+        // Calendar writes build the bounded params object from typed flags, so
+        // a raw JSON payload or an unknown key can never be forwarded.
+        assertTrue(content.contains("def parse_calendar_changes"));
+        assertTrue(content.contains("request['params'] = params"));
+        assertFalse("no raw JSON argument is forwarded",
+                lower(content).contains("json.loads(sys.argv")
+                        || lower(content).contains("json.loads(tokens)"));
+        assertFalse("no attendee flag is expressible", content.contains("--attendee"));
 
         // No shell, no generic call passthrough, no arbitrary method command.
         String lower = content.toLowerCase();
@@ -112,15 +134,22 @@ public class GuestAwarenessCliTest {
         }
     }
 
+    /** The fixed command table only; the calendar flags are not commands. */
     private static Map<String, String> commandMapping(String content) {
+        int tableStart = content.indexOf("COMMANDS = {");
+        int tableEnd = content.indexOf("}", tableStart);
         Pattern pattern = Pattern.compile(
-                "^    '([a-z.]+ [a-z]+)': '([a-z.]+)',$", Pattern.MULTILINE);
-        Matcher matcher = pattern.matcher(content);
+                "^    '(.+)': '(.+)',$", Pattern.MULTILINE);
+        Matcher matcher = pattern.matcher(content.substring(tableStart, tableEnd));
         Map<String, String> mapping = new LinkedHashMap<>();
         while (matcher.find()) {
             mapping.put(matcher.group(1), matcher.group(2));
         }
         return mapping;
+    }
+
+    private static String lower(String text) {
+        return text.toLowerCase(java.util.Locale.ROOT);
     }
 
     /**
@@ -146,7 +175,16 @@ public class GuestAwarenessCliTest {
                 "ADDRESS = '127.0.0.1'",
                 "TOKEN = 'test_token_0123456789ABCDEF_inv'",
                 "PROTOCOL = '1'",
-                "USAGE = 'usage: nusadesk-android media start|status|stop | bridge info'",
+                "USAGE = ('usage: nusadesk-android media start [--camera|--microphone]'",
+                "         + ' | media status | media stop | bridge info | calendar list'",
+                "         + ' | calendar add --title TITLE --begin-ms EPOCH_MS'",
+                "         + ' --end-ms EPOCH_MS [--all-day] [--location LOCATION]'",
+                "         + ' | calendar update EVENT_ID [--title TITLE]'",
+                "         + ' [--begin-ms EPOCH_MS --end-ms EPOCH_MS]'",
+                "         + ' [--all-day|--timed] [--location LOCATION]'",
+                "         + ' | calendar delete EVENT_ID')",
+                "BEGIN_MS = 1760003600000",
+                "END_MS = 1760007200000",
                 "failures = []",
                 "",
                 "",
@@ -184,7 +222,7 @@ public class GuestAwarenessCliTest {
                 "",
                 "",
                 "def run_case(module, name, argv, response_fields, expect_rc,",
-                "             expected_method):",
+                "             expected_method, expected_params=None):",
                 "    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
                 "    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
                 "    server.bind((ADDRESS, 0))",
@@ -225,6 +263,8 @@ public class GuestAwarenessCliTest {
                 "        failures.append(name + ': token leaked into stdout')",
                 "    if received.get('method') != expected_method:",
                 "        failures.append(name + ': method ' + str(received.get('method')))",
+                "    if received.get('params') != expected_params:",
+                "        failures.append(name + ': params ' + repr(received.get('params')))",
                 "    if received.get('v') != 1:",
                 "        failures.append(name + ': bad request version')",
                 "    if received.get('token') != TOKEN:",
@@ -257,10 +297,25 @@ public class GuestAwarenessCliTest {
                 "         'media.status')",
                 "run_case(module, 'start-running', ['media', 'start'],",
                 "         {'v': 1, 'id': 'srv', 'ok': True, 'state': 'running',",
+                "          'mode': 'both',",
                 "          'rtsp_url': 'rtsp://127.0.0.1:1234/', 'video_codec': 'h264',",
                 "          'audio_codec': 'aac', 'video_width': 1280,",
                 "          'video_height': 720, 'video_fps': 30, 'client_limit': 2}, 0,",
                 "         'media.start')",
+                "run_case(module, 'camera-start', ['media', 'start', '--camera'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'state': 'running',",
+                "          'mode': 'camera',",
+                "          'rtsp_url': 'rtsp://127.0.0.1:1234/', 'video_codec': 'h264',",
+                "          'video_width': 1280, 'video_height': 720, 'video_fps': 30,",
+                "          'client_limit': 2}, 0, 'media.camera.start')",
+                "run_case(module, 'microphone-start', ['media', 'start', '--microphone'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'state': 'running',",
+                "          'mode': 'microphone',",
+                "          'rtsp_url': 'rtsp://127.0.0.1:1234/', 'audio_codec': 'aac',",
+                "          'client_limit': 2}, 0, 'media.microphone.start')",
+                "run_case(module, 'mode-conflict', ['media', 'start', '--camera'],",
+                "         {'v': 1, 'id': 'srv', 'ok': False,",
+                "          'error': 'media-mode-conflict'}, 1, 'media.camera.start')",
                 "run_case(module, 'stop-stopped', ['media', 'stop'],",
                 "         {'v': 1, 'id': 'srv', 'ok': True, 'state': 'stopped'}, 0,",
                 "         'media.stop')",
@@ -271,6 +326,46 @@ public class GuestAwarenessCliTest {
                 "run_case(module, 'typed-error', ['media', 'start'],",
                 "         {'v': 1, 'id': 'srv', 'ok': False,",
                 "          'error': 'media-permission-required'}, 1, 'media.start')",
+                "run_case(module, 'calendar-list', ['calendar', 'list'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'available': True,",
+                "          'count': 1, 'truncated': False,",
+                "          'rows': '[{\"event_id\":11,\"title\":\"Rapat\"}]'}, 0,",
+                "         'calendar.list')",
+                "run_case(module, 'calendar-add',",
+                "         ['calendar', 'add', '--title', 'Rapat',",
+                "          '--begin-ms', str(BEGIN_MS), '--end-ms', str(END_MS)],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'written': True,",
+                "          'event_id': 500}, 0, 'calendar.insert',",
+                "         {'title': 'Rapat', 'begin_ms': BEGIN_MS, 'end_ms': END_MS})",
+                "run_case(module, 'calendar-add-all-day',",
+                "         ['calendar', 'add', '--title', 'Cuti', '--all-day',",
+                "          '--location', 'Ruang 1',",
+                "          '--begin-ms', str(BEGIN_MS), '--end-ms', str(END_MS)],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'written': True,",
+                "          'event_id': 501}, 0, 'calendar.insert',",
+                "         {'title': 'Cuti', 'all_day': True, 'location': 'Ruang 1',",
+                "          'begin_ms': BEGIN_MS, 'end_ms': END_MS})",
+                "run_case(module, 'calendar-update-title',",
+                "         ['calendar', 'update', '500', '--title', 'Rapat baru'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'written': True,",
+                "          'event_id': 500}, 0, 'calendar.update',",
+                "         {'title': 'Rapat baru', 'event_id': 500})",
+                "run_case(module, 'calendar-update-timed-range',",
+                "         ['calendar', 'update', '500', '--begin-ms', str(BEGIN_MS),",
+                "          '--end-ms', str(END_MS), '--timed'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'written': True,",
+                "          'event_id': 500}, 0, 'calendar.update',",
+                "         {'begin_ms': BEGIN_MS, 'end_ms': END_MS, 'all_day': False,",
+                "          'event_id': 500})",
+                "run_case(module, 'calendar-delete', ['calendar', 'delete', '500'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'written': True,",
+                "          'event_id': 500}, 0, 'calendar.delete',",
+                "         {'event_id': 500})",
+                "run_case(module, 'calendar-typed-error',",
+                "         ['calendar', 'delete', '500'],",
+                "         {'v': 1, 'id': 'srv', 'ok': False,",
+                "          'error': 'calendar-read-only'}, 1, 'calendar.delete',",
+                "         {'event_id': 500})",
                 "",
                 "id_a = run_case(module, 'unique-id-a', ['media', 'status'],",
                 "                {'v': 1, 'id': 'srv', 'ok': True, 'state': 'stopped'},",
@@ -285,6 +380,43 @@ public class GuestAwarenessCliTest {
                 "usage_expects(module, 'unknown-subcommand', ['media', 'bogus'])",
                 "usage_expects(module, 'missing-subcommand', ['media'])",
                 "usage_expects(module, 'no-args', [])",
+                "usage_expects(module, 'unknown-mode-flag', ['media', 'start', '--bogus'])",
+                "usage_expects(module, 'mode-flag-on-status',",
+                "              ['media', 'status', '--camera'])",
+                "usage_expects(module, 'too-many-tokens',",
+                "              ['media', 'start', '--camera', 'extra'])",
+                "usage_expects(module, 'calendar-without-subcommand', ['calendar'])",
+                "usage_expects(module, 'calendar-unknown-subcommand',",
+                "              ['calendar', 'bogus'])",
+                "usage_expects(module, 'calendar-list-with-extra-token',",
+                "              ['calendar', 'list', '--camera'])",
+                "usage_expects(module, 'calendar-add-missing-range',",
+                "              ['calendar', 'add', '--title', 'X'])",
+                "usage_expects(module, 'calendar-add-half-range',",
+                "              ['calendar', 'add', '--title', 'X', '--begin-ms', '1'])",
+                "usage_expects(module, 'calendar-add-non-numeric-epoch',",
+                "              ['calendar', 'add', '--title', 'X', '--begin-ms', 'soon',",
+                "               '--end-ms', '1'])",
+                "usage_expects(module, 'calendar-add-empty-title',",
+                "              ['calendar', 'add', '--title', '', '--begin-ms', '1',",
+                "               '--end-ms', '2'])",
+                "usage_expects(module, 'calendar-add-unknown-parameter',",
+                "              ['calendar', 'add', '--title', 'X', '--begin-ms', '1',",
+                "               '--end-ms', '2', '--attendees', 'a@b.c'])",
+                "usage_expects(module, 'calendar-add-raw-json-parameter',",
+                "              ['calendar', 'add', '--params', '{\"title\":\"X\"}'])",
+                "usage_expects(module, 'calendar-update-without-id',",
+                "              ['calendar', 'update'])",
+                "usage_expects(module, 'calendar-update-without-change',",
+                "              ['calendar', 'update', '500'])",
+                "usage_expects(module, 'calendar-update-negative-id',",
+                "              ['calendar', 'update', '-1', '--title', 'X'])",
+                "usage_expects(module, 'calendar-delete-without-id',",
+                "              ['calendar', 'delete'])",
+                "usage_expects(module, 'calendar-delete-extra-token',",
+                "              ['calendar', 'delete', '500', 'extra'])",
+                "usage_expects(module, 'calendar-delete-non-numeric-id',",
+                "              ['calendar', 'delete', 'event'])",
                 "",
                 "rc, captured, err = capture(module, ['-h'])",
                 "if rc != 0 or USAGE not in captured:",

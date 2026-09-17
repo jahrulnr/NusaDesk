@@ -79,6 +79,11 @@ public class BridgePermissionsManifestTest {
             "android.permission.READ_SMS",
             "android.permission.READ_CONTACTS",
             "android.permission.READ_CALENDAR",
+            // Calendar write access for the bounded calendar.insert /
+            // calendar.update / calendar.delete methods. Never requested at
+            // launch: the user grants it from Android App Info, and a missing
+            // grant is a typed calendar-permission-* error.
+            "android.permission.WRITE_CALENDAR",
             // Keep-alive and user-granted special access.
             "android.permission.WAKE_LOCK",
             "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",

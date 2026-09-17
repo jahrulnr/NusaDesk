@@ -3,11 +3,14 @@
 ## Project status
 
 NusaDesk is an Android/Linux workspace. The current
-version is `0.1.0`. Runtime evidence covers the core runtime (Ubuntu Base
+version is `0.2.0`. Runtime evidence covers the core runtime (Ubuntu Base
 install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
-Android 10 / API 29 ARM64 device, and the bounded `udocker compose` adapter on
-one Android 12 / API 31 ARM64 device (Samsung S10e). Security behavior on
-other Android versions, OEMs, and 16 KB page-size devices is not yet covered
+Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
+Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
+Android capability bridge (battery, one-shot sensors, foreground location and
+its bounded stream, read-only contacts/call-log/SMS/telephony, live media in
+three track modes, and the bounded calendar read/write slice). Security behavior
+on other Android versions, OEMs, and 16 KB page-size devices is not yet covered
 by the same evidence.
 
 ## Reporting a vulnerability
@@ -58,7 +61,24 @@ The following are deliberate properties of the current design:
   supplementary groups. A guest runtime must not be treated as hostile-code
   isolation.
 - **Loopback is not authentication.** The guest SSH path uses credentials and
-  pinned host keys; sensitive future services need their own authentication.
+  pinned host keys, and the capability bridge requires its own per-session
+  token; any sensitive service of its own must carry its own authentication.
+- **The capability bridge authenticates every request.** The guest-facing
+  Android capability bridge (battery, sensors, location, read-only
+  contacts/call-log/SMS/telephony, live media, calendar) binds loopback only and
+  requires the token generated for the active session, compared in constant
+  time; the token is written into the session env file with owner-only
+  permissions where the filesystem supports them and is never printed by the
+  CLI. Dispatch is a fixed method allowlist — no shell, reflection, URI, class,
+  or Binder path — permission-aware methods return typed states instead of
+  opening a consent dialog, and the reserved side-effecting methods
+  (`sms.send`, `phone.call`) always answer `action-unsupported`.
+- **Calendar writes are the one parameterized surface.** The calendar methods
+  accept a bounded, flat `params` object (declaring methods only; anything else
+  fails closed), validate every field before a provider call, target only a
+  calendar the user can write, and never write an attendee row or send an
+  invitation. Writes are audited with one line carrying the operation and ids,
+  never the event title, location, or other content (ADR-0032).
 - **Runtime payloads are curated.** The product does not expose arbitrary URLs,
   arbitrary rootfs images, or arbitrary shell commands as its default API.
 - **Payload integrity is digest-based.** Current catalog entries use reviewed,
@@ -73,11 +93,14 @@ The following are deliberate properties of the current design:
   There is no boot or silent LAN autostart path.
 - **Guest services stay inside the session.** The `systemctl` replacement is a
   curated, digest-pinned guest payload — not systemd, and never installed or
-  invoked on the Android host. Its manager runs as a tracee of the session's
-  own PRoot tracer, signalled only through a command-line-verified pid file,
-  and guest services bind loopback paths under the same rules as every other
-  guest process. PRoot mediates `kill(2)` by tracer tree, so a guest command
-  cannot signal processes outside its own session tree (ADR-0024).
+  invoked on the Android host. Two manager instances run as tracees of the
+  session's own PRoot tracer: the system manager the host starts and signals on
+  teardown, and the product-owned `lw-user-manager.service` unit that runs the
+  same replacement in `--user` mode so `systemctl --user` units come up with
+  the session too. The host signals them only through command-line-verified pid
+  files, and guest services bind loopback paths under the same rules as every
+  other guest process. PRoot mediates `kill(2)` by tracer tree, so a guest
+  command cannot signal processes outside its own session tree (ADR-0024).
 - **Shared storage is opt-in and narrow.** The Linux workspace binds exactly one
   user-chosen folder into the guest at `~/nusadesk`. On Android 11+ that needs
   all-files access, which the product asks for from a visible explanation and

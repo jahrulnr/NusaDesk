@@ -88,9 +88,11 @@ runtime requirements.
 - A workspace folder you choose on the device appears at `~/nusadesk` inside
   Linux, so the same files are editable from Android and from the guest shell.
 - Guest services are managed with a familiar `systemctl`/`service` surface:
-  enabled services start with the Linux session and stop when it stops
-  (ADR-0024; a curated replacement, not real systemd — socket activation,
-  timers, and systemd sandboxing are out of scope).
+  enabled services start with the Linux session and stop when it stops — for
+  system units and for `systemctl --user` units alike (the session runs a
+  system manager and a product-owned user manager; ADR-0024. A curated
+  replacement, not real systemd — socket activation, timers, and systemd
+  sandboxing are out of scope).
 - Multi-service projects can be declared with a bounded `udocker compose`
   subset — for example `udocker compose -f ~/nusadesk/demo/compose.yaml up -d`
   in the guest terminal (ADR-0025, device-verified on the Samsung S10e). It
@@ -99,6 +101,29 @@ runtime requirements.
   limited to the workspace folder.
 - Reconnect and failure states that explain what is happening instead of
   pretending everything is running.
+
+### Reaching Android from the guest
+
+- The Linux guest can call a small, authenticated capability bridge over a
+  loopback-only JSON socket. The endpoint and a per-session token are pinned in
+  `/run/nusadesk/android-bridge.env`; the CLI never prints the token, and no
+  LAN or wildcard bind exists (ADR-0030).
+- `nusadesk-android` wraps that contract with fixed commands only: `bridge info`
+  for discovery, live media control (`media start [--camera|--microphone]`,
+  `media status`, `media stop`), and bounded calendar access (`calendar list`,
+  `calendar add`, `calendar update`, `calendar delete`). There is no generic
+  `call <method>` passthrough (ADR-0031, ADR-0032).
+- Live media is the camera and/or microphone streamed as H.264/AAC over RTSP on
+  loopback while the guest session and the visible media notification are
+  active. No capture file is ever written — save one yourself from the stream if
+  you need it.
+- Calendar access is bounded in both directions: a fixed seven-day read (at most
+  50 rows, no description/attendee/organizer fields) and validated writes into a
+  calendar the user can write. No attendee row is written and no invitation is
+  sent.
+- Permission-aware calls never open a consent dialog. A missing or revoked grant
+  returns a typed result the script can report, and SMS send / phone call are
+  deliberately not implemented.
 
 ### Your web apps, your workspace
 
@@ -139,9 +164,12 @@ documentation set:
 
 NusaDesk does not currently claim full Linux compatibility, guaranteed 24/7
 runtime survival, support for every Android device, LAN exposure, arbitrary
-package installation, or Google Play approval. See the [limitations](docs/limitations.md)
-and [test plan](docs/test-plan.md) before treating the current build as a
-production release.
+package installation, or Google Play approval. Guest access to Android APIs is
+limited to the reviewed capability adapters the ADRs describe — declaring a
+permission does not make an API available to Linux, and unsupported operations
+answer a typed error instead of a fake result. See the
+[limitations](docs/limitations.md) and [test plan](docs/test-plan.md) before
+treating the current build as a production release.
 
 ## License and distribution
 

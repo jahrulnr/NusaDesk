@@ -1,5 +1,6 @@
 package gh.nusashell.nusadesk.infrastructure.service;
 
+import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaMode;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaState;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaStatus;
 
@@ -27,9 +28,9 @@ public final class LiveMediaRegistry {
     private LiveMediaRegistry() {
     }
 
-    /** A start was accepted and the pipeline is coming up. */
-    public synchronized void publishStarting() {
-        status = LiveMediaStatus.starting();
+    /** A start in the given mode was accepted and the pipeline is coming up. */
+    public synchronized void publishStarting(LiveMediaMode mode) {
+        status = LiveMediaStatus.starting(mode);
         notifyAll();
     }
 

@@ -83,6 +83,9 @@ public class AndroidCallLogSourceTest {
         assertTrue("provider returned more rows than the cap", snapshot.isTruncated());
         assertTrue("newest-first ordering is requested",
                 provider.getLastSortOrder().contains("date DESC"));
+        assertFalse("a SQL LIMIT token is not portable across providers",
+                provider.getLastSortOrder().toUpperCase(java.util.Locale.ROOT)
+                        .contains("LIMIT"));
     }
 
     @Test

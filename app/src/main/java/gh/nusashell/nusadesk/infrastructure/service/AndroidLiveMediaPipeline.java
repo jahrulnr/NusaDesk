@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaDefaults;
+import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaMode;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaError;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaStartException;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaState;
@@ -43,53 +44,70 @@ public final class AndroidLiveMediaPipeline implements LiveMediaPipeline {
     }
 
     @Override
-    public synchronized LiveMediaStatus start() {
+    public synchronized LiveMediaStatus start(LiveMediaMode mode) {
+        if (mode == null) {
+            return LiveMediaStatus.failed(LiveMediaError.START_FAILED);
+        }
         if (started) {
-            return LiveMediaStatus.failed(LiveMediaError.BUSY);
+            return LiveMediaStatus.failed(mode, LiveMediaError.BUSY);
         }
         LoopbackRtspServer rtsp = new LoopbackRtspServer(
                 loopbackAddress(), LiveMediaDefaults.CLIENT_LIMIT);
         try {
             rtsp.start();
             server = rtsp;
-            Camera2EncoderSource videoSource = new Camera2EncoderSource(context, rtsp);
-            video = videoSource;
-            videoSource.start();
-            AudioEncoderSource audioSource = new AudioEncoderSource(context, rtsp);
-            audio = audioSource;
-            audioSource.start();
-            Camera2EncoderSource.VideoFormatInfo videoFormat = videoSource.awaitFormat(
-                    LiveMediaDefaults.FORMAT_READY_TIMEOUT_MILLIS);
-            AudioEncoderSource.AudioFormatInfo audioFormat = audioSource.awaitFormat(
-                    LiveMediaDefaults.FORMAT_READY_TIMEOUT_MILLIS);
-            if (videoFormat == null) {
-                throw new LiveMediaStartException(LiveMediaError.ENCODER_UNAVAILABLE,
-                        "H.264 metadata did not arrive");
+            Camera2EncoderSource.VideoFormatInfo videoFormat = null;
+            AudioEncoderSource.AudioFormatInfo audioFormat = null;
+            if (mode.hasVideo()) {
+                Camera2EncoderSource videoSource =
+                        new Camera2EncoderSource(context, rtsp);
+                video = videoSource;
+                videoSource.start();
+                videoFormat = videoSource.awaitFormat(
+                        LiveMediaDefaults.FORMAT_READY_TIMEOUT_MILLIS);
+                if (videoFormat == null) {
+                    throw new LiveMediaStartException(LiveMediaError.ENCODER_UNAVAILABLE,
+                            "H.264 metadata did not arrive");
+                }
             }
-            if (audioFormat == null) {
-                throw new LiveMediaStartException(LiveMediaError.ENCODER_UNAVAILABLE,
-                        "AAC metadata did not arrive");
+            if (mode.hasAudio()) {
+                AudioEncoderSource audioSource = new AudioEncoderSource(context, rtsp);
+                audio = audioSource;
+                audioSource.start();
+                audioFormat = audioSource.awaitFormat(
+                        LiveMediaDefaults.FORMAT_READY_TIMEOUT_MILLIS);
+                if (audioFormat == null) {
+                    throw new LiveMediaStartException(LiveMediaError.ENCODER_UNAVAILABLE,
+                            "AAC metadata did not arrive");
+                }
             }
-            rtsp.setVideoFormat(videoFormat.sps, videoFormat.pps,
-                    videoFormat.width, videoFormat.height);
-            rtsp.setAudioFormat(audioFormat.config, audioFormat.sampleRate,
-                    audioFormat.channels);
+            if (videoFormat != null) {
+                rtsp.setVideoFormat(videoFormat.sps, videoFormat.pps,
+                        videoFormat.width, videoFormat.height);
+            }
+            if (audioFormat != null) {
+                rtsp.setAudioFormat(audioFormat.config, audioFormat.sampleRate,
+                        audioFormat.channels);
+            }
             started = true;
             String rtspUrl = "rtsp://127.0.0.1:" + rtsp.getPort()
                     + LiveMediaDefaults.RTSP_PATH;
-            Log.i(TAG, "live media running at " + rtspUrl);
-            return LiveMediaStatus.running(rtspUrl, LiveMediaDefaults.VIDEO_CODEC,
-                    LiveMediaDefaults.AUDIO_CODEC, videoFormat.width,
-                    videoFormat.height, LiveMediaDefaults.TARGET_FPS,
+            Log.i(TAG, "live media running at " + rtspUrl + " mode=" + mode.wireName());
+            return LiveMediaStatus.running(mode, rtspUrl,
+                    mode.hasVideo() ? LiveMediaDefaults.VIDEO_CODEC : null,
+                    videoFormat != null ? videoFormat.width : 0,
+                    videoFormat != null ? videoFormat.height : 0,
+                    mode.hasVideo() ? LiveMediaDefaults.TARGET_FPS : 0,
+                    mode.hasAudio() ? LiveMediaDefaults.AUDIO_CODEC : null,
                     LiveMediaDefaults.CLIENT_LIMIT);
         } catch (LiveMediaStartException e) {
             Log.w(TAG, "live media start failed: " + e.getError().code(), e);
             stopInternal();
-            return LiveMediaStatus.failed(e.getError());
+            return LiveMediaStatus.failed(mode, e.getError());
         } catch (IOException | RuntimeException e) {
             Log.w(TAG, "live media start failed", e);
             stopInternal();
-            return LiveMediaStatus.failed(LiveMediaError.START_FAILED);
+            return LiveMediaStatus.failed(mode, LiveMediaError.START_FAILED);
         }
     }
 

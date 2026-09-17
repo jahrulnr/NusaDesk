@@ -81,28 +81,37 @@ public final class AndroidLiveMediaController implements LiveMediaController {
     }
 
     @Override
-    public synchronized LiveMediaStatus start() {
-        if (closed) {
-            return LiveMediaStatus.failed(LiveMediaError.UNAVAILABLE);
+    public synchronized LiveMediaStatus start(LiveMediaMode mode) {
+        if (mode == null) {
+            return LiveMediaStatus.failed(LiveMediaError.START_FAILED);
         }
-        LiveMediaState state = registry.currentStatus().getState();
+        if (closed) {
+            return LiveMediaStatus.failed(mode, LiveMediaError.UNAVAILABLE);
+        }
+        LiveMediaStatus current = registry.currentStatus();
+        LiveMediaState state = current.getState();
         if (state == LiveMediaState.RUNNING) {
-            // Idempotent start: the live session is already the answer.
-            return registry.currentStatus();
+            if (current.getMode() == mode) {
+                // Idempotent start: the live session is already the answer.
+                return current;
+            }
+            // One media session at a time: the guest must stop it first.
+            return LiveMediaStatus.failed(mode, LiveMediaError.MODE_CONFLICT);
         }
         if (state == LiveMediaState.STARTING) {
-            return LiveMediaStatus.failed(LiveMediaError.BUSY);
+            return LiveMediaStatus.failed(mode, LiveMediaError.BUSY);
         }
-        CapabilityPermission permission = permissionChecker.check();
+        CapabilityPermission permission = permissionChecker.check(mode);
         if (permission != CapabilityPermission.GRANTED) {
             LiveMediaError error = permission == CapabilityPermission.DENIED
                     ? LiveMediaError.PERMISSION_DENIED : LiveMediaError.PERMISSION_REQUIRED;
-            registry.publishResult(LiveMediaStatus.failed(error));
-            return LiveMediaStatus.failed(error);
+            registry.publishResult(LiveMediaStatus.failed(mode, error));
+            return LiveMediaStatus.failed(mode, error);
         }
-        registry.publishStarting();
+        registry.publishStarting(mode);
         Intent intent = new Intent(context, LiveMediaService.class)
-                .setAction(LiveMediaService.ACTION_START);
+                .setAction(LiveMediaService.ACTION_START)
+                .putExtra(LiveMediaService.EXTRA_MODE, mode.name());
         try {
             starter.startForegroundService(intent);
         } catch (IllegalStateException e) {
@@ -110,12 +119,12 @@ public final class AndroidLiveMediaController implements LiveMediaController {
             // the platform throws its ForegroundServiceStartNotAllowedException
             // subclass for the same condition. Either way the app was not
             // foreground-eligible for a camera/microphone service.
-            return fail(LiveMediaError.FOREGROUND_REQUIRED);
+            return fail(mode, LiveMediaError.FOREGROUND_REQUIRED);
         } catch (SecurityException e) {
             // The platform refused the start for a missing/revoked grant.
-            return fail(LiveMediaError.PERMISSION_DENIED);
+            return fail(mode, LiveMediaError.PERMISSION_DENIED);
         } catch (RuntimeException e) {
-            return fail(LiveMediaError.START_FAILED);
+            return fail(mode, LiveMediaError.START_FAILED);
         }
         LiveMediaStatus result = registry.awaitStartResult(startResultTimeoutMillis);
         if (result == null) {
@@ -123,13 +132,13 @@ public final class AndroidLiveMediaController implements LiveMediaController {
             // publishing the timeout so a late worker cannot resurrect a
             // stream after this bridge call has already failed.
             context.stopService(new Intent(context, LiveMediaService.class));
-            return fail(LiveMediaError.START_FAILED);
+            return fail(mode, LiveMediaError.START_FAILED);
         }
         return result;
     }
 
-    private LiveMediaStatus fail(LiveMediaError error) {
-        LiveMediaStatus failed = LiveMediaStatus.failed(error);
+    private LiveMediaStatus fail(LiveMediaMode mode, LiveMediaError error) {
+        LiveMediaStatus failed = LiveMediaStatus.failed(mode, error);
         registry.publishResult(failed);
         return failed;
     }

@@ -1,0 +1,22 @@
+[Unit]
+Description=NusaDesk guest user service manager (systemctl --user)
+# Product-owned bootstrap unit: the app enables it before session init, because
+# the vendored systemctl3 snapshots the enabled-unit set at `systemctl init` —
+# a mid-session `enable` would run the unit but never supervise it.
+#
+# Without this instance, `systemctl --user` units are never started with the
+# session: the session manager only starts system units, so a user unit (for
+# example a web app enabled into default.target) stayed dead until someone
+# started it by hand, and a hand-start died with that login shell.
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/lw-user-manager
+# The manager runs every enabled user unit's stop steps on SIGTERM; give it
+# room to finish before the system manager escalates the stop.
+TimeoutStopSec=20s
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

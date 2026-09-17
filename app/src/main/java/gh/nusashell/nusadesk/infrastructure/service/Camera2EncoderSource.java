@@ -315,7 +315,9 @@ public final class Camera2EncoderSource {
                     server.publishVideoFrame(nalus, info.presentationTimeUs, keyframe);
                 }
             } catch (IllegalStateException e) {
-                return; // codec or RTSP server closed: stop the pump.
+                // Previously silent: a pump that stops must be observable.
+                Log.w(TAG, "video pump stopped: " + e.getMessage());
+                return;
             } catch (RuntimeException e) {
                 Log.w(TAG, "video pump failed", e);
                 return;

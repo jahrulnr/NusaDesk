@@ -25,6 +25,7 @@ final class FakeQueryProvider extends ContentProvider {
     private boolean returnNullCursor;
     private RuntimeException failure;
     private int queryCount;
+    private Uri lastUri;
     private String lastSelection;
     private String[] lastSelectionArgs;
     private String lastSortOrder;
@@ -49,6 +50,10 @@ final class FakeQueryProvider extends ContentProvider {
 
     int getQueryCount() {
         return queryCount;
+    }
+
+    Uri getLastUri() {
+        return lastUri;
     }
 
     String getLastSelection() {
@@ -76,6 +81,7 @@ final class FakeQueryProvider extends ContentProvider {
     public Cursor query(Uri uri, String[] projection, String selection,
                         String[] selectionArgs, String sortOrder) {
         queryCount++;
+        lastUri = uri;
         lastProjection = projection;
         lastSelection = selection;
         lastSelectionArgs = selectionArgs;

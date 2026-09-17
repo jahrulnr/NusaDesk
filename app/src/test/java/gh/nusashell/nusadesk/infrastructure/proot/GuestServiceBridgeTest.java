@@ -196,6 +196,55 @@ public class GuestServiceBridgeTest {
     }
 
     @Test
+    public void wireIntoLinksUserServiceManagerAndEnablesIt() throws Exception {
+        GuestServiceBridge bridge = bridge();
+
+        List<String> wired = bridge.wireInto(rootfs.getRoot().toPath());
+
+        // The launcher is wired onto PATH and the unit into the system unit
+        // dir, then enabled for the next `systemctl init` — the vendored
+        // manager snapshots that set, so a mid-session enable would never be
+        // supervised.
+        assertLinked(rootfs.getRoot(), "usr/local/bin/lw-user-manager",
+                "/opt/lw-services/usr/local/bin/lw-user-manager");
+        assertLinked(rootfs.getRoot(), "etc/systemd/system/lw-user-manager.service",
+                "/opt/lw-services/etc/systemd/system/lw-user-manager.service");
+        String wants =
+                "etc/systemd/system/multi-user.target.wants/lw-user-manager.service";
+        assertLinked(rootfs.getRoot(), wants, "../lw-user-manager.service");
+        assertTrue(wired.contains("usr/local/bin/lw-user-manager"));
+        assertTrue(wired.contains("etc/systemd/system/lw-user-manager.service"));
+        assertTrue(wired.contains(wants));
+        // Idempotent, like the compose enablement.
+        assertTrue(bridge.wireInto(rootfs.getRoot().toPath()).isEmpty());
+    }
+
+    @Test
+    public void wireIntoWipesStaleUserStatusMarksToo() throws Exception {
+        GuestServiceBridge bridge = bridge();
+        touch(rootfs.getRoot(), "run/nusashell.service.status");
+        // Today's user marks live one level deeper: the replacement's PID dir
+        // for a non-root instance is <runtime dir>/run.
+        touch(rootfs.getRoot(), "run/user/0/run/nusashell.service.status");
+        touch(rootfs.getRoot(), "run/user/0/nusashell.service.status");
+        touch(rootfs.getRoot(), "run/user/0/run/keep-me");
+
+        bridge.wireInto(rootfs.getRoot().toPath());
+
+        // A previous session's mark is pointless state at best and a lie at
+        // worst (a recycled pid makes it look active), so both locations are
+        // cleared at wire-up.
+        assertFalse(Files.exists(rootfs.getRoot().toPath()
+                .resolve("run/nusashell.service.status")));
+        assertFalse(Files.exists(rootfs.getRoot().toPath()
+                .resolve("run/user/0/run/nusashell.service.status")));
+        assertFalse(Files.exists(rootfs.getRoot().toPath()
+                .resolve("run/user/0/nusashell.service.status")));
+        assertTrue("only status marks are wiped",
+                Files.exists(rootfs.getRoot().toPath().resolve("run/user/0/run/keep-me")));
+    }
+
+    @Test
     public void wireIntoSkipsComposeWantsWhenUnitAbsent() throws Exception {
         GuestServiceBridge bridge = bridge();
         // A torn overlay (unit member deleted after detection) leaves nothing

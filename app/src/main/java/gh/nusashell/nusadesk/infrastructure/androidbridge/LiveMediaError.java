@@ -18,6 +18,8 @@ public enum LiveMediaError {
     UNAVAILABLE("media-unavailable"),
     /** A session is already starting, or the camera is in use by another app. */
     BUSY("media-busy"),
+    /** A session with a different track mode is already running. */
+    MODE_CONFLICT("media-mode-conflict"),
     /** A hardware encoder or codec metadata could not be prepared. */
     ENCODER_UNAVAILABLE("media-encoder-unavailable"),
     /** The start did not complete within its bound for an unspecified reason. */

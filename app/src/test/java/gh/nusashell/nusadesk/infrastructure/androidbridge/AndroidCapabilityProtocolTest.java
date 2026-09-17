@@ -112,6 +112,77 @@ public class AndroidCapabilityProtocolTest {
     }
 
     @Test
+    public void decodesBoundedParamsForADeclaringMethod() {
+        AndroidCapabilityProtocol.Request request =
+                AndroidCapabilityProtocol.decodeRequest(
+                        "{\"v\":1,\"id\":\"7\",\"token\":\"secret\","
+                                + "\"method\":\"calendar.insert\",\"params\":{"
+                                + "\"title\":\"Rapat\",\"begin_ms\":1760003600000,"
+                                + "\"all_day\":false,\"calendar_id\":3}}");
+
+        assertNotNull(request);
+        Map<String, Object> params = request.getParams();
+        assertEquals("Rapat", params.get("title"));
+        assertEquals(1760003600000L, params.get("begin_ms"));
+        assertEquals(Boolean.FALSE, params.get("all_day"));
+        assertEquals(3L, params.get("calendar_id"));
+    }
+
+    @Test
+    public void aRequestWithoutParamsCarriesAnEmptyMap() {
+        AndroidCapabilityProtocol.Request request =
+                AndroidCapabilityProtocol.decodeRequest(
+                        "{\"v\":1,\"id\":\"7\",\"token\":\"secret\","
+                                + "\"method\":\"media.status\"}");
+
+        assertNotNull(request);
+        assertTrue(request.getParams().isEmpty());
+    }
+
+    @Test
+    public void rejectsUnboundedOrMalformedParams() {
+        String[] rejected = {
+                // not an object
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.delete\","
+                        + "\"params\":\"event_id=7\"}",
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.delete\","
+                        + "\"params\":[7]}",
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.delete\","
+                        + "\"params\":null}",
+                // nested object and array values
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.delete\","
+                        + "\"params\":{\"event_id\":{\"nested\":1}}}",
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.delete\","
+                        + "\"params\":{\"event_id\":[1]}}",
+                // unsupported scalar type
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.delete\","
+                        + "\"params\":{\"event_id\":1.5}}",
+                // too many keys
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
+                        + "\"params\":{\"a\":1,\"b\":1,\"c\":1,\"d\":1,\"e\":1,\"f\":1,"
+                        + "\"g\":1,\"h\":1,\"i\":1}}",
+                // oversized key and oversized string value
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
+                        + "\"params\":{\"" + "k".repeat(33) + "\":\"v\"}}",
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
+                        + "\"params\":{\"title\":\"" + "t".repeat(257) + "\"}}",
+                // control character in a string value
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
+                        + "\"params\":{\"title\":\"two\\nlines\"}}",
+                // unsafe key shape
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
+                        + "\"params\":{\"title[$ne]\":\"v\"}}",
+                // an unknown top-level field alongside params
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
+                        + "\"params\":{\"title\":\"v\"},\"extra\":true}"
+        };
+        for (String raw : rejected) {
+            assertNull("must reject " + raw,
+                    AndroidCapabilityProtocol.decodeRequest(raw));
+        }
+    }
+
+    @Test
     public void rejectsResponseEnvelopeCollisionsAndUnsupportedValues() {
         Map<String, Object> collision = new LinkedHashMap<>();
         collision.put("ok", 1L);

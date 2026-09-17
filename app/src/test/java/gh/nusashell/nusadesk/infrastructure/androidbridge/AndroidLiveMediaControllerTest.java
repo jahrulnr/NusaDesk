@@ -1,6 +1,5 @@
 package gh.nusashell.nusadesk.infrastructure.androidbridge;
 
-import android.content.Context;
 import android.content.Intent;
 
 import org.junit.After;
@@ -23,10 +22,11 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Bridge-side media controller behavior on the JVM: permission mapping,
- * foreground-eligibility mapping, the bounded start wait, idempotent start
- * while running, busy while starting, and close ownership. The service under
- * the controller runs with the fake pipeline, so no camera or encoder is
+ * Bridge-side media controller behavior on the JVM: per-mode permission
+ * mapping, the mode handed to the service, foreground-eligibility mapping, the
+ * bounded start wait, idempotent start in the same mode, mode conflict while
+ * another mode runs, busy while starting, and close ownership. The service
+ * under the controller runs with the fake pipeline, so no camera or encoder is
  * involved.
  */
 @RunWith(RobolectricTestRunner.class)
@@ -54,9 +54,10 @@ public class AndroidLiveMediaControllerTest {
         RecordingStarter starter = new RecordingStarter();
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.REQUIRED, starter, registry, 500L);
+                new FixedPermissionChecker(CapabilityPermission.REQUIRED),
+                starter, registry, 500L);
 
-        LiveMediaStatus status = controller.start();
+        LiveMediaStatus status = controller.start(LiveMediaMode.BOTH);
 
         assertEquals(LiveMediaState.FAILED, status.getState());
         assertEquals("media-permission-required", status.getError());
@@ -69,34 +70,86 @@ public class AndroidLiveMediaControllerTest {
     public void deniedPermissionMapsToPermissionDenied() {
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.DENIED, new RecordingStarter(), registry, 500L);
+                new FixedPermissionChecker(CapabilityPermission.DENIED),
+                new RecordingStarter(), registry, 500L);
 
-        LiveMediaStatus status = controller.start();
+        LiveMediaStatus status = controller.start(LiveMediaMode.BOTH);
 
         assertEquals("media-permission-denied", status.getError());
     }
 
     @Test
-    public void grantedPermissionsStartTheServiceAndReturnRunning() throws Exception {
+    public void grantedPermissionsStartTheServiceAndReturnRunning() {
         LiveMediaServiceTest.FakePipeline pipeline = new LiveMediaServiceTest.FakePipeline();
-        pipeline.result = LiveMediaStatus.running(
-                "rtsp://127.0.0.1:22222/", "h264", "aac", 1280, 720, 30, 2);
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.BOTH,
+                "rtsp://127.0.0.1:22222/", "h264", 1280, 720, 30, "aac", 2);
         LiveMediaService.pipelineOverride = pipeline;
 
         RecordingStarter starter = new RecordingStarter();
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.GRANTED, starter, registry, 2_000L);
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                starter, registry, 2_000L);
 
-        LiveMediaStatus status = controller.start();
+        LiveMediaStatus status = controller.start(LiveMediaMode.BOTH);
 
         assertEquals(LiveMediaState.RUNNING, status.getState());
+        assertEquals(LiveMediaMode.BOTH, status.getMode());
         assertEquals("rtsp://127.0.0.1:22222/", status.getRtspUrl());
         assertEquals(1280, status.getVideoWidth());
         assertEquals(2, status.getClientLimit());
         assertEquals(1, starter.calls);
-        assertEquals(LiveMediaService.ACTION_START,
-                starter.lastIntent.getAction());
+        assertEquals(LiveMediaService.ACTION_START, starter.lastIntent.getAction());
+        assertEquals("BOTH", starter.lastIntent.getStringExtra(LiveMediaService.EXTRA_MODE));
+    }
+
+    @Test
+    public void cameraOnlyChecksItsOwnModeAndHandsItToTheService() {
+        LiveMediaServiceTest.FakePipeline pipeline = new LiveMediaServiceTest.FakePipeline();
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.CAMERA,
+                "rtsp://127.0.0.1:22222/", "h264", 1280, 720, 30, null, 2);
+        LiveMediaService.pipelineOverride = pipeline;
+
+        RecordingPermissionChecker checker =
+                new RecordingPermissionChecker(CapabilityPermission.GRANTED);
+        RecordingStarter starter = new RecordingStarter();
+        AndroidLiveMediaController controller = new AndroidLiveMediaController(
+                RuntimeEnvironment.getApplication(), checker, starter, registry, 2_000L);
+
+        LiveMediaStatus status = controller.start(LiveMediaMode.CAMERA);
+
+        assertEquals("the mode decides which grant is checked",
+                LiveMediaMode.CAMERA, checker.lastMode);
+        assertEquals("CAMERA", starter.lastIntent.getStringExtra(LiveMediaService.EXTRA_MODE));
+        assertEquals(LiveMediaMode.CAMERA, status.getMode());
+        assertEquals("h264", status.getVideoCodec());
+        assertNull("a camera-only session reports no audio codec",
+                status.getAudioCodec());
+    }
+
+    @Test
+    public void microphoneOnlyChecksItsOwnModeAndHandsItToTheService() {
+        LiveMediaServiceTest.FakePipeline pipeline = new LiveMediaServiceTest.FakePipeline();
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.MICROPHONE,
+                "rtsp://127.0.0.1:22222/", null, 0, 0, 0, "aac", 2);
+        LiveMediaService.pipelineOverride = pipeline;
+
+        RecordingPermissionChecker checker =
+                new RecordingPermissionChecker(CapabilityPermission.GRANTED);
+        RecordingStarter starter = new RecordingStarter();
+        AndroidLiveMediaController controller = new AndroidLiveMediaController(
+                RuntimeEnvironment.getApplication(), checker, starter, registry, 2_000L);
+
+        LiveMediaStatus status = controller.start(LiveMediaMode.MICROPHONE);
+
+        assertEquals("the mode decides which grant is checked",
+                LiveMediaMode.MICROPHONE, checker.lastMode);
+        assertEquals("MICROPHONE",
+                starter.lastIntent.getStringExtra(LiveMediaService.EXTRA_MODE));
+        assertEquals(LiveMediaMode.MICROPHONE, status.getMode());
+        assertEquals("aac", status.getAudioCodec());
+        assertNull("a microphone-only session reports no video codec",
+                status.getVideoCodec());
     }
 
     @Test
@@ -106,9 +159,10 @@ public class AndroidLiveMediaControllerTest {
                 "ForegroundServiceStartNotAllowedException: not allowed to start");
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.GRANTED, starter, registry, 500L);
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                starter, registry, 500L);
 
-        LiveMediaStatus status = controller.start();
+        LiveMediaStatus status = controller.start(LiveMediaMode.BOTH);
 
         assertEquals(LiveMediaState.FAILED, status.getState());
         assertEquals("media-foreground-required", status.getError());
@@ -120,9 +174,10 @@ public class AndroidLiveMediaControllerTest {
         starter.thrown = new SecurityException("permission denied by platform");
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.GRANTED, starter, registry, 500L);
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                starter, registry, 500L);
 
-        LiveMediaStatus status = controller.start();
+        LiveMediaStatus status = controller.start(LiveMediaMode.BOTH);
 
         assertEquals("media-permission-denied", status.getError());
     }
@@ -135,27 +190,29 @@ public class AndroidLiveMediaControllerTest {
         starter.delegate = false;
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.GRANTED, starter, registry, 100L);
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                starter, registry, 100L);
 
-        LiveMediaStatus status = controller.start();
+        LiveMediaStatus status = controller.start(LiveMediaMode.BOTH);
 
         assertEquals(LiveMediaState.FAILED, status.getState());
         assertEquals("media-start-failed", status.getError());
     }
 
     @Test
-    public void secondStartWhileRunningIsIdempotentSuccess() throws Exception {
+    public void secondStartInTheSameModeIsIdempotentSuccess() {
         LiveMediaServiceTest.FakePipeline pipeline = new LiveMediaServiceTest.FakePipeline();
-        pipeline.result = LiveMediaStatus.running(
-                "rtsp://127.0.0.1:22222/", "h264", "aac", 1280, 720, 30, 2);
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.CAMERA,
+                "rtsp://127.0.0.1:22222/", "h264", 1280, 720, 30, null, 2);
         LiveMediaService.pipelineOverride = pipeline;
         RecordingStarter starter = new RecordingStarter();
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.GRANTED, starter, registry, 2_000L);
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                starter, registry, 2_000L);
 
-        LiveMediaStatus first = controller.start();
-        LiveMediaStatus second = controller.start();
+        LiveMediaStatus first = controller.start(LiveMediaMode.CAMERA);
+        LiveMediaStatus second = controller.start(LiveMediaMode.CAMERA);
 
         assertEquals(LiveMediaState.RUNNING, first.getState());
         assertEquals(LiveMediaState.RUNNING, second.getState());
@@ -163,53 +220,99 @@ public class AndroidLiveMediaControllerTest {
     }
 
     @Test
-    public void startWhileStartingIsBusy() {
-        registry.publishStarting();
+    public void startInAnotherModeWhileRunningIsModeConflict() {
+        registry.publishResult(LiveMediaStatus.running(LiveMediaMode.MICROPHONE,
+                "rtsp://127.0.0.1:22222/", null, 0, 0, 0, "aac", 2));
         RecordingStarter starter = new RecordingStarter();
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.GRANTED, starter, registry, 500L);
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                starter, registry, 500L);
 
-        LiveMediaStatus status = controller.start();
+        LiveMediaStatus status = controller.start(LiveMediaMode.CAMERA);
+
+        assertEquals(LiveMediaState.FAILED, status.getState());
+        assertEquals("media-mode-conflict", status.getError());
+        assertEquals("a conflicting start must not touch the running service",
+                0, starter.calls);
+        assertEquals("the running session is left alone",
+                LiveMediaMode.MICROPHONE, registry.currentStatus().getMode());
+    }
+
+    @Test
+    public void startWhileStartingIsBusy() {
+        registry.publishStarting(LiveMediaMode.CAMERA);
+        RecordingStarter starter = new RecordingStarter();
+        AndroidLiveMediaController controller = new AndroidLiveMediaController(
+                RuntimeEnvironment.getApplication(),
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                starter, registry, 500L);
+
+        LiveMediaStatus status = controller.start(LiveMediaMode.CAMERA);
 
         assertEquals("media-busy", status.getError());
         assertEquals(0, starter.calls);
     }
 
     @Test
-    public void closeStopsTheSessionAndBlocksFurtherStarts() throws Exception {
+    public void closeStopsTheSessionAndBlocksFurtherStarts() {
         LiveMediaServiceTest.FakePipeline pipeline = new LiveMediaServiceTest.FakePipeline();
-        pipeline.result = LiveMediaStatus.running(
-                "rtsp://127.0.0.1:22222/", "h264", "aac", 1280, 720, 30, 2);
+        pipeline.result = LiveMediaStatus.running(LiveMediaMode.BOTH,
+                "rtsp://127.0.0.1:22222/", "h264", 1280, 720, 30, "aac", 2);
         LiveMediaService.pipelineOverride = pipeline;
         RecordingStarter starter = new RecordingStarter();
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.GRANTED, starter, registry, 2_000L);
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                starter, registry, 2_000L);
 
-        assertEquals(LiveMediaState.RUNNING, controller.start().getState());
+        assertEquals(LiveMediaState.RUNNING, controller.start(LiveMediaMode.BOTH).getState());
         controller.close();
 
         // The controller owns the stop request and immediately resets its
         // session registry. The service lifecycle owns the actual pipeline
         // stop; that path is covered by LiveMediaServiceTest.
         assertEquals(LiveMediaState.STOPPED, registry.currentStatus().getState());
-        LiveMediaStatus afterClose = controller.start();
+        LiveMediaStatus afterClose = controller.start(LiveMediaMode.BOTH);
         assertEquals("a closed controller must not start a session",
                 "media-unavailable", afterClose.getError());
     }
 
     @Test
     public void statusNeverThrowsAndReflectsTheRegistry() {
-        registry.publishStarting();
+        registry.publishStarting(LiveMediaMode.MICROPHONE);
         AndroidLiveMediaController controller = new AndroidLiveMediaController(
                 RuntimeEnvironment.getApplication(),
-                () -> CapabilityPermission.GRANTED, new RecordingStarter(), registry, 500L);
+                new FixedPermissionChecker(CapabilityPermission.GRANTED),
+                new RecordingStarter(), registry, 500L);
 
         assertEquals(LiveMediaState.STARTING, controller.status().getState());
+        assertEquals(LiveMediaMode.MICROPHONE, controller.status().getMode());
         registry.publishResult(LiveMediaStatus.failed(LiveMediaError.BUSY));
         assertEquals(LiveMediaState.FAILED, controller.status().getState());
         assertEquals("media-busy", controller.status().getError());
+    }
+
+    /** Permission checker with a fixed answer that records the requested mode. */
+    private static class RecordingPermissionChecker implements MediaPermissionChecker {
+        private final CapabilityPermission result;
+        LiveMediaMode lastMode;
+
+        RecordingPermissionChecker(CapabilityPermission result) {
+            this.result = result;
+        }
+
+        @Override
+        public CapabilityPermission check(LiveMediaMode mode) {
+            lastMode = mode;
+            return result;
+        }
+    }
+
+    private static final class FixedPermissionChecker extends RecordingPermissionChecker {
+        FixedPermissionChecker(CapabilityPermission result) {
+            super(result);
+        }
     }
 
     /** Foreground-service starter that records the intent and can simulate platform refusals. */

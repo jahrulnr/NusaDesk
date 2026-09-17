@@ -332,6 +332,21 @@ public final class CuratedRuntimeCatalog {
                         "usr/sbin/lw-session-supervisor",
                         true,
                         "3d8ec11a9e5c0c185bb2eb75b74b8ed2e2f260b32b7056c9b6afebc445f8d790"),
+                // Product-owned user-service manager (ADR-0024): the session
+                // manager starts this unit, which runs the vendored systemctl3
+                // in --user mode so enabled user units come up with the
+                // session. Re-pin this digest with the launcher script.
+                new VendoredFile(
+                        "services/lw-user-manager",
+                        "usr/local/bin/lw-user-manager",
+                        true,
+                        "c50ce5b3192a8f90c0b0ace9427081ae8872dbd221b9f72d3268f0085d2e8b3d"),
+                // Re-pin this digest with the unit file.
+                new VendoredFile(
+                        "services/lw-user-manager.service",
+                        "etc/systemd/system/lw-user-manager.service",
+                        false,
+                        "bef810d075eedfc8d71f541b3601f9d90b558ca386f0002b99a8815827255fc9"),
                 // Compose payload (Phase 3B). The tarballs are byte-for-byte
                 // upstream source releases — udocker 1.3.17 (Apache-2.0,
                 // github.com/indigo-dc/udocker tag 1.3.17) and PyYAML 6.0.1

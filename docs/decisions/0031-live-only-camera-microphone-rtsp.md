@@ -3,7 +3,9 @@
 ## Status
 Accepted — implementation complete; positive physical encoder/consumer
 verification passed on Samsung S10e API 31. Wider OEM/API coverage remains
-open.
+open. The three media methods stay parameterless; ADR-0032 later added one
+bounded `params` object for the declaring calendar writes, which does not
+change anything decided here.
 
 ## Date
 2026-09-17
@@ -36,10 +38,34 @@ Implement one parameterless, version-1 control surface:
 - `media.start` starts a unified camera + microphone session and returns
   `state=running`, a dynamically bound `rtsp://127.0.0.1:<port>/` URL, H.264/AAC
   codec metadata, the selected video dimensions/fps, and `client_limit=2`.
-- `media.status` always returns a success response with one explicit state:
-  `stopped`, `starting`, `running`, or `failed`; a failed state carries only a
-  bounded error code.
+- `media.camera.start` and `media.microphone.start` start the same session with
+  a single track (camera-only, microphone-only). The track mode comes from the
+  fixed allowlisted method, so the envelope still carries no request
+  parameters.
+- `media.status` always returns a success response with one explicit state
+  (`stopped`, `starting`, `running`, `failed`) plus the session `mode`, and only
+  the fields of the tracks that mode carries: `video_*` for a video mode,
+  `audio_codec` for an audio mode.
 - `media.stop` is idempotent and returns `state=stopped`.
+
+One mode policy derives from a single `LiveMediaMode` value:
+
+1. **Permissions.** Only the grants the mode uses are required and only those
+   can mark it denied: CAMERA for a video mode, RECORD_AUDIO for an audio mode.
+   A camera-only session never demands (or reports a denial for) the
+   microphone, and vice versa.
+2. **Foreground service.** The service claims only the types it uses
+   (`CAMERA`, `MICROPHONE`, or both) and the notification names only the active
+   tracks, so a user who never granted the microphone never sees a camera-only
+   stream claiming it.
+3. **RTSP.** The SDP advertises exactly the mode's tracks; `SETUP` for a track
+   the mode does not carry answers `404`; `PLAY` requires only the advertised
+   tracks; RTCP runs only for those tracks. The client's requested interleaved
+   channel pair is honoured per session, because a single-track session numbers
+   its first track 0-1 regardless of whether that track is video or audio.
+4. **One session at a time.** Starting a session while another mode is already
+   running answers the typed `media-mode-conflict` instead of silently
+   replacing the live session; the guest stops it first.
 
 The Android implementation is:
 
@@ -154,7 +180,19 @@ the client cap without opening a UDP range.
   the pipeline start is in flight.
 - `AndroidLiveMediaControllerTest`, `LiveMediaStatusTest`, and the capability
   handler/bridge tests cover typed permission/foreground/busy/failure states,
-  idempotent stop, authenticated dispatch, and absence of artifact binds.
+  the requested mode reaching the service, mode conflict, per-mode status
+  fields, idempotent stop, authenticated dispatch, and absence of artifact
+  binds.
+- `LoopbackRtspServerTest` also covers the single-track sessions: an audio-only
+  session describes and plays with `SETUP trackID=1` on the client's requested
+  0-1 channels (and `trackID=0` answering 404), and a video-only session plays
+  without any audio track. A 2026-09-17 physical pass confirmed the three modes
+  on Samsung S10e SM-G970F (Android 12/API 31): camera-only ran with
+  RECORD_AUDIO revoked (video only, 181 decoded frames in 6 s, notification
+  naming the camera), microphone-only ran with CAMERA revoked (audio only,
+  AAC 44.1 kHz mono, a 5 s recording with 216 audio frames and no decode
+  errors), the combined mode still served both tracks, and a start in another
+  mode answered `media-mode-conflict`.
 - Generated guest docs and `GuestAwarenessCliTest` cover the fixed CLI
   allowlist, env validation, authenticated JSONL round trips, and no generic
   method/shell path.

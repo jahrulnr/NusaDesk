@@ -154,7 +154,8 @@ public class LoopbackRtspServerTest {
             assertEquals("video RTP rides channel 0", 0, video.channel);
             assertEquals("first video seq matches RTP-Info", videoSeqAtPlay, video.rtpSequence());
             assertEquals(96, video.payloadType());
-            assertEquals(1_000_000L * 90L, video.rtpTimestamp());
+            assertEquals("a 1s presentation time must map to 90 kHz ticks, not us*90",
+                    90_000L, video.rtpTimestamp());
             assertTrue("the replayed keyframe starts with its SPS NAL",
                     video.payload[12] == SPS[0]);
 
@@ -194,15 +195,110 @@ public class LoopbackRtspServerTest {
     }
 
     @Test
-    public void describeBeforeVideoFormatIs404() throws Exception {
+    public void describeIs404OnlyWhenNoTrackIsConfigured() throws Exception {
+        // A session with no track at all has no SDP to offer.
+        LoopbackRtspServer empty = newServer(2, 256, 5_000L);
+        try (Socket socket = new Socket("127.0.0.1", empty.getPort())) {
+            socket.setSoTimeout(5_000);
+            Response describe = exchange(socket.getOutputStream(), socket.getInputStream(),
+                    1, "DESCRIBE rtsp://127.0.0.1:" + empty.getPort() + "/ RTSP/1.0");
+            assertEquals("no track configured, so no SDP", 404, describe.status);
+        }
+    }
+
+    @Test
+    public void microphoneOnlySessionDescribesAndPlaysAudioWithoutVideo() throws Exception {
         LoopbackRtspServer server = newServer(2, 256, 5_000L);
         server.setAudioFormat(new byte[] {0x12, 0x10}, 44_100, 1);
+        server.publishAudioFrame(AAC_FRAME, 1_000_000L);
+        String base = "rtsp://127.0.0.1:" + server.getPort() + "/";
 
         try (Socket socket = new Socket("127.0.0.1", server.getPort())) {
             socket.setSoTimeout(5_000);
-            Response describe = exchange(socket.getOutputStream(), socket.getInputStream(),
-                    1, "DESCRIBE rtsp://127.0.0.1:" + server.getPort() + "/ RTSP/1.0");
-            assertEquals("no SDP before the video format is ready", 404, describe.status);
+            InputStream input = socket.getInputStream();
+            OutputStream output = socket.getOutputStream();
+
+            Response describe = exchange(output, input, 1,
+                    "DESCRIBE " + base + " RTSP/1.0");
+            assertEquals("an audio-only session still describes its stream",
+                    200, describe.status);
+            String sdp = describe.body;
+            assertTrue("the SDP must describe the audio track",
+                    sdp.contains("MPEG4-GENERIC/44100/1"));
+            assertFalse("the SDP must not advertise a video track",
+                    sdp.contains("m=video"));
+
+            Response videoSetup = exchange(output, input, 2,
+                    "SETUP " + base + "trackID=0 RTSP/1.0",
+                    "Transport: RTP/AVP/TCP;unicast;interleaved=0-1");
+            assertEquals("a track this session does not carry does not exist",
+                    404, videoSetup.status);
+
+            Response audioSetup = exchange(output, input, 3,
+                    "SETUP " + base + "trackID=1 RTSP/1.0",
+                    "Transport: RTP/AVP/TCP;unicast;interleaved=0-1");
+            assertEquals("the first advertised track normally asks for 0-1", 200,
+                    audioSetup.status);
+
+            Response play = exchange(output, input, 4, "PLAY " + base + " RTSP/1.0");
+            assertEquals("PLAY only needs the advertised track", 200, play.status);
+            String rtpInfo = play.header("RTP-Info");
+            assertTrue(rtpInfo.contains("trackID=1;seq="));
+            assertFalse("no video track in RTP-Info", rtpInfo.contains("trackID=0"));
+
+            InterleavedFrame frame = readInterleaved(input);
+            assertEquals("audio RTP rides the channel the client asked for", 0,
+                    frame.channel);
+            assertEquals(97, frame.payloadType());
+
+            Response teardown = exchange(output, input, 5, "TEARDOWN " + base + " RTSP/1.0");
+            assertEquals(200, teardown.status);
+        }
+    }
+
+    @Test
+    public void cameraOnlySessionDescribesAndPlaysVideoWithoutAudio() throws Exception {
+        LoopbackRtspServer server = newServer(2, 256, 5_000L);
+        server.setVideoFormat(SPS, PPS, 1280, 720);
+        server.publishVideoFrame(Arrays.asList(SPS, PPS, IDR), 1_000_000L, true);
+        String base = "rtsp://127.0.0.1:" + server.getPort() + "/";
+
+        try (Socket socket = new Socket("127.0.0.1", server.getPort())) {
+            socket.setSoTimeout(5_000);
+            InputStream input = socket.getInputStream();
+            OutputStream output = socket.getOutputStream();
+
+            Response describe = exchange(output, input, 1,
+                    "DESCRIBE " + base + " RTSP/1.0");
+            assertEquals(200, describe.status);
+            assertTrue(describe.body.contains("H264/90000"));
+            assertFalse("the SDP must not advertise an audio track",
+                    describe.body.contains("m=audio"));
+
+            Response audioSetup = exchange(output, input, 2,
+                    "SETUP " + base + "trackID=1 RTSP/1.0",
+                    "Transport: RTP/AVP/TCP;unicast;interleaved=2-3");
+            assertEquals(404, audioSetup.status);
+
+            Response videoSetup = exchange(output, input, 3,
+                    "SETUP " + base + "trackID=0 RTSP/1.0",
+                    "Transport: RTP/AVP/TCP;unicast;interleaved=0-1");
+            assertEquals(200, videoSetup.status);
+
+            Response play = exchange(output, input, 4, "PLAY " + base + " RTSP/1.0");
+            assertEquals("PLAY only needs the advertised track", 200, play.status);
+            String rtpInfo = play.header("RTP-Info");
+            assertTrue(rtpInfo.contains("trackID=0;seq="));
+            assertFalse("no audio track in RTP-Info", rtpInfo.contains("trackID=1"));
+
+            InterleavedFrame frame = readInterleaved(input);
+            assertEquals("video RTP rides channel 0", 0, frame.channel);
+            assertEquals(96, frame.payloadType());
+            assertTrue("the stored keyframe replay still works without audio",
+                    frame.payload[12] == SPS[0]);
+
+            Response teardown = exchange(output, input, 5, "TEARDOWN " + base + " RTSP/1.0");
+            assertEquals(200, teardown.status);
         }
     }
 
@@ -223,20 +319,24 @@ public class LoopbackRtspServerTest {
                     "Transport: RTP/AVP;unicast;client_port=5000-5001");
             assertEquals("UDP transport must be refused", 461, udp.status);
 
-            Response wrongChannels = exchange(output, input, 2,
+            Response malformed = exchange(output, input, 2,
+                    "SETUP " + base + "trackID=0 RTSP/1.0",
+                    "Transport: RTP/AVP/TCP;unicast;interleaved=5-4");
+            assertEquals("an RTCP channel that is not RTP+1 must be refused", 461,
+                    malformed.status);
+
+            // A valid pair is honoured, not forced to the server default: the
+            // client numbers channels in the order it sets advertised tracks up.
+            Response customPair = exchange(output, input, 3,
                     "SETUP " + base + "trackID=0 RTSP/1.0",
                     "Transport: RTP/AVP/TCP;unicast;interleaved=4-5");
-            assertEquals("foreign interleaved channels must be refused", 461,
-                    wrongChannels.status);
-
-            Response setup = exchange(output, input, 3,
-                    "SETUP " + base + "trackID=0 RTSP/1.0",
-                    "Transport: RTP/AVP/TCP;unicast;interleaved=0-1");
-            assertEquals(200, setup.status);
+            assertEquals("a valid requested channel pair must be accepted", 200,
+                    customPair.status);
+            assertTrue(customPair.header("Transport").contains("interleaved=4-5"));
 
             Response duplicate = exchange(output, input, 4,
                     "SETUP " + base + "trackID=0 RTSP/1.0",
-                    "Transport: RTP/AVP/TCP;unicast;interleaved=0-1");
+                    "Transport: RTP/AVP/TCP;unicast;interleaved=4-5");
             assertEquals("duplicate track SETUP must be refused", 455,
                     duplicate.status);
 
@@ -441,6 +541,26 @@ public class LoopbackRtspServerTest {
         return readResponse(input);
     }
 
+    /** Skip one complete interleaved frame: marker, channel, length, payload. */
+    private static void skipInterleavedFrame(InputStream input) throws IOException {
+        int channel = input.read();
+        int high = input.read();
+        int low = input.read();
+        if (channel == -1 || high == -1 || low == -1) {
+            throw new EOFException("interleaved frame header truncated");
+        }
+        int length = (high << 8) | low;
+        byte[] payload = new byte[length];
+        int offset = 0;
+        while (offset < length) {
+            int read = input.read(payload, offset, length - offset);
+            if (read == -1) {
+                throw new EOFException("interleaved frame payload truncated");
+            }
+            offset += read;
+        }
+    }
+
     private static Response readResponse(InputStream input) throws IOException {
         ByteArrayOutputStream head = new ByteArrayOutputStream();
         int matched = 0;
@@ -448,6 +568,14 @@ public class LoopbackRtspServerTest {
             int value = input.read();
             if (value == -1) {
                 throw new EOFException("response head truncated");
+            }
+            if (value == '$' && head.size() == 0) {
+                // After PLAY, interleaved RTP/RTCP shares this connection with
+                // the control responses (RFC 2326 section 10.12), so the client
+                // must skip whole interleaved frames while waiting for the
+                // response head instead of parsing their binary payload.
+                skipInterleavedFrame(input);
+                continue;
             }
             head.write(value);
             if (head.size() > 8192) {

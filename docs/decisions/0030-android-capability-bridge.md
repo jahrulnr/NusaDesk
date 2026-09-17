@@ -4,7 +4,11 @@
 Accepted — control bridge implemented and device-verified on Samsung arm64
 at Android 10/API 29 and Android 12/API 31. The former camera/microphone
 artifact proposal in this ADR is superseded by ADR-0031's live-only RTSP
-contract; the rest of this ADR remains the control-bridge decision.
+contract; the rest of this ADR remains the control-bridge decision. The
+envelope is extended by ADR-0032, which adds one bounded `params` object for the
+declaring calendar writes and the `calendar.list` / `calendar.insert` /
+`calendar.update` / `calendar.delete` methods; the allowlisted control methods
+named below stay otherwise unchanged.
 
 ## Date
 2026-09-16

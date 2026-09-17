@@ -321,13 +321,14 @@ The service must treat process lifetime as lossy:
 ## Android capability bridge boundary (implemented control and live-media slices)
 
 The guest cannot invoke Android framework APIs directly, so the host exposes
-only reviewed capability adapters (ADR-0030, ADR-0031). The adapters are owned
-by the same `GuestSshdWorkload` session:
+only reviewed capability adapters (ADR-0030, ADR-0031, ADR-0032). The adapters
+are owned by the same `GuestSshdWorkload` session:
 
 ```mermaid
 flowchart LR
     Battery["Android BatteryManager"] --> Adapter["AndroidCapabilityBridge\nallowlisted JSONL RPC"]
     Sensors["Android sensors/location"] --> Adapter
+    Calendar["Calendar provider\nInstances read + event writes"] --> Adapter
     MediaControl["media.start/status/stop"] --> MediaService["camera|microphone FGS"]
     MediaService --> Capture["Camera2 + AudioRecord\nMediaCodec H.264 + AAC"]
     Capture --> RTSP["RTSP over TCP\n127.0.0.1:ephemeral"]
@@ -345,10 +346,16 @@ flowchart LR
   frames, socket timeouts, and a small concurrency cap. The allowlisted methods
   include `bridge.info`, battery/sensor/location reads, read-only
   contacts/call-log/SMS/telephony reads, the foreground-only location stream,
-  and `media.start`, `media.status`, `media.stop`. There is no arbitrary shell,
-  reflection, URI, or Binder proxy. A strict-bound
+  `media.start`, `media.status`, `media.stop`, and the calendar slice
+  (`calendar.list` read plus `calendar.insert`/`update`/`delete`). There is no
+  arbitrary shell, reflection, URI, or Binder proxy. A strict-bound
   `/run/nusadesk/android-bridge.env` file gives authorized guest tools the
   current endpoint and token.
+- The envelope is param-free except for the declaring calendar writes, which
+  accept one bounded flat `params` object (ADR-0032). A method that does not
+  declare parameters answers `unsupported-parameter` when one is sent, an
+  unknown key inside a declaring method is `calendar-invalid-argument`, and any
+  other top-level field fails closed at decode time.
 - `battery.status` uses Android's permission-free battery snapshot. The
   best-effort sysfs projection gives existing Linux programs a familiar read
   path, but it is not kernel sysfs, can be stale/unavailable, and guest writes
@@ -380,11 +387,17 @@ flowchart LR
   notification action.
 - Contacts/call-log/SMS/telephony methods are read-only, row/byte bounded, and
   redact sensitive fields; SMS send and phone call remain unsupported.
+- The calendar slice reads the provider's instance table inside a fixed
+  seven-day window (at most 50 rows) with a minimal projection, and its three
+  write methods validate every field before a provider call, target only a
+  writable calendar, and write no attendee row and no invitation. There is no
+  calendar creation/listing, no guest-chosen window, and no reminder or
+  conference-data support.
 - The location stream is foreground-only, pull-based, and queue-bounded. It
   does not start an FGS, request background permission, or wake the app.
-- Bluetooth, calendar, usage stats, overlay, notification-listener,
-  accessibility, raw `/dev` hardware, Binder, GPU/NPU, kernel, and SELinux
-  operations remain separately scoped limitations.
+- Bluetooth, usage stats, overlay, notification-listener, accessibility, raw
+  `/dev` hardware, Binder, GPU/NPU, kernel, and SELinux operations remain
+  separately scoped limitations.
 
 ## Explicit non-goals
 

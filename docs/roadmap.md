@@ -4,7 +4,23 @@ The project follows risk-first vertical slices. The highest-risk question is nat
 
 The accepted product direction is a **Linux desktop on Android** (ADR-0012): the launcher is the home surface, the terminal is one Linux app, and one long-lived session is owned by the Android host. Linux is **background infrastructure** (ADR-0013) — it starts from an app launch and stops only from the platform notification — and the desktop's web apps are the ones the **user registers** (ADR-0014). SSH (ADR-0007) is the transport between the host and the guest, not the product surface.
 
-Implemented and device-verified on Android 10/API 29 arm64: the packaged standalone PRoot execution bridge, the curated OpenSSH add-on (ADR-0010), the fixed local SSH endpoint and autostart boundary (ADR-0013), and a live guest shell in the terminal app surface. Implemented and device-verified on the Samsung S10e (SM-G970F, Android 12/API 31, arm64, 4 KB pages): the bounded `udocker compose` adapter end to end (ADR-0025, Phase 3B). Implemented and UX-verified on an x86_64 emulator (API 35): the launcher — search, readiness pill, setup steps, the dashed `Add app` tile, the curated surfaces, and user web apps — the add/edit/remove web-app form, the web-app surface's probing/unreachable/loaded states, the terminal's waiting and failure prompts, the system screen, landscape, tablet, light/dark themes, and font scaling. The emulator's ARM translation is **not** runtime evidence. Remaining: the wider device matrix (other API levels, 16 KB pages, OEMs) and any future curated runtime profile. The published-port traffic test ran and proved `host_ip` is stripped, so Compose `ports` are rejected in the MVP.
+Implemented and device-verified on Android 10/API 29 arm64: the packaged standalone PRoot
+execution bridge, the curated OpenSSH add-on (ADR-0010), the fixed local SSH endpoint and
+autostart boundary (ADR-0013), and a live guest shell in the terminal app surface.
+Implemented and device-verified on the Samsung S10e (SM-G970F, Android 12/API 31, arm64, 4
+KB pages): the bounded `udocker compose` adapter end to end (ADR-0025, Phase 3B).
+Implemented and UX-verified on an x86_64 emulator (API 35): the launcher — search, readiness
+pill, setup steps, the dashed `Add app` tile, the curated surfaces, and user web apps — the
+add/edit/remove web-app form, the web-app surface's probing/unreachable/loaded states, the
+terminal's waiting and failure prompts, the system screen, landscape, tablet, light/dark
+themes, and font scaling. The emulator's ARM translation is **not** runtime evidence. Also
+device-verified on that S10e (2026-09-16/17): the Android capability bridge — battery and
+its sysfs projection, one-shot sensors, foreground location and its bounded stream,
+read-only contacts/call-log/SMS/telephony, live media in three track modes, and the bounded
+calendar read/write slice (ADR-0030, ADR-0031, ADR-0032). Remaining: the wider device matrix
+(other API levels, 16 KB pages, OEMs) and any future curated runtime profile. The
+published-port traffic test ran and proved `host_ip` is stripped, so Compose `ports` are
+rejected in the MVP.
 
 ## Phase 0 — foundation (current)
 
@@ -207,6 +223,41 @@ Scope:
 - [x] Image pull and `unless-stopped` across a session restart (same
       S10e pass).
 - [ ] The wider device matrix (other API levels, 16 KB pages, OEMs).
+
+## Guest → Android capability bridge (implemented)
+
+**Status:** implemented and device-verified on the Samsung S10e (SM-G970F,
+Android 12/API 31, arm64, 4 KB pages) for battery, one-shot sensors, foreground
+location and its bounded stream, read-only contacts/call-log/SMS/telephony, live
+media in three track modes, and the bounded calendar read/write slice
+(2026-09-17). Remaining: the wider device matrix, continuous sensor streaming,
+and any further capability track as separately scoped work.
+
+**Question:** Can the Linux guest reach the Android APIs a user actually asks
+for — without a shell, reflection, or Binder bridge, without LAN exposure, and
+without inventing data for a permission that was not granted?
+
+Scope:
+
+- [x] Authenticated, session-scoped loopback JSON control bridge with a fixed
+      method allowlist, bounded frames, and typed permission/error states
+      (ADR-0030).
+- [x] Battery status plus a best-effort `/sys/class/power_supply/battery`
+      projection, one-shot accelerometer/gyroscope reads, and a bounded
+      foreground location stream.
+- [x] Read-only, redacted, row/byte-bounded contacts, call-log, SMS, and
+      telephony reads; `sms.send` and `phone.call` stay typed
+      `action-unsupported`.
+- [x] Live-only camera and/or microphone in three track modes over loopback RTSP
+      (H.264/AAC) with no capture artifact (ADR-0031).
+- [x] Bounded calendar read plus validated `insert`/`update`/`delete` writes
+      behind one bounded `params` object, with no attendee and no invitation
+      path (ADR-0032).
+- [x] Generated guest docs and the `nusadesk-android` CLI, including the params
+      rules and the calendar commands.
+- [ ] The wider device matrix (other API levels, 16 KB pages, OEMs), continuous
+      sensor streaming, and additional capability tracks (Bluetooth, usage
+      stats, overlay) as separately scoped work.
 
 ## Phase 4 — second curated runtime profile
 

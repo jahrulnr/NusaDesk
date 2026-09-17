@@ -1,0 +1,22 @@
+#!/bin/sh
+# lw-user-manager — NusaDesk guest user-service manager (product-owned).
+#
+# Runs the vendored systemctl3 in --user mode so systemd *user* units
+# (~/.config/systemd/user, enabled into default.target) come up with the guest
+# session. Without this instance a user unit is only reachable by hand, and a
+# hand-issued `systemctl --user start` forks the service under the login shell
+# that ran it, so it dies with that shell instead of living for the session.
+#
+# The session's system manager starts this unit; a SIGTERM to this process
+# makes the user manager stop every enabled user unit again.
+#
+# HOME and SYSTEMD_DEFAULT_TARGET are what the two lookups need: the
+# replacement finds user unit folders relative to HOME, and its built-in
+# default target (multi-user.target) never exists in a user unit set — user
+# units are enabled into default.target.
+set -u
+export HOME=/root
+export XDG_RUNTIME_DIR=/run/user/0
+export SYSTEMD_DEFAULT_TARGET=default.target
+mkdir -p /run/user/0
+exec /usr/bin/python3.12 /usr/bin/systemctl --user init

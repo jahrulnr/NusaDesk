@@ -14,6 +14,8 @@ import android.util.Log;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaError;
+import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaMode;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaState;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.LiveMediaStatus;
 
@@ -40,6 +42,9 @@ public final class LiveMediaService extends Service {
     /** Intent action to stop the live media pipeline. */
     public static final String ACTION_STOP =
             "gh.nusashell.nusadesk.action.LIVE_MEDIA_STOP";
+    /** Extra carrying the requested {@link LiveMediaMode} name on ACTION_START. */
+    public static final String EXTRA_MODE =
+            "gh.nusashell.nusadesk.extra.LIVE_MEDIA_MODE";
     /** Notification channel id for the live media status. */
     public static final String CHANNEL_ID = "live_media";
 
@@ -80,11 +85,14 @@ public final class LiveMediaService extends Service {
             handleStop();
             return START_NOT_STICKY;
         }
+        LiveMediaMode mode = requestedMode(intent);
         // Promote to foreground immediately to satisfy the
-        // startForegroundService contract regardless of the action.
-        promoteForeground();
+        // startForegroundService contract regardless of the action, with the
+        // foreground-service types this mode actually uses.
         if (ACTION_START.equals(action)) {
-            handleStart();
+            if (promoteForeground(mode)) {
+                handleStart(mode);
+            }
         } else {
             // Unknown or null action (including a redelivered start): nothing
             // valid to do, release the slot.
@@ -94,7 +102,20 @@ public final class LiveMediaService extends Service {
         return START_NOT_STICKY;
     }
 
-    private void handleStart() {
+    /** Requested mode from the start intent; unknown values default to both. */
+    private static LiveMediaMode requestedMode(Intent intent) {
+        String name = intent == null ? null : intent.getStringExtra(EXTRA_MODE);
+        if (name == null) {
+            return LiveMediaMode.BOTH;
+        }
+        try {
+            return LiveMediaMode.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            return LiveMediaMode.BOTH;
+        }
+    }
+
+    private void handleStart(LiveMediaMode mode) {
         if (stopping) {
             stopSelf();
             return;
@@ -103,13 +124,14 @@ public final class LiveMediaService extends Service {
             return; // an in-flight start owns the pipeline
         }
         if (pipeline != null && registry.currentStatus().getState()
-                == LiveMediaState.RUNNING) {
+                == LiveMediaState.RUNNING
+                && registry.currentStatus().getMode() == mode) {
             // Idempotent start: the live session is already the answer.
             registry.publishResult(registry.currentStatus());
             return;
         }
         starting = true;
-        registry.publishStarting();
+        registry.publishStarting(mode);
         worker.execute(() -> {
             try {
                 if (stopping) {
@@ -121,7 +143,7 @@ public final class LiveMediaService extends Service {
                         ? pipelineOverride
                         : new AndroidLiveMediaPipeline(getApplicationContext());
                 pipeline = built;
-                LiveMediaStatus result = built.start();
+                LiveMediaStatus result = built.start(mode);
                 if (stopping) {
                     built.stop();
                     pipeline = null;
@@ -156,20 +178,45 @@ public final class LiveMediaService extends Service {
         });
     }
 
-    private void promoteForeground() {
-        int type;
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            // API 30+ enforces the camera/microphone foreground-service types
-            // and requires the matching FOREGROUND_SERVICE_CAMERA /
-            // FOREGROUND_SERVICE_MICROPHONE permissions (declared).
-            type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-                    | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-        } else {
-            // API 29 predates those types: the manifest declaration is the
-            // only type source, and the platform performs no type check.
-            type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST;
+    /**
+     * Promote to foreground with exactly the types the mode uses; a failure is
+     * reported as a typed PERMISSION_DENIED result instead of crashing the
+     * service (the platform refuses a camera/microphone type without its
+     * grant on API 30+).
+     *
+     * @return true when the service is foreground and the start may continue
+     */
+    private boolean promoteForeground(LiveMediaMode mode) {
+        int type = foregroundTypeFor(mode);
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification(mode), type);
+            return true;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "could not promote live media service for mode "
+                    + mode.wireName(), e);
+            registry.publishResult(
+                    LiveMediaStatus.failed(mode, LiveMediaError.PERMISSION_DENIED));
+            stopSelf();
+            return false;
         }
-        startForeground(NOTIFICATION_ID, buildNotification(), type);
+    }
+
+    private static int foregroundTypeFor(LiveMediaMode mode) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
+            // API 29 predates the runtime types: the manifest declaration is
+            // the only type source, and the platform performs no type check.
+            return ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST;
+        }
+        // API 30+ enforces the declared type at runtime, so a camera-only or
+        // microphone-only session claims only the type it actually uses.
+        int type = 0;
+        if (mode.hasVideo()) {
+            type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+        }
+        if (mode.hasAudio()) {
+            type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+        }
+        return type == 0 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST : type;
     }
 
     @Override
@@ -199,7 +246,7 @@ public final class LiveMediaService extends Service {
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
 
-    private Notification buildNotification() {
+    private Notification buildNotification(LiveMediaMode mode) {
         Intent stopIntent = new Intent(this, LiveMediaService.class)
                 .setAction(ACTION_STOP);
         PendingIntent stopAction = PendingIntent.getService(this, STOP_REQUEST_CODE,
@@ -207,11 +254,24 @@ public final class LiveMediaService extends Service {
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle("NusaDesk live media")
-                .setContentText("Camera and microphone streaming to the Linux guest on the loopback address.")
+                .setContentText(notificationText(mode))
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .addAction(new Notification.Action.Builder(
                         null, "Stop", stopAction).build())
                 .build();
+    }
+
+    /** Honest per-mode notification text: never claims a track that is off. */
+    private static String notificationText(LiveMediaMode mode) {
+        String tracks;
+        if (mode.hasVideo() && mode.hasAudio()) {
+            tracks = "Camera and microphone";
+        } else if (mode.hasVideo()) {
+            tracks = "Camera";
+        } else {
+            tracks = "Microphone";
+        }
+        return tracks + " streaming to the Linux guest on the loopback address.";
     }
 }

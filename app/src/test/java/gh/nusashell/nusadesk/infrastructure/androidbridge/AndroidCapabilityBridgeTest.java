@@ -154,8 +154,8 @@ public class AndroidCapabilityBridgeTest {
         boolean closed;
 
         @Override
-        public LiveMediaStatus start() {
-            return LiveMediaStatus.failed(LiveMediaError.UNAVAILABLE);
+        public LiveMediaStatus start(LiveMediaMode mode) {
+            return LiveMediaStatus.failed(mode, LiveMediaError.UNAVAILABLE);
         }
 
         @Override

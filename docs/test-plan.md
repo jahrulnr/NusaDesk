@@ -180,7 +180,7 @@ Device pass (2026-09-16, Samsung S10e SM-G970F `R39M209Q3TM`, Android
 
 | Case | Observed result |
 | --- | --- |
-| Wired overlay | 14 vendored files on disk; compose paths, inner-PRoot and `/system` binds, pre-created `multi-user.target.wants` link; `systemctl` running with `lw-compose-supervisor` active/enabled; `/usr/local/bin/udocker --version` and image list OK |
+| Wired overlay | 16 vendored files on disk; compose paths, inner-PRoot and `/system` binds, pre-created `multi-user.target.wants` links for the compose supervisor and the user-service manager; `systemctl` running with `lw-compose-supervisor` active/enabled; `/usr/local/bin/udocker --version` and image list OK |
 | `up -d` on a pre-existing alpine image | Supervisor spawned the child through `/usr/local/bin/udocker`; nested PRoot executed it; the marker appended through the read-write workspace bind |
 | `restart: always` | Six restart cycles observed |
 | `stop` | Marker froze; `manual_stop` persisted |
@@ -192,6 +192,17 @@ Device pass (2026-09-16, Samsung S10e SM-G970F `R39M209Q3TM`, Android
 
 Not covered: other API levels, 16 KB-page devices, and OEMs; no full
 Compose compatibility is claimed.
+
+Second device pass for SYS-002/SYS-003 (2026-09-17, same S10e, from the user's
+report that a registered web app stayed dead after a force-close and relaunch):
+
+| Case | Observed result |
+| --- | --- |
+| Before the fix | With the session up, `systemctl --user is-active nusashell.service` read `inactive` and `127.0.0.1:10994` refused connections; the unit was enabled in `/root/.config/systemd/user/default.target.wants` |
+| Fix mechanism | `HOME=/root SYSTEMD_DEFAULT_TARGET=default.target systemctl --user init` started the enabled user unit (`active (running)`) and `GET /` answered `HTTP/1.0 200 OK`; with the replacement's built-in default target nothing started |
+| User flow after the fix | `am force-stop` → `am start`: the app re-installed the bridge payload (two new vendored files), the tree read `libproot → system manager → user manager → nusashell`, and port 10994 answered `HTTP 200` with no manual start |
+| Graceful stop | SIGTERM to the session manager stopped `lw-user-manager.service`, which stopped the user unit, removed its status mark, and closed the port |
+| Stale user mark | A planted `/run/user/0/run/nusashell.service.status` (`MainPID=999999`) was gone after the next wire-up and replaced by the live pid's mark |
 
 ## Readiness and endpoint cases
 
@@ -282,6 +293,8 @@ or port parameter is ever added).
 | TMP-003 | Normal stop/restart | `/tmp` is cleared after the tracer stops; workspace, `/var/tmp`, package state, and compose cache remain |
 | TMP-004 | Force-stop/reboot | Immediate cleanup is not claimed; the next explicit app launch clears stale `/tmp` before Linux starts |
 | SYS-001 | Rootfs has apt-installed real/native `systemctl` or Python paths | Strict PRoot file binds make product `systemctl3`/Python effective without deleting rootfs-owned files |
+| SYS-002 | A `systemctl --user` unit is enabled into `default.target` (for example a web app) and the host is force-closed and relaunched | The product-owned `lw-user-manager.service` unit runs the replacement in `--user` mode with `HOME`/`XDG_RUNTIME_DIR`/`SYSTEMD_DEFAULT_TARGET=default.target`, so the enabled user unit is active again after the session restart and its port answers; stopping the session stops the user unit too |
+| SYS-003 | A previous session left `.status` marks under `/run/user/<uid>` | Wire-up wipes user marks as well as system marks, so `systemctl --user is-active` never reports a service the new session did not start |
 
 The resolver policy is covered by `GuestResolverDoctorTest`; temporary-state
 cleanup is covered by `GuestEphemeralStateCleanerTest`; strict systemctl
@@ -315,12 +328,18 @@ binds are covered by `GuestServiceBridgeTest` and `ProotBindMountTest`.
 | ACB-012 | Location grant missing, previously denied, provider disabled, or no fix | RPC returns `location-permission-required`, `location-permission-denied`, `location-unavailable`, or `location-timeout`; it never opens a permission UI |
 | ACB-013 | Foreground location grant and usable provider | Guest receives a bounded finite location fix when the provider actually delivers one; background/continuous location is not claimed |
 | ACB-014 | Camera/mic/messaging/telephony permission missing or side-effect method requested | Each read/action returns a typed permission/unavailable error; `sms.send` and `phone.call` return `action-unsupported` |
-| ACB-015 | Unified live media control contract | `media.start`/`media.status`/`media.stop` return the documented explicit states and typed `media-*` errors; no request parameters or media bytes cross JSONL |
+| ACB-015 | Unified live media control contract | `media.start`/`media.status`/`media.stop` return the documented explicit states and typed `media-*` errors; the media methods declare no request parameters — only the calendar writes do (ACB-023) — and no media bytes cross JSONL |
 | ACB-016 | Location stream start/poll/stop | Foreground-only bounded queue/poll works; stop/close removes listener; no FGS/background claim |
 | ACB-017 | Loopback RTSP server protocol | Server binds only IPv4 `127.0.0.1`, accepts RTSP-over-TCP interleaving only, advertises H.264/AAC SDP, replays a keyframe, caps clients, and drops slow consumers |
 | ACB-018 | Positive live media consumer on a physical device | With test-only camera/mic grants and visible app, guest receives a running RTSP URL; `ffprobe`/`ffmpeg -f null -` sees H.264/AAC for a bounded interval; `media.stop` removes the stream and grants are revoked |
+| ACB-019 | A provider rejects a SQL `LIMIT` token in the sort order (for example Samsung's CallLog) | The read uses a plain newest-first order and caps rows in Java, so the guest still receives a `READING` snapshot and never `capability-unavailable` (regression guard: no `LIMIT` token in the provider sort order) |
+| ACB-020 | Video RTP timestamp unit | A 1 s presentation time maps to 90 000 ticks on the H.264 90 kHz clock, so consecutive frames sit ~3000 ticks (33 ms) apart; a ×1000 unit error that made the stream look frozen is a regression-guarded failure |
+| ACB-021 | Camera-only and microphone-only modes | `media.camera.start` / `media.microphone.start` require only their own grant, claim only their own foreground-service type, advertise only their own SDP track (the other track's `SETUP` answers 404), report `mode` plus only their own status fields, and a start in a different mode while one is live answers `media-mode-conflict` |
+| ACB-022 | Interleaved channel pair requested by the client | The server honours the client's `interleaved=<rtp>-<rtcp>` per session (a single-track session's first advertised track asks for 0-1) and replays/RTCPs on that pair; a malformed pair (RTCP ≠ RTP+1) is still refused with 461 |
+| ACB-023 | Bounded request `params` | A flat object of at most 8 keys with safe short keys and bounded scalar values decodes; nested objects/arrays, oversized keys or strings, control characters, non-scalar values, and a `params` on a method that does not declare parameters are rejected (`unsupported-parameter`), and a fifth top-level field other than `params` fails closed at decode time |
+| ACB-024 | Calendar read and bounded write | `calendar.list` reads the fixed seven-day instance window, returns at most 50 rows with a `truncated` flag and no description/attendee/organizer columns, and maps permission/unavailable states to typed errors; `calendar.insert`/`update`/`delete` validate every field before a provider call (title/location length and control characters, `begin < end`, ≤ 24 h duration, start within −24 h…+366 d, all-day on whole UTC days and carrying its range), target only a writable calendar, carry a timezone on every write, and answer typed `calendar-*` errors with an audit line that carries ids only |
 
-JVM coverage implements ACB-001 through ACB-007, ACB-010, ACB-012, and ACB-014 through ACB-017. ACB-007 cleanup is covered by
+JVM coverage implements ACB-001 through ACB-007, ACB-010, ACB-012, and ACB-014 through ACB-017, plus ACB-019 through ACB-024. ACB-007 cleanup is covered by
 the physical stop/relaunch pass below; the bridge is deliberately a single-use
 session object and is not unit-restarted. ACB-009 remains a scope guard; ACB-008,
 ACB-011, and ACB-018 are covered on the physical devices documented below.
@@ -361,6 +380,77 @@ Physical ACB-008 and ACB-011 passes (2026-09-16), plus ACB-018 (2026-09-17):
   The guest CLI then ran `media.stop` and `media.status` (`stopped`), the
   foreground service disappeared, and both test-only grants were revoked.
   No capture file was written.
+
+- On the same S10e pass, an adb-driven sweep exercised every guest-facing
+  surface from inside the guest: the generated CLI (help/usage exits, fixed
+  allowlist, no `call` passthrough, media start/status/stop, idempotent stop,
+  `bridge info`) and all bridge methods — battery, accelerometer, gyroscope,
+  location (typed timeout, no fresh fix indoors), contacts, call log, SMS
+  inbox, telephony info, telephony cellinfo, and the location stream
+  start/poll/poll/stop cycle — plus the negative cases (wrong token →
+  `unauthorized`, unknown method → `unsupported-method`, `sms.send`/`phone.call`
+  → `action-unsupported`, malformed frame → `malformed-request`, revoked
+  camera/microphone grants → `media-permission-denied` with CLI exit code 1).
+  The sweep found one real defect: `calllog.list` returned
+  `capability-unavailable` on every call because the read put a SQL `LIMIT`
+  token in the provider sort order, which Samsung's CallLog provider rejects
+  (`IllegalArgumentException: Invalid token LIMIT`). The fix (plain sort order,
+  Java-side row cap, bounded diagnostic log) is covered by ACB-019 and was
+  re-verified on the device: `calllog.list` now returns a `READING` snapshot.
+
+- A raw-socket RTSP probe on the same device (no ffmpeg involved) then exposed a
+  second, more serious defect: the server transmitted video RTP continuously
+  (~220 packets/s, valid FU-A, marker per frame) but with timestamps ~1000× too
+  large — consecutive frames sat 2 999 700 ticks apart (33 s on the 90 kHz
+  clock) instead of 3000 (33 ms), so every decoder showed one frozen picture
+  while audio played. The H.264 conversion is now `presentationTimeUs * 90 /
+  1000`; after the fix the same probe measures 2999–3000-tick deltas, a 6 s
+  consumer decodes ~145 frames instead of 1, and a 5 s recording holds 105
+  video frames with a video duration matching audio (ACB-020). Note for future
+  passes: the scene was physically dark (the stock camera app showed a black
+  viewfinder and its own "use Night mode" hint), so frame *content* stays dark;
+  brightness is an environment property, not a stream defect.
+
+- The three track modes were then verified end to end on the same device with
+  the actual guest CLI. Camera-only: `media start --camera` succeeded while
+  RECORD_AUDIO was revoked (so the microphone grant is genuinely not required
+  and the microphone foreground type is not claimed), `ffprobe` listed only
+  `h264,video`, `ffmpeg` decoded 181 video frames in 6 s, and the notification
+  read "Camera streaming…". Microphone-only: `media start --microphone`
+  succeeded while CAMERA was revoked, `ffprobe` listed only
+  `aac,audio,44100,1`, a 5 s recording held 216 audio frames with no decode
+  errors, and the notification read "Microphone streaming…". Combined
+  `media start` still served both tracks (107 video frames in 5 s on the dark
+  scene). A start in a different mode while a session was live answered
+  `media-mode-conflict` in both directions (ACB-021). This pass also exposed
+  ACB-022: the single-track stream first failed with `461 Unsupported
+  Transport` because the client numbers its first advertised track 0-1 while
+  the server insisted on the audio default 2-3; the server now honours the
+  requested pair per session, and ffprobe/ffmpeg consume both single-track
+  modes after the fix.
+
+- Calendar read and write were verified on the same device with the generated
+  guest CLI (ADR-0032, ACB-023/ACB-024). `calendar list` returned a valid empty
+  read (`count 0`) before any test data existed. A write cycle then ran with
+  `WRITE_CALENDAR` granted: `calendar add --title … --begin-ms … --end-ms …`
+  answered `written true` with `event_id 138`, and the following
+  `calendar list` returned that event with `calendar_name "My calendar"` and
+  `timezone "Asia/Jakarta"` and without description/attendee fields;
+  `calendar update 138 --title …` changed the title as observed in the next
+  read; `calendar delete 138` returned the read to `count 0`. An all-day insert
+  (`--all-day` on day-aligned bounds) returned `all_day true` with
+  `timezone "UTC"` and was deleted afterwards, leaving the calendar empty. A
+  25-hour request answered `calendar-invalid-argument` without a provider call.
+  With `WRITE_CALENDAR` revoked, the write answered
+  `calendar-permission-required` while `calendar list` still returned a
+  reading, which shows the read and write grants are independent. Logcat held
+  only `calendar write op=… event=… calendar=…` lines — the probe titles appear
+  nowhere in the log. This pass exposed two defects that the JVM fakes could
+  not: the `Instances` window has to travel in the URI path (a selection
+  argument made the provider throw and the read degrade to
+  `capability-unavailable`), and the provider rejects an insert whose values
+  lack `eventTimezone` (`Event values must include an eventTimezone`). Both are
+  fixed and guarded.
 
 These are device evidence for API 29/API 31 on two Samsung arm64 devices, not a
 product-wide OEM/API claim.

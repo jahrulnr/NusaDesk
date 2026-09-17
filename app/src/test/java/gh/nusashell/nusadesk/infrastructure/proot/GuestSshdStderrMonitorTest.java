@@ -98,7 +98,10 @@ public class GuestSshdStderrMonitorTest {
         for (int i = 0; i < 40; i++) {
             output.write(("line " + i + "\n").getBytes(StandardCharsets.UTF_8));
         }
-        List<String> lines = awaitRecentLines(monitor, 16);
+        // The ring is bounded and keeps the newest lines, so the test waits for
+        // the drain to reach the last line before asserting the bound; waiting
+        // on a line count alone would race the reader.
+        List<String> lines = awaitLine(monitor, "line 39");
         assertTrue(lines.toString(), lines.size() <= 16);
         assertTrue(lines.toString(), lines.toString().contains("line 39"));
         assertFalse(lines.toString(), lines.toString().contains("line 0,"));
@@ -126,6 +129,18 @@ public class GuestSshdStderrMonitorTest {
         long deadline = System.currentTimeMillis() + 5_000L;
         List<String> lines = monitor.recentLines();
         while (lines.size() < expected && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
+            lines = monitor.recentLines();
+        }
+        return lines;
+    }
+
+    /** Wait until the bounded ring has observed one specific line. */
+    private static List<String> awaitLine(GuestSshdStderrMonitor monitor, String line)
+            throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5_000L;
+        List<String> lines = monitor.recentLines();
+        while (!lines.contains(line) && System.currentTimeMillis() < deadline) {
             Thread.sleep(10L);
             lines = monitor.recentLines();
         }

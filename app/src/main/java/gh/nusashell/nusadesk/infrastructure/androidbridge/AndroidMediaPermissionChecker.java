@@ -7,12 +7,15 @@ import android.content.pm.PackageManager;
 import android.os.Process;
 
 /**
- * Camera + microphone grant check for the live media stream.
+ * Per-mode camera/microphone grant check for the live media stream.
  *
  * <p>Permission presence is read per request with
  * {@link Context#checkSelfPermission}, so a grant granted or revoked while
- * the app runs is observed on the next read. When either permission is
- * missing, the app-op state distinguishes a never-asked grant
+ * the app runs is observed on the next read. Only the permissions the
+ * requested {@link LiveMediaMode} uses are considered: a camera-only session
+ * never requires (or reports a denial for) the microphone, and a
+ * microphone-only session never touches the camera grant. When a needed
+ * permission is missing, the app-op state distinguishes a never-asked grant
  * ({@link CapabilityPermission#REQUIRED}) from a previously denied one
  * ({@link CapabilityPermission#DENIED}): denying the runtime permission
  * records the matching app-op as {@link AppOpsManager#MODE_IGNORED}, while
@@ -32,13 +35,17 @@ public final class AndroidMediaPermissionChecker implements MediaPermissionCheck
     }
 
     @Override
-    public CapabilityPermission check() {
-        boolean camera = granted(Manifest.permission.CAMERA);
-        boolean microphone = granted(Manifest.permission.RECORD_AUDIO);
-        if (camera && microphone) {
+    public CapabilityPermission check(LiveMediaMode mode) {
+        if (mode == null) {
+            throw new IllegalArgumentException("mode must not be null");
+        }
+        boolean cameraGranted = !mode.hasVideo() || granted(Manifest.permission.CAMERA);
+        boolean microphoneGranted = !mode.hasAudio()
+                || granted(Manifest.permission.RECORD_AUDIO);
+        if (cameraGranted && microphoneGranted) {
             return CapabilityPermission.GRANTED;
         }
-        return previouslyDenied() ? CapabilityPermission.DENIED
+        return previouslyDenied(mode) ? CapabilityPermission.DENIED
                 : CapabilityPermission.REQUIRED;
     }
 
@@ -50,15 +57,17 @@ public final class AndroidMediaPermissionChecker implements MediaPermissionCheck
         }
     }
 
-    private boolean previouslyDenied() {
+    /** Only the ops the mode actually uses can mark it as previously denied. */
+    private boolean previouslyDenied(LiveMediaMode mode) {
         try {
             AppOpsManager appOps =
                     (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
             if (appOps == null) {
                 return false;
             }
-            return ignored(appOps, AppOpsManager.OPSTR_CAMERA)
-                    || ignored(appOps, AppOpsManager.OPSTR_RECORD_AUDIO);
+            return (mode.hasVideo() && ignored(appOps, AppOpsManager.OPSTR_CAMERA))
+                    || (mode.hasAudio()
+                    && ignored(appOps, AppOpsManager.OPSTR_RECORD_AUDIO));
         } catch (RuntimeException e) {
             return false;
         }

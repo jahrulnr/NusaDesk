@@ -15,9 +15,9 @@ import java.util.List;
  * is an explicit typed state and never a permission prompt. The query is the
  * only guest input: the fixed projection carries address, date, read state,
  * and body only (the body is reduced to a bounded single-line snippet), the
- * provider is asked for at most {@code limit + 1} rows (newest first), and
- * the Java side never reads past {@code query.getLimit()} rows, so a
- * provider that ignores the SQL cap is still bounded. An optional query
+ * read stops one row past {@code query.getLimit()} (newest first), and the
+ * sort order carries no SQL {@code LIMIT} token because some providers reject
+ * it, so the Java-side bound is the only row cap. An optional query
  * filters on address with a LIKE-escaped literal. Person, subject, service
  * center, status, error code, thread id, creator, and the full body are never
  * projected or read. Sending SMS is a side-effecting operation and is out of
@@ -69,10 +69,10 @@ public final class AndroidSmsSource implements SmsSource {
                 selection = Telephony.TextBasedSmsColumns.ADDRESS + " LIKE ? ESCAPE '\\'";
                 selectionArgs = new String[]{query.likePattern()};
             }
-            // Ask for limit+1 rows so truncation is observable without reading
-            // the whole inbox; the Java iteration cap below is the real bound.
-            String sortOrder = Telephony.Sms.DEFAULT_SORT_ORDER + " LIMIT "
-                    + (query.getLimit() + 1);
+            // The provider may reject a SQL LIMIT token in the sort order (see
+            // AndroidCallLogSource), so the row bound is enforced in Java only;
+            // the cursor is read at most one row past the cap.
+            String sortOrder = Telephony.Sms.DEFAULT_SORT_ORDER;
             cursor = context.getContentResolver().query(
                     Telephony.Sms.Inbox.CONTENT_URI, PROJECTION, selection,
                     selectionArgs, sortOrder);
@@ -80,13 +80,17 @@ public final class AndroidSmsSource implements SmsSource {
                 return SmsSnapshot.unavailable();
             }
             List<SmsSnapshot.SmsEntry> entries = new ArrayList<>();
-            while (cursor.moveToNext() && entries.size() < query.getLimit()) {
+            boolean truncated = false;
+            while (cursor.moveToNext()) {
+                if (entries.size() >= query.getLimit()) {
+                    truncated = true;
+                    break;
+                }
                 SmsSnapshot.SmsEntry entry = mapRow(cursor);
                 if (entry != null) {
                     entries.add(entry);
                 }
             }
-            boolean truncated = cursor.getCount() > query.getLimit();
             return SmsSnapshot.reading(entries, truncated);
         } catch (SecurityException e) {
             // The provider refused the read (for example a grant revoked

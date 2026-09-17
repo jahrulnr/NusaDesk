@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.Context;
 import android.database.Cursor;
 import android.provider.CallLog;
+import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,14 +15,16 @@ import java.util.List;
  * <p>Each read first resolves the read-call-log grant; a missing or denied
  * grant is an explicit typed state and never a permission prompt. The query
  * is the only guest input: the fixed projection carries number, cached name,
- * type, date, and duration only, the provider is asked for at most
- * {@code limit + 1} rows (newest first), and the Java side never reads past
- * {@code query.getLimit()} rows, so a provider that ignores the SQL cap is
- * still bounded. An optional query filters on number with a LIKE-escaped
+ * type, date, and duration only, the read stops one row past
+ * {@code query.getLimit()} (newest first), and the sort order carries no SQL
+ * {@code LIMIT} token because some providers reject it. The Java-side bound is
+ * therefore the only row cap and it holds even when a provider returns more.
+ * An optional query filters on number with a LIKE-escaped
  * literal. Geocoded location, phone account, subscription, presentation, and
  * every provider id are never projected or read.</p>
  */
 public final class AndroidCallLogSource implements CallLogSource {
+    private static final String TAG = "AndroidCallLogSource";
     private static final String[] PROJECTION = {
             CallLog.Calls.NUMBER,
             CallLog.Calls.CACHED_NAME,
@@ -69,10 +72,12 @@ public final class AndroidCallLogSource implements CallLogSource {
                 selection = CallLog.Calls.NUMBER + " LIKE ? ESCAPE '\\'";
                 selectionArgs = new String[]{query.likePattern()};
             }
-            // Ask for limit+1 rows so truncation is observable without reading
-            // the whole log; the Java iteration cap below is the real bound.
-            String sortOrder = CallLog.Calls.DATE + " DESC LIMIT "
-                    + (query.getLimit() + 1);
+            // A SQL LIMIT token in the sort order is not portable: Samsung's
+            // CallLog provider answers it with IllegalArgumentException
+            // ("Invalid token LIMIT"). The row bound is therefore enforced in
+            // Java only, and the cursor is read at most one row past the cap
+            // so truncation stays observable without scanning the whole log.
+            String sortOrder = CallLog.Calls.DATE + " DESC";
             cursor = context.getContentResolver().query(
                     CallLog.Calls.CONTENT_URI, PROJECTION, selection,
                     selectionArgs, sortOrder);
@@ -80,13 +85,17 @@ public final class AndroidCallLogSource implements CallLogSource {
                 return CallLogSnapshot.unavailable();
             }
             List<CallLogSnapshot.CallLogEntry> entries = new ArrayList<>();
-            while (cursor.moveToNext() && entries.size() < query.getLimit()) {
+            boolean truncated = false;
+            while (cursor.moveToNext()) {
+                if (entries.size() >= query.getLimit()) {
+                    truncated = true;
+                    break;
+                }
                 CallLogSnapshot.CallLogEntry entry = mapRow(cursor);
                 if (entry != null) {
                     entries.add(entry);
                 }
             }
-            boolean truncated = cursor.getCount() > query.getLimit();
             return CallLogSnapshot.reading(entries, truncated);
         } catch (SecurityException e) {
             // The provider refused the read (for example a grant revoked
@@ -94,6 +103,11 @@ public final class AndroidCallLogSource implements CallLogSource {
             // data and never as a fabricated value.
             return CallLogSnapshot.permissionDenied();
         } catch (RuntimeException e) {
+            // Bounded diagnostics only: the guest still sees just the typed
+            // error. The fixed read carries no guest input, so no query text
+            // or filter value can leak here.
+            Log.w(TAG, "call log read failed: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage());
             return CallLogSnapshot.error();
         } finally {
             closeQuietly(cursor);
