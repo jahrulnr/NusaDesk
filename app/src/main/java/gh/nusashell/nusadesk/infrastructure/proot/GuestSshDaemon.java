@@ -1,6 +1,6 @@
 package gh.nusashell.nusadesk.infrastructure.proot;
 
-import gh.nusashell.nusadesk.domain.runtime.GuestSshPayloadProfile;
+import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,7 +22,7 @@ import java.util.List;
  * <ul>
  *   <li><b>Overlay</b> — the curated guest-SSH add-on activated under
  *       {@code <filesDir>/linux-wrapper/addons/<addonId>/active} and bound into
- *       the guest at {@link GuestSshPayloadProfile#GUEST_DIR}
+ *       the guest at {@link CuratedRuntimeCatalog#SSH_OVERLAY_GUEST_DIR}
  *       ({@code /opt/lw-ssh}). This is the verified production profile
  *       (ADR-0010): the pinned daemon wins over any image-resident copy.</li>
  *   <li><b>Rootfs</b> — an {@code usr/sbin/sshd} shipped inside the active
@@ -72,9 +72,9 @@ public final class GuestSshDaemon {
 
     /** Overlay guest dirs: shared libraries and the daemon's config dir. */
     private static final String OVERLAY_LIB_DIR =
-            GuestSshPayloadProfile.GUEST_DIR + "/usr/lib/aarch64-linux-gnu";
+            CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR + "/usr/lib/aarch64-linux-gnu";
     private static final String OVERLAY_ETC_DIR =
-            GuestSshPayloadProfile.GUEST_DIR + "/etc";
+            CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR + "/etc";
     private static final String OVERLAY_HOST_KEY =
             OVERLAY_ETC_DIR + "/ssh_host_ed25519_key";
     private static final String OVERLAY_CONFIG = OVERLAY_ETC_DIR + "/sshd_config";
@@ -104,10 +104,11 @@ public final class GuestSshDaemon {
     public static GuestSshDaemon detect(Path rootfsDir, Path addonOverlayDir) {
         if (addonOverlayDir != null
                 && Files.isRegularFile(addonOverlayDir.resolve(
-                        GuestSshPayloadProfile.ENTRYPOINT))) {
+                        CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT))) {
             return new GuestSshDaemon(
-                    GuestSshPayloadProfile.GUEST_DIR + "/" + GuestSshPayloadProfile.ENTRYPOINT,
-                    GuestSshPayloadProfile.GUEST_DIR,
+                    CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR
+                            + "/" + CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT,
+                    CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR,
                     addonOverlayDir);
         }
         if (rootfsDir != null && Files.isRegularFile(rootfsDir.resolve("usr/sbin/sshd"))) {

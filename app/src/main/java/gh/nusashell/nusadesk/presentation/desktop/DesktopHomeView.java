@@ -53,10 +53,11 @@ import java.util.Map;
  * hidden until both components are active.</p>
  *
  * <p>Linux is background infrastructure (ADR-0013), so there is no start, stop,
- * or session control anywhere on this surface. What the launcher states instead
- * is one passive readiness pill — see {@link LauncherStatus} — which folds
- * install, terminal-component, and session truth into a single sentence and
- * never offers an action the automatic path already performs.</p>
+ * or session control anywhere on this surface. The launcher keeps the normal
+ * ready state visually quiet and shows a passive status pill only when setup,
+ * transition, stopped, or failed state needs explanation — see
+ * {@link LauncherStatus}. It never offers an action the automatic path already
+ * performs.</p>
  *
  * <p>The launcher owns no runtime policy: it forwards the install intent to
  * the host and renders whatever the host publishes.</p>
@@ -312,12 +313,17 @@ public final class DesktopHomeView extends ScrollView
     }
 
     /**
-     * One passive pill. It states the readiness the host published and never
-     * offers a control: Linux starts from an app launch, so a button here could
-     * only duplicate the automatic path or contradict it.
+     * One passive status pill for a state that needs attention. Normal readiness
+     * is deliberately quiet so the launcher does not advertise infrastructure
+     * that is already working.
      */
     private void renderStatus(LauncherStatus status) {
         Context context = getContext();
+        boolean visible = status.isVisibleInLauncher();
+        statusView.setVisibility(visible ? VISIBLE : GONE);
+        if (!visible) {
+            return;
+        }
         statusView.setText(status.getLabelRes());
         statusView.setTextColor(context.getColor(status.getForegroundColorRes()));
         statusView.setBackground(badgeBackground(status));

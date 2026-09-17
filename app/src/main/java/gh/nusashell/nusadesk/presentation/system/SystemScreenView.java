@@ -1,8 +1,10 @@
 package gh.nusashell.nusadesk.presentation.system;
 
 import android.content.Context;
+import android.provider.Settings;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
+import android.widget.Button;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -18,6 +20,7 @@ import gh.nusashell.nusadesk.presentation.ScreenView;
 import gh.nusashell.nusadesk.presentation.SessionStatusAware;
 import gh.nusashell.nusadesk.presentation.SessionUiState;
 import gh.nusashell.nusadesk.presentation.widget.StateBadgeView;
+import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
 /**
  * Linux system screen: install state, session and terminal-component status, the
@@ -41,6 +44,10 @@ public final class SystemScreenView extends ScrollView
     private TextView endpointValue;
     private TextView profileValue;
     private TextView versionValue;
+    private TextView workspaceValue;
+    private TextView workspaceDetail;
+    private Button workspaceAction;
+    private Button permissionsAction;
 
     private final RuntimeStatusBus.Listener statusListener = this::renderSessionStatus;
 
@@ -66,7 +73,14 @@ public final class SystemScreenView extends ScrollView
         endpointValue = findViewById(R.id.system_endpoint_value);
         profileValue = findViewById(R.id.system_profile_value);
         versionValue = findViewById(R.id.system_version_value);
+        workspaceValue = findViewById(R.id.system_workspace_value);
+        workspaceDetail = findViewById(R.id.system_workspace_detail);
+        workspaceAction = findViewById(R.id.system_workspace_action);
+        permissionsAction = findViewById(R.id.system_permissions_action);
         endpointValue.setText(R.string.system_detail_endpoint_none);
+        workspaceValue.setText(R.string.system_workspace_value_none);
+        workspaceDetail.setText(R.string.system_workspace_detail_none);
+        workspaceAction.setVisibility(GONE);
         sessionValue.setText(SessionUiState.unknown().getBadgeRes());
         serviceValue.setText(R.string.system_service_missing);
         setWebAppCount(0);
@@ -75,6 +89,49 @@ public final class SystemScreenView extends ScrollView
     /** Wires the "How it works" contract disclosure. */
     public void setOnHowItWorksListener(OnClickListener listener) {
         findViewById(R.id.system_how_button).setOnClickListener(listener);
+    }
+
+    /**
+     * Wires the single workspace action. Which action it is depends on the state
+     * rendered by {@link #renderWorkspace(WorkspaceUiState)} — allow access,
+     * choose a folder, or change it — so the host handles them in one place.
+     */
+    public void setOnWorkspaceActionListener(OnClickListener listener) {
+        workspaceAction.setOnClickListener(listener);
+    }
+
+    /**
+     * Wires the app-permissions shortcut. The button opens this app's Android
+     * App Info page via {@link Settings#ACTION_APPLICATION_DETAILS_SETTINGS},
+     * where the platform manages camera, microphone, location, contacts, SMS and
+     * other permission switches; NusaDesk never requests them itself.
+     */
+    public void setOnOpenAppSettingsListener(OnClickListener listener) {
+        permissionsAction.setOnClickListener(listener);
+    }
+
+    /**
+     * Renders the workspace folder state. The screen reports what is possible on
+     * this device; it never offers an action the platform cannot honour, and it
+     * never widens storage access on its own.
+     */
+    public void renderWorkspace(WorkspaceUiState state) {
+        WorkspaceUiState current = state == null ? WorkspaceUiState.notChosen() : state;
+        int valueRes = current.getValueRes();
+        if (valueRes == 0) {
+            workspaceValue.setText(current.getFolderLabel());
+        } else {
+            workspaceValue.setText(valueRes);
+        }
+        workspaceDetail.setText(current.getDetailArg() == null
+                ? getContext().getString(current.getDetailRes())
+                : getContext().getString(current.getDetailRes(), current.getDetailArg()));
+        if (current.hasAction()) {
+            workspaceAction.setText(current.getActionRes());
+            workspaceAction.setVisibility(VISIBLE);
+        } else {
+            workspaceAction.setVisibility(GONE);
+        }
     }
 
     /** States how many user-defined web apps are registered, from the registry truth. */

@@ -40,9 +40,21 @@ public class RuntimeAutostartManifestTest {
                 + Paths.get("").toAbsolutePath());
     }
 
+    /**
+     * The manifest with XML comments removed.
+     *
+     * <p>Structural assertions must run against this, not the raw text: the
+     * manifest documents the permissions it deliberately does <em>not</em>
+     * declare, so a comment naming a forbidden component would otherwise read
+     * as if the component were present.</p>
+     */
+    private static String manifestStructure() throws Exception {
+        return manifest().replaceAll("(?s)<!--.*?-->", "");
+    }
+
     @Test
     public void declaresNoBackgroundAutostartPath() throws Exception {
-        String manifest = manifest();
+        String manifest = manifestStructure();
 
         assertFalse("no boot permission may be requested",
                 manifest.contains("RECEIVE_BOOT_COMPLETED"));
@@ -68,13 +80,17 @@ public class RuntimeAutostartManifestTest {
     }
 
     @Test
-    public void permissionsStayMinimal() throws Exception {
+    public void permissionsStayAnchoredToTheAutostartBoundary() throws Exception {
         String manifest = manifest();
 
         assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE"));
-        assertFalse(manifest.contains("android.permission.WAKE_LOCK"));
-        assertFalse(manifest.contains("REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"));
-        assertFalse(manifest.contains("MANAGE_EXTERNAL_STORAGE"));
-        assertFalse(manifest.contains("ACCESS_BACKGROUND_LOCATION"));
+        // No launch-time or background wake-up path, regardless of which
+        // capability permission is present.
+        assertFalse(manifest.contains("RECEIVE_BOOT_COMPLETED"));
+        assertFalse(manifest.contains("android.permission.SCHEDULE_EXACT_ALARM"));
+        assertFalse(manifest.contains("android.permission.USE_EXACT_ALARM"));
+        // The full permission set moved to an explicit allow-list when the
+        // automation surface was declared; see BridgePermissionsManifestTest,
+        // which asserts the declared set equals a reviewed list exactly.
     }
 }

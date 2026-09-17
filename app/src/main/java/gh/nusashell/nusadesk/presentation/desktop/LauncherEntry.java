@@ -36,28 +36,26 @@ public final class LauncherEntry {
 
     private static final LauncherEntry ADD_APP = new LauncherEntry(
             Kind.ADD_APP, ADD_APP_ID, R.string.launcher_add_label, null,
-            R.string.webapp_add_glyph, null, R.string.webapp_add_desc, null, null);
+            R.drawable.ic_launcher_add, R.string.webapp_add_desc, null, null);
 
     private final Kind kind;
     private final String id;
     private final int labelRes;
     private final String label;
-    private final int glyphRes;
-    private final String glyph;
+    private final int iconRes;
     private final int descriptionRes;
     private final String iconUri;
     private final WebAppDefinition webApp;
 
     private LauncherEntry(
             Kind kind, String id, int labelRes, String label,
-            int glyphRes, String glyph, int descriptionRes,
+            int iconRes, int descriptionRes,
             String iconUri, WebAppDefinition webApp) {
         this.kind = kind;
         this.id = id;
         this.labelRes = labelRes;
         this.label = label;
-        this.glyphRes = glyphRes;
-        this.glyph = glyph;
+        this.iconRes = iconRes;
         this.descriptionRes = descriptionRes;
         this.iconUri = iconUri;
         this.webApp = webApp;
@@ -74,7 +72,7 @@ public final class LauncherEntry {
             throw new IllegalArgumentException("app must not be null");
         }
         return new LauncherEntry(Kind.CURATED, app.getId(), app.getLabelRes(), null,
-                app.getGlyphRes(), null, app.getDescriptionRes(), null, null);
+                app.getIconRes(), app.getDescriptionRes(), null, null);
     }
 
     /** A registered web app. */
@@ -85,7 +83,7 @@ public final class LauncherEntry {
         // No resource description: a web app's own name is what describes it, and
         // the tile composes its accessible sentence from that name.
         return new LauncherEntry(Kind.WEB_APP, definition.getId().value(),
-                0, definition.getDisplayName(), 0, null,
+                0, definition.getDisplayName(), 0,
                 0, definition.getIconUri(), definition);
     }
 
@@ -108,14 +106,13 @@ public final class LauncherEntry {
         return label;
     }
 
-    /** String resource for the glyph, or {@code 0} when the glyph is literal. */
-    public int getGlyphRes() {
-        return glyphRes;
-    }
-
-    /** Literal glyph, or {@code null} when the glyph is a resource. */
-    public String getGlyph() {
-        return glyph;
+    /**
+     * Drawable resource for the bundled vector icon, or {@code 0} when the
+     * entry's icon comes from elsewhere: a web app renders its own image,
+     * favicon, or monogram instead of a bundled asset.
+     */
+    public int getIconRes() {
+        return iconRes;
     }
 
     /** Accessible description resource for this entry. */
@@ -154,7 +151,7 @@ public final class LauncherEntry {
         LauncherEntry that = (LauncherEntry) other;
         return kind == that.kind && id.equals(that.id)
                 && labelRes == that.labelRes && Objects.equals(label, that.label)
-                && glyphRes == that.glyphRes && Objects.equals(glyph, that.glyph)
+                && iconRes == that.iconRes
                 && descriptionRes == that.descriptionRes
                 && Objects.equals(iconUri, that.iconUri)
                 && Objects.equals(webApp, that.webApp);
@@ -162,7 +159,7 @@ public final class LauncherEntry {
 
     @Override
     public int hashCode() {
-        return Objects.hash(kind, id, labelRes, label, glyphRes, glyph,
+        return Objects.hash(kind, id, labelRes, label, iconRes,
                 descriptionRes, iconUri, webApp);
     }
 

@@ -10,7 +10,7 @@ android {
         applicationId 'gh.nusashell.nusadesk'
         minSdk 29
         targetSdk 37
-        versionCode 1
+        versionCode 2
         versionName '0.1.0'
     }
 
@@ -38,11 +38,23 @@ android {
         // freshness nudge so the supply-chain vetting rule wins over "newer
         // is available". (bcpkix was removed: see dependencies comment.)
         disable 'NewerVersionAvailable'
+        // ScopedStorage flags MANAGE_EXTERNAL_STORAGE as a Google Play policy
+        // risk. The permission is deliberate here (ADR-0023): the guest binds a
+        // user-chosen folder, PRoot needs a real host path, and on Android 11+
+        // only all-files access allows one. It is never assumed — the product
+        // asks for the grant from a visible explanation, and binds nothing
+        // without it. Disabling the check is the honest record of that decision;
+        // WorkspaceStorageManifestTest keeps the manifest contract pinned. A
+        // Google Play release would need the All files access declaration form
+        // and an approved use case; today the project ships only the signed
+        // GitHub release APK.
+        disable 'ScopedStorage'
     }
 
     testOptions {
         unitTests {
             returnDefaultValues true
+            includeAndroidResources true
         }
     }
 
@@ -62,6 +74,12 @@ android {
         jniLibs {
             useLegacyPackaging true
         }
+        // Never add a .gz-suffixed file under assets/: AGP's asset merge
+        // (MergedAssetWriter) gunzips it and strips the suffix before the APK
+        // is written — androidResources noCompress cannot prevent it on
+        // AGP 9.4 (verified: mergeDebugAssets emits udocker-1.3.17.tar from
+        // udocker-1.3.17.tar.gz). Gzipped payloads ship under .tgz instead;
+        // see assets/compose/THIRD_PARTY_NOTICES.md.
         resources {
             excludes += [
                 'META-INF/DEPENDENCIES',
@@ -107,6 +125,14 @@ dependencies {
     implementation 'net.i2p.crypto:eddsa:0.3.0'
     implementation 'org.slf4j:slf4j-api:1.7.36'
 
+    // The required Compose YAML boundary (Phase 2A): SnakeYAML Engine is the
+    // vetted YAML 1.2 parser for compose files — the only permitted entry
+    // point, no hand-rolled parsing. Version pinned exactly; no ranges.
+    implementation 'org.snakeyaml:snakeyaml-engine:3.1.1'
+
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.slf4j:slf4j-simple:1.7.36'
+    // Robolectric runs the real framework classes of a chosen API level on the
+    // JVM, so one test can guard several Android releases at once.
+    testImplementation 'org.robolectric:robolectric:4.15.1'
 }

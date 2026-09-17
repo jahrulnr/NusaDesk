@@ -13,6 +13,7 @@ local.properties
 .citations/
 *.iml
 captures/
+tasks/
 
 # Generated APKs and signing material
 *.apk

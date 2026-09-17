@@ -36,13 +36,14 @@
         <item name="android:importantForAccessibility">no</item>
     </style>
 
-    <style name="Widget.LinuxWrapper.AppTileGlyph">
+    <style name="Widget.LinuxWrapper.AppTileMonogram">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">monospace</item>
-        <item name="android:textSize">@dimen/tile_glyph_size</item>
+        <item name="android:textSize">@dimen/tile_monogram_size</item>
         <item name="android:textColor">@color/primary</item>
         <item name="android:importantForAccessibility">no</item>
+        <item name="android:visibility">gone</item>
     </style>
 
     <style name="Widget.LinuxWrapper.AppTileLabel">

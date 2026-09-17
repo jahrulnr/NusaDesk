@@ -2,14 +2,17 @@ package gh.nusashell.nusadesk.presentation;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Insets;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -25,15 +28,18 @@ import gh.nusashell.nusadesk.application.runtime.RuntimeInstallationUseCase;
 import gh.nusashell.nusadesk.application.runtime.RuntimeSnapshotReconciler;
 import gh.nusashell.nusadesk.application.runtime.RuntimeStateStore;
 import gh.nusashell.nusadesk.application.webapp.WebAppRegistry;
+import gh.nusashell.nusadesk.application.workspace.WorkspaceStore;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
-import gh.nusashell.nusadesk.domain.runtime.GuestSshPayloadProfile;
+import gh.nusashell.nusadesk.domain.runtime.GuestAddonPayloadProfile;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
+import gh.nusashell.nusadesk.domain.workspace.WorkspaceFolder;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshDaemon;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotPaths;
-import gh.nusashell.nusadesk.infrastructure.runtime.AndroidGuestSshAddonInstaller;
+import gh.nusashell.nusadesk.infrastructure.runtime.AndroidGuestAddonInstaller;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidRuntimeInstaller;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidRuntimeStateStore;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeHostService;
@@ -43,6 +49,8 @@ import gh.nusashell.nusadesk.infrastructure.ssh.SshReconnectPolicy;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshSecurityInitializer;
 import gh.nusashell.nusadesk.infrastructure.webapp.SharedPreferencesWebAppStore;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppFaviconFetcher;
+import gh.nusashell.nusadesk.infrastructure.workspace.SharedPreferencesWorkspaceStore;
+import gh.nusashell.nusadesk.infrastructure.workspace.WorkspaceFolderAccess;
 import gh.nusashell.nusadesk.presentation.desktop.AppSurfaceHostView;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopApp;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopHomeView;
@@ -53,6 +61,7 @@ import gh.nusashell.nusadesk.presentation.webapp.WebAppFormView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
 import gh.nusashell.nusadesk.presentation.widget.InstallPhaseSnapshot;
+import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -110,15 +119,19 @@ public final class MainActivity extends Activity {
 
     private RuntimeStateStore stateStore;
     private RuntimeInstallationUseCase installer;
-    private AndroidGuestSshAddonInstaller addonInstaller;
+    private AndroidGuestAddonInstaller addonInstaller;
     private RuntimeCatalogEntry catalogEntry;
-    private GuestSshPayloadProfile sshProfile;
+    private GuestAddonPayloadProfile sshProfile;
+    private GuestAddonPayloadProfile serviceProfile;
     private WebAppRegistry webAppRegistry;
     private WebAppFaviconFetcher faviconFetcher;
+    private WorkspaceStore workspaceStore;
+    private WorkspaceFolderAccess workspaceAccess;
     private Handler mainHandler;
 
     private RuntimeSnapshot currentSnapshot;
     private RuntimeSnapshot addonSnapshot;
+    private RuntimeSnapshot serviceAddonSnapshot;
     private GuestSshUiState guestSshState = GuestSshUiState.missing();
     private DesktopDestination activeDestination = DesktopDestination.HOME;
     private String activeWebAppId;
@@ -147,10 +160,16 @@ public final class MainActivity extends Activity {
 
         catalogEntry = CuratedRuntimeCatalog.ubuntuBaseArm64();
         sshProfile = CuratedRuntimeCatalog.guestSshAddon();
+        serviceProfile = CuratedRuntimeCatalog.guestServiceBridge();
         stateStore = new AndroidRuntimeStateStore(this);
         installer = new AndroidRuntimeInstaller(this, stateStore);
-        addonInstaller = new AndroidGuestSshAddonInstaller(this);
+        addonInstaller = new AndroidGuestAddonInstaller(this);
         webAppRegistry = new WebAppRegistry(new SharedPreferencesWebAppStore(this));
+        // The workspace folder is a user choice: it is stored, then bound into
+        // the guest on every later start (ADR-0023). The access helper owns the
+        // platform rules, so the Activity only asks for state and renders it.
+        workspaceStore = new SharedPreferencesWorkspaceStore(this);
+        workspaceAccess = new WorkspaceFolderAccess(this);
         faviconFetcher = new WebAppFaviconFetcher();
         mainHandler = new Handler(Looper.getMainLooper());
         contractDialog = new FoundationContractDialog(this);
@@ -163,6 +182,7 @@ public final class MainActivity extends Activity {
         restoreShellState(savedInstanceState);
         refreshGuestSshState();
         refreshWebApps();
+        refreshWorkspace();
         applyWindowInsets();
         registerBackCallback();
         showRestoredShell();
@@ -197,6 +217,9 @@ public final class MainActivity extends Activity {
         activityStarted = true;
         continuePendingSetup();
         ensureRuntimeRunning();
+        // Returning from the all-files access settings page is a foreground
+        // event: re-read the grant so the workspace card tells the truth.
+        refreshWorkspace();
     }
 
     @Override
@@ -218,6 +241,13 @@ public final class MainActivity extends Activity {
         if (guestSshState.getKind() != GuestSshUiState.Kind.INSTALLED) {
             return;
         }
+        if (!serviceBridgeSettled()) {
+            // The session would start without its service manager: wait for
+            // the service bridge to land (or to fail, which still lets the
+            // SSH-only session start) instead of opening a session that can
+            // never autostart the user's enabled services.
+            return;
+        }
         RuntimeHostService.ensureRunning(this);
     }
 
@@ -233,10 +263,18 @@ public final class MainActivity extends Activity {
         if (currentSnapshot == null || currentSnapshot.getState() != RuntimeState.READY) {
             return;
         }
-        if (guestSshState.getKind() != GuestSshUiState.Kind.MISSING) {
+        if (guestSshState.getKind() == GuestSshUiState.Kind.MISSING) {
+            startInstall();
             return;
         }
-        startInstall();
+        // The service bridge follows the same rule: missing and not already
+        // failed continues the pipeline once; a FAILED snapshot waits for the
+        // user's explicit install action rather than retrying in a loop.
+        if (!isServiceBridgeActiveOnDisk()
+                && (serviceAddonSnapshot == null
+                        || serviceAddonSnapshot.getState() != RuntimeState.FAILED)) {
+            startInstall();
+        }
     }
 
     @Override
@@ -293,6 +331,10 @@ public final class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == WorkspaceFolderAccess.REQUEST_PICK_FOLDER) {
+            onWorkspacePicked(resultCode, data);
+            return;
+        }
         if (requestCode != WebAppFormView.REQUEST_OPEN_IMAGE) {
             return;
         }
@@ -319,6 +361,8 @@ public final class MainActivity extends Activity {
     private void wireSystemScreen() {
         systemScreen.setRuntimeProfile(catalogEntry.getAppId(), catalogEntry.getVersion());
         systemScreen.setOnHowItWorksListener(view -> contractDialog.show());
+        systemScreen.setOnWorkspaceActionListener(view -> onWorkspaceAction());
+        systemScreen.setOnOpenAppSettingsListener(view -> openAppSettings());
     }
 
     private void restoreShellState(Bundle savedInstanceState) {
@@ -689,6 +733,122 @@ public final class MainActivity extends Activity {
     }
 
     /**
+     * The workspace card's single action (ADR-0023). Which step runs depends on
+     * where the device is: without the platform grant the user is sent to the one
+     * Settings page that can give it, and only with the grant does the folder
+     * picker open. Nothing here widens storage access by itself.
+     */
+    private void onWorkspaceAction() {
+        if (!workspaceAccess.isSupportedPlatform()) {
+            return;
+        }
+        if (!workspaceAccess.hasAllFilesAccess()) {
+            openAllFilesAccessSettings();
+            refreshWorkspace();
+            return;
+        }
+        try {
+            startActivityForResult(workspaceAccess.folderPickerIntent(),
+                    WorkspaceFolderAccess.REQUEST_PICK_FOLDER);
+        } catch (ActivityNotFoundException noPicker) {
+            Toast.makeText(this, R.string.system_workspace_unavailable, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * Opens the all-files access screen, falling back to the generic one on the
+     * builds that do not publish the app-specific page. The intents are started
+     * rather than probed first: a package-visibility check can report "missing"
+     * for a page that would open, and the failure is cheap to handle here.
+     */
+    private void openAllFilesAccessSettings() {
+        if (startSettings(workspaceAccess.allFilesAccessIntent())) {
+            return;
+        }
+        if (!startSettings(workspaceAccess.genericAllFilesAccessIntent())) {
+            Toast.makeText(this, R.string.system_workspace_unavailable, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * The System card's app-permissions shortcut: opens this app's Android App
+     * Info page, where the platform manages camera, microphone, location,
+     * contacts, SMS and other permission switches. NusaDesk never requests these
+     * itself, so the card can only point at the page that owns them.
+     */
+    private void openAppSettings() {
+        if (!startSettings(appDetailsSettingsIntent(getPackageName()))) {
+            Toast.makeText(this, R.string.system_permissions_unavailable, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * The exact intent the app-permissions shortcut starts. Kept small and
+     * static so a focused test can pin the action and package URI without
+     * driving the whole Activity.
+     */
+    static Intent appDetailsSettingsIntent(String packageName) {
+        return new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:" + packageName));
+    }
+
+    private boolean startSettings(Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+        try {
+            startActivity(intent);
+            return true;
+        } catch (ActivityNotFoundException noSuchScreen) {
+            return false;
+        }
+    }
+
+    /**
+     * Stores the picked folder when it is a local folder this app can really
+     * write, and says so plainly when it is not. A rejected pick leaves the
+     * previous choice untouched.
+     */
+    private void onWorkspacePicked(int resultCode, Intent data) {
+        if (resultCode == RESULT_OK) {
+            WorkspaceFolder picked = workspaceAccess.resolvePickedFolder(data);
+            if (picked != null && workspaceAccess.isUsable(picked)) {
+                workspaceStore.save(picked);
+            } else {
+                Toast.makeText(this, R.string.system_workspace_unavailable,
+                        Toast.LENGTH_LONG).show();
+            }
+        }
+        refreshWorkspace();
+    }
+
+    /**
+     * Renders what the workspace card may offer here: below API 30 the limitation
+     * itself, otherwise the grant step, the picker, or the folder in use.
+     */
+    private void refreshWorkspace() {
+        if (systemScreen == null || workspaceAccess == null) {
+            return;
+        }
+        if (!workspaceAccess.isSupportedPlatform()) {
+            // Below API 30 no shared folder can be bound; the workspace is the
+            // app's own external folder, and the card names it.
+            WorkspaceFolder appFolder = workspaceAccess.appFolderWorkspace();
+            systemScreen.renderWorkspace(WorkspaceUiState.appFolder(
+                    appFolder == null ? "" : appFolder.getHostPath()));
+            return;
+        }
+        if (!workspaceAccess.hasAllFilesAccess()) {
+            systemScreen.renderWorkspace(WorkspaceUiState.needsAllFilesAccess());
+            return;
+        }
+        WorkspaceFolder current = workspaceStore.load();
+        systemScreen.renderWorkspace(current == null
+                ? WorkspaceUiState.notChosen()
+                : WorkspaceUiState.chosen(current.getDisplayName()));
+    }
+
+    /**
      * The single setup pipeline (ADR-0017). One serialized orchestration on the
      * install executor: if the curated rootfs is not active on disk, install it;
      * when it succeeds, immediately install the guest-SSH add-on on the same
@@ -714,6 +874,10 @@ public final class MainActivity extends Activity {
                 if (!isAddonActiveOnDisk()) {
                     addonInstaller.install(sshProfile, catalogEntry.getAppId(),
                             snapshot -> mainHandler.post(() -> onAddonSnapshot(snapshot)));
+                }
+                if (!isServiceBridgeActiveOnDisk()) {
+                    addonInstaller.install(serviceProfile, catalogEntry.getAppId(),
+                            snapshot -> mainHandler.post(() -> onServiceAddonSnapshot(snapshot)));
                 }
             } catch (RuntimeInstallationException ignored) {
                 // The installer has already persisted and published FAILED with its reason.
@@ -785,6 +949,23 @@ public final class MainActivity extends Activity {
     }
 
     /**
+     * Receives one guest service-bridge install snapshot from the single setup
+     * pipeline. It shares the installer's phase surface and failure toast with
+     * the SSH add-on but never feeds {@code guestSshState}: the SSH component
+     * is what the terminal needs, the bridge is additive.
+     */
+    private void onServiceAddonSnapshot(RuntimeSnapshot snapshot) {
+        serviceAddonSnapshot = snapshot;
+        desktopHome.renderAddonPhase(InstallPhaseSnapshot.addon(snapshot));
+        if (snapshot.getState() == RuntimeState.FAILED) {
+            Toast.makeText(this, snapshot.getDetail(), Toast.LENGTH_LONG).show();
+        }
+        if (activityStarted) {
+            ensureRuntimeRunning();
+        }
+    }
+
+    /**
      * Whether the curated rootfs is active on disk. Read from the state store
      * on the install executor so the pipeline decision is not a race with the
      * main-thread render: after a rootfs install succeeds in this task, the
@@ -809,6 +990,30 @@ public final class MainActivity extends Activity {
         return GuestSshDaemon.detect(rootfs, overlay) != null;
     }
 
+    /**
+     * Whether the guest service-bridge overlay is active on disk, derived from
+     * the same detection the workload uses so pipeline and session agree.
+     */
+    private boolean isServiceBridgeActiveOnDisk() {
+        Path filesDir = getFilesDir().toPath();
+        Path overlay = ProotPaths.activeAddonPath(filesDir, serviceProfile.getAddonId());
+        return GuestServiceBridge.detect(overlay) != null;
+    }
+
+    /**
+     * Whether the service bridge is settled for session start: either its
+     * overlay is already active on disk, or its last install attempt failed
+     * (in which case the session still starts — SSH works without it, and the
+     * missing {@code systemctl} is honest). An unsettled bridge (installing,
+     * or never attempted) holds the session start so the first session can
+     * run its service manager.
+     */
+    private boolean serviceBridgeSettled() {
+        return isServiceBridgeActiveOnDisk()
+                || (serviceAddonSnapshot != null
+                        && serviceAddonSnapshot.getState() == RuntimeState.FAILED);
+    }
+
     private RuntimeSnapshot baseSnapshot(RuntimeState state) {
         return new RuntimeSnapshot(
                 catalogEntry.getAppId(), state, "", 0, System.currentTimeMillis());
@@ -821,19 +1026,33 @@ public final class MainActivity extends Activity {
         int nightMode = getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK;
         boolean light = nightMode == Configuration.UI_MODE_NIGHT_NO;
+        // getDecorView() installs the decor on demand, so it must run before any
+        // insets-controller access. On API 30/31 Window.getInsetsController()
+        // dereferences the decor directly and throws while it does not exist yet
+        // — which is the whole window during onCreate — while the decor view's
+        // own accessor simply reports "not attached" as null.
+        View decor = window.getDecorView();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            android.view.WindowInsetsController controller = window.getInsetsController();
-            if (controller != null) {
-                controller.hide(WindowInsets.Type.statusBars());
-                controller.setSystemBarsBehavior(
-                        android.view.WindowInsetsController
-                                .BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-                controller.setSystemBarsAppearance(
-                        light ? android.view.WindowInsetsController
-                                .APPEARANCE_LIGHT_NAVIGATION_BARS : 0,
-                        android.view.WindowInsetsController
-                                .APPEARANCE_LIGHT_NAVIGATION_BARS);
+            android.view.WindowInsetsController controller = decor.getWindowInsetsController();
+            if (controller == null) {
+                // The controller exists only once the decor view is attached.
+                // View.post() queues the runnable until attach, so the request
+                // is replayed on the same window instead of being dropped; once
+                // attached there is nothing left to wait for, so no retry loop.
+                if (!decor.isAttachedToWindow()) {
+                    decor.post(this::applySystemBars);
+                }
+                return;
             }
+            controller.hide(WindowInsets.Type.statusBars());
+            controller.setSystemBarsBehavior(
+                    android.view.WindowInsetsController
+                            .BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            controller.setSystemBarsAppearance(
+                    light ? android.view.WindowInsetsController
+                            .APPEARANCE_LIGHT_NAVIGATION_BARS : 0,
+                    android.view.WindowInsetsController
+                            .APPEARANCE_LIGHT_NAVIGATION_BARS);
             return;
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -842,7 +1061,6 @@ public final class MainActivity extends Activity {
         if (light) {
             systemUiVisibility |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
         }
-        View decor = window.getDecorView();
         decor.setSystemUiVisibility(systemUiVisibility);
         decor.setOnSystemUiVisibilityChangeListener(visibility -> {
             if ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {

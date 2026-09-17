@@ -59,7 +59,7 @@ public final class ProotPaths {
      * Resolve the activated add-on overlay directory for an add-on id.
      *
      * <p>Layout: {@code <filesDir>/linux-wrapper/addons/<addonId>/active}, matching
-     * {@code AndroidGuestSshAddonInstaller}. Returns {@code null} when the id is
+     * {@code AndroidGuestAddonInstaller}. Returns {@code null} when the id is
      * blank so detection can treat a missing profile as absent.</p>
      */
     public static Path activeAddonPath(Path filesDir, String addonId) {

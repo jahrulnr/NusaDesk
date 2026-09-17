@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launcher app icon plate: the rounded square behind a tile glyph, so a tile
+<!-- Launcher app icon plate: the rounded square behind a tile icon, so a tile
      reads as an application icon rather than a line of text. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/primary_tint" />
+    <solid android:color="@color/tile_icon_plate" />
     <corners android:radius="14dp" />
 </shape>

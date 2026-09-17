@@ -143,7 +143,13 @@
     }
     boundTerminal = term || null;
     pendingPixels = 0;
-    var state = { active: false, startY: 0, lastY: 0 };
+    var state = {
+      active: false,
+      startY: 0,
+      lastY: 0,
+      queuedPixels: 0,
+      animationFrame: 0
+    };
 
     function viewport() {
       // The scrollable scrollback element xterm creates inside the container.
@@ -192,6 +198,40 @@
       return holds(container.querySelector(".xterm-rows"));
     }
 
+    /* xterm refreshes its rendered rows whenever scrollLines() runs. Android
+       can dispatch several touchmove events inside one compositor frame, so
+       issuing a refresh for each one makes a slow device visibly stutter.
+       Fold their deltas together and make at most one xterm call per frame. */
+    function flushQueuedScroll() {
+      state.animationFrame = 0;
+      var amount = state.queuedPixels;
+      state.queuedPixels = 0;
+      if (amount === 0 || isMouseTracking() || hasDomSelection()) {
+        return;
+      }
+      scrollBy(amount);
+    }
+
+    function queueScroll(amount) {
+      if (!Number.isFinite(amount) || amount === 0) {
+        return;
+      }
+      state.queuedPixels += amount;
+      if (state.animationFrame !== 0) {
+        return;
+      }
+      var view = container.ownerDocument && container.ownerDocument.defaultView;
+      if (view && typeof view.requestAnimationFrame === "function") {
+        state.animationFrame = view.requestAnimationFrame(flushQueuedScroll);
+      } else {
+        flushQueuedScroll();
+      }
+    }
+
+    function discardQueuedScroll() {
+      state.queuedPixels = 0;
+    }
+
     /* Listen on the page container in capture phase. The xterm viewport and
        rendered DOM rows are siblings, so attaching only to `.xterm-viewport`
        misses drags that begin on terminal text. Capture at #terminal sees
@@ -203,6 +243,7 @@
       // the platform's long-press selection must see an untouched gesture.
       if (isMouseTracking() || e.touches.length !== 1) {
         state.active = false;
+        discardQueuedScroll();
         return;
       }
       state.active = false; // a scroll starts only after the threshold is crossed
@@ -229,24 +270,32 @@
       });
       if (decision.cancel) {
         state.active = false;
+        discardQueuedScroll();
         state.lastY = y;
         return;
       }
       if (decision.scroll) {
         state.active = true;
-        scrollBy(decision.scrollTop - metrics.scrollTop);
+        queueScroll(decision.scrollTop - metrics.scrollTop);
         if (decision.preventDefault) {
           e.preventDefault();
         }
+      } else if (isMouseTracking() || hasDomSelection()) {
+        state.active = false;
+        discardQueuedScroll();
       }
       state.lastY = y;
     }, { passive: false, capture: true });
 
-    function reset() {
+    function finish() {
       state.active = false;
     }
-    target.addEventListener("touchend", reset, { passive: true, capture: true });
-    target.addEventListener("touchcancel", reset, { passive: true, capture: true });
+    function cancel() {
+      state.active = false;
+      discardQueuedScroll();
+    }
+    target.addEventListener("touchend", finish, { passive: true, capture: true });
+    target.addEventListener("touchcancel", cancel, { passive: true, capture: true });
   }
 
   var api = {

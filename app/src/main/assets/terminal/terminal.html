@@ -89,6 +89,11 @@
         rows: 24,
         cursorBlink: true,
         scrollback: 1000,
+        // Touch events frequently move by less than one rendered row. The
+        // adapter intentionally preserves xterm's line-based scrollback API,
+        // so a short xterm-owned interpolation prevents those rows from
+        // appearing as discrete jumps while keeping a direct finger drag.
+        smoothScrollDuration: 80,
         // Compact monospace stack: the bundled WebView ships a default
         // monospace; the named faces are tried first where present and fall back
         // to the platform default. A smaller cell than the upstream default

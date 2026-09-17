@@ -87,6 +87,21 @@ public class LauncherStatusTest {
     }
 
     @Test
+    public void normalReadinessIsQuietButNonReadySessionStatesAreVisible() {
+        assertFalse(status(RuntimeState.READY, GuestSshUiState.installed(),
+                SessionState.RUNNING).isVisibleInLauncher());
+        assertFalse(LauncherStatus.of(
+                runtime(RuntimeState.NOT_INSTALLED, ""), GuestSshUiState.missing(), null)
+                .isVisibleInLauncher());
+        assertTrue(status(RuntimeState.READY, GuestSshUiState.installed(),
+                SessionState.STARTING).isVisibleInLauncher());
+        assertTrue(status(RuntimeState.READY, GuestSshUiState.installed(),
+                SessionState.STOPPED).isVisibleInLauncher());
+        assertTrue(status(RuntimeState.READY, GuestSshUiState.installed(),
+                SessionState.FAILED).isVisibleInLauncher());
+    }
+
+    @Test
     public void inFlightStatesAreStartingOrStoppingNeverStopped() {
         assertEquals(LauncherStatus.Kind.STARTING, status(RuntimeState.READY,
                 GuestSshUiState.installed(), SessionState.STARTING).getKind());

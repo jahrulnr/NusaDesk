@@ -8,10 +8,15 @@ GRADLE_FLAGS ?= --no-daemon
 
 .PHONY: test lint build check devices push install clean
 
-# Run the JVM/unit test suite and the pure-JavaScript terminal policy tests.
+# Run the JVM/unit test suite (which includes the Robolectric cross-API launch
+# guard, ADR-0022) and every pure-JavaScript terminal policy test. The glob is
+# deliberate: a new policy test must not be able to sit outside the gate.
 test:
 	$(GRADLEW) $(GRADLE_FLAGS) test
-	$(NODE) app/src/test/js/touch-scroll-policy.test.js
+	@for policy_test in app/src/test/js/*.test.js; do \
+		echo "$(NODE) $$policy_test"; \
+		$(NODE) "$$policy_test" || exit 1; \
+	done
 
 # Run Android lint with warnings treated as errors.
 lint:

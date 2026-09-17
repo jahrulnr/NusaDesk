@@ -1,0 +1,59 @@
+#!/bin/sh
+# lw-session-supervisor — NusaDesk guest session supervisor (product-owned).
+#
+# Runs as the initial tracee of the session's single PRoot tracer:
+#   $1 = init pid file     (guest path, e.g. /run/lw-services-init.pid)
+#   $2 = init exit marker  (guest path, e.g. /run/lw-services-init.exit)
+#   -- then the session daemon argv (sshd -D ...)
+#
+# The vendored service manager (systemctl init) is started first under a
+# wrapper subshell that records its real pid and reports its exit code in the
+# exit marker — the host reads both files. The session daemon then runs as a
+# direct child and the supervisor waits for it: the daemon's exit ends the
+# session, so the manager is signalled (it stops its enabled services) before
+# this script exits and PRoot's --kill-on-exit reaps whatever remains.
+#
+# Everything under one tracer is deliberate: PRoot mediates kill(2) so a
+# tracee may only signal processes inside its own tracer's tree. A shared
+# tree is what lets a terminal `systemctl stop` reach a service the manager
+# started.
+set -u
+
+init_pid_file=$1
+init_exit_file=$2
+shift 2
+if [ "${1:-}" = "--" ]; then
+    shift
+fi
+
+rm -f "$init_exit_file"
+
+(
+    /opt/lw-services/usr/bin/python3.12 \
+        /opt/lw-services/usr/bin/systemctl init &
+    init_pid=$!
+    echo "$init_pid" > "$init_pid_file"
+    wait "$init_pid"
+    echo "$?" > "$init_exit_file"
+) &
+
+"$@" &
+daemon_pid=$!
+wait "$daemon_pid"
+daemon_rc=$?
+
+# The daemon ended the session: give the manager a bounded graceful stop so
+# enabled services run their stop steps, then exit; PRoot reaps the rest.
+if [ -f "$init_pid_file" ]; then
+    init_pid=$(cat "$init_pid_file" 2>/dev/null || true)
+    if [ -n "${init_pid:-}" ]; then
+        kill -TERM "$init_pid" 2>/dev/null || true
+        i=0
+        while [ "$i" -lt 40 ] && kill -0 "$init_pid" 2>/dev/null; do
+            sleep 0.1
+            i=$((i + 1))
+        done
+        kill -KILL "$init_pid" 2>/dev/null || true
+    fi
+fi
+exit "$daemon_rc"

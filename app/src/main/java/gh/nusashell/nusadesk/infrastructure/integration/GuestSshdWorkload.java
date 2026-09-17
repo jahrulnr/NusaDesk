@@ -1,6 +1,8 @@
 package gh.nusashell.nusadesk.infrastructure.integration;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.system.Os;
 import android.system.OsConstants;
 import android.util.Log;
@@ -8,19 +10,24 @@ import android.util.Log;
 import gh.nusashell.nusadesk.application.session.HostKeyTrustStore;
 import gh.nusashell.nusadesk.domain.network.RuntimePort;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
-import gh.nusashell.nusadesk.domain.runtime.GuestSshPayloadProfile;
+import gh.nusashell.nusadesk.domain.runtime.GuestAddonPayloadProfile;
 import gh.nusashell.nusadesk.domain.session.HostKeyFingerprint;
 import gh.nusashell.nusadesk.domain.session.HostKeyRecord;
 import gh.nusashell.nusadesk.domain.session.HostKeyTrust;
 import gh.nusashell.nusadesk.domain.session.ReadinessFrame;
 import gh.nusashell.nusadesk.domain.session.ReadinessHealth;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
+import gh.nusashell.nusadesk.infrastructure.androidbridge.AndroidCapabilityBridge;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestAwarenessReadmeWriter;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestEphemeralStateCleaner;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshdBindFailureException;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshDaemon;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshdPidFile;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshdStartupLog;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshdStderrMonitor;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSupplementaryGroups;
+import gh.nusashell.nusadesk.infrastructure.proot.ProotBindMount;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotLaunchException;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotLaunchSpec;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotLauncher;
@@ -39,6 +46,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.PublicKey;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -68,10 +76,15 @@ import java.util.function.LongSupplier;
  *       privsep account and pins the {@code root} password to the Keystore
  *       token via a direct {@code /etc/shadow} edit (PAM helpers cannot run
  *       inside the guest).</li>
- *   <li>Spawn the daemon in foreground mode under the locked PRoot spec on the
- *       fixed loopback port and require the daemon's own
- *       {@code Server listening on 127.0.0.1 port 22022.} report. There is one
- *       attempt: a fixed port that is already held is a typed
+ *   <li>Spawn the session under the locked PRoot spec: when the service
+ *       bridge is installed the tracer's initial tracee is the vendored
+ *       {@code lw-session-supervisor}, which backgrounds {@code systemctl
+ *       init} and runs the daemon as its sibling under the same tracer —
+ *       one session is one PRoot tree, the only shape in which a terminal
+ *       {@code systemctl} can signal manager-run services (ADR-0024); without
+ *       the bridge the daemon itself is the initial tracee. Require the
+ *       daemon's own {@code Server listening on 127.0.0.1 port 22022.} report.
+ *       There is one attempt: a fixed port that is already held is a typed
  *       {@link GuestSshdBindFailureException} and an honest {@code FAILED}, not
  *       a retry, and the host never attaches to a listener it did not start.</li>
  *   <li>Require a real SSH protocol banner on the reported endpoint, pin the
@@ -109,7 +122,15 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
     private static final long STOP_TIMEOUT_MILLIS = 5_000L;
     /** Short confirmation probe after a stop; a live answer is logged loudly. */
     private static final long STOP_VERIFY_TIMEOUT_MILLIS = 1_000L;
+    /** How long the manager's pid file may take to appear after exec. */
+    private static final long MANAGER_LAUNCH_TIMEOUT_MILLIS = 15_000L;
+    /**
+     * The manager's graceful-stop window on teardown and reclaim: SIGTERM
+     * makes it run every enabled service's stop steps before exiting.
+     */
+    private static final long MANAGER_STOP_TIMEOUT_MILLIS = 8_000L;
 
+    private final Context context;
     private final ProotLauncher launcher;
     private final Path filesDir;
     private final SshBridgeCredential credential;
@@ -124,7 +145,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
 
     /**
      * One supervised daemon: the PRoot tracer process, the endpoint it was
-     * proven to serve, and the listener of the session that owns it.
+     * proven to serve, and the listener of the session that owns it. The
+     * session's guest service manager attaches here once it is up, so every
+     * teardown path that owns the daemon also owns the manager.
      */
     private static final class ActiveDaemon {
         private final Process process;
@@ -133,17 +156,43 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         private final RuntimePort endpoint;
         private final WorkloadListener listener;
         private final GuestSshdStderrMonitor monitor;
+        private final AndroidCapabilityBridge capabilityBridge;
         private volatile boolean stopRequested;
+        private volatile ActiveServiceManager serviceManager;
 
         ActiveDaemon(Process process, GuestSshDaemon daemon, Path pidFile,
                      RuntimePort endpoint, WorkloadListener listener,
-                     GuestSshdStderrMonitor monitor) {
+                     GuestSshdStderrMonitor monitor,
+                     AndroidCapabilityBridge capabilityBridge) {
             this.process = process;
             this.daemon = daemon;
             this.pidFile = pidFile;
             this.endpoint = endpoint;
             this.listener = listener;
             this.monitor = monitor;
+            this.capabilityBridge = capabilityBridge;
+        }
+    }
+
+    /**
+     * One supervised guest service manager: the vendored {@code systemctl
+     * init} loop running as a tracee inside the session's shared PRoot tree
+     * (ADR-0024). The supervisor script — the tracer's initial tracee — owns
+     * the manager's lifecycle; the host tracks it through two files the
+     * script maintains: the pid file naming the real manager tracee for
+     * signalling, and the exit marker whose appearance means the manager
+     * exited while the session daemon lives on.
+     */
+    private static final class ActiveServiceManager {
+        private final GuestServiceBridge bridge;
+        private final Path pidFile;
+        private final Path exitFile;
+        private volatile boolean stopRequested;
+
+        ActiveServiceManager(GuestServiceBridge bridge, Path pidFile, Path exitFile) {
+            this.bridge = bridge;
+            this.pidFile = pidFile;
+            this.exitFile = exitFile;
         }
     }
 
@@ -159,8 +208,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                 || workExecutor == null || callbackExecutor == null) {
             throw new IllegalArgumentException("all dependencies are required");
         }
-        this.launcher = new ProotLauncher(context);
-        this.filesDir = context.getFilesDir().toPath();
+        this.context = context.getApplicationContext();
+        this.launcher = new ProotLauncher(this.context);
+        this.filesDir = this.context.getFilesDir().toPath();
         this.credential = credential;
         this.healthProbe = healthProbe;
         this.trustStore = trustStore;
@@ -197,6 +247,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                 teardown(daemon);
             } else {
                 reclaimUntrackedDaemon();
+                clearGuestTmpAfterStop();
             }
             callbackExecutor.execute(listener::onStopped);
         });
@@ -204,7 +255,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
 
     private void startInternal(SessionSnapshot session, WorkloadListener listener) {
         Path rootfs = ProotPaths.activeRootfsPath(filesDir, session.getAppId());
-        GuestSshPayloadProfile profile = CuratedRuntimeCatalog.guestSshAddon();
+        GuestAddonPayloadProfile profile = CuratedRuntimeCatalog.guestSshAddon();
         Path overlay = ProotPaths.activeAddonPath(filesDir, profile.getAddonId());
         GuestSshDaemon daemon = GuestSshDaemon.detect(rootfs, overlay);
         if (daemon == null) {
@@ -213,6 +264,11 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                     + "guest-native SSH session");
             return;
         }
+        // The service bridge is additive: the SSH session does not depend on
+        // it, so an absent overlay only means no `systemctl`, not a failure.
+        Path serviceOverlay = ProotPaths.activeAddonPath(
+                filesDir, CuratedRuntimeCatalog.guestServiceBridge().getAddonId());
+        GuestServiceBridge bridge = GuestServiceBridge.detect(serviceOverlay);
 
         // A previous session (or a crashed host process) can leave a live guest
         // daemon behind: killing the PRoot tracer does not kill its tracee, so
@@ -224,6 +280,19 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         }
         Path pidFile = daemon.resolvePidFile(rootfs);
         reclaimOrphanedDaemon(daemon, pidFile);
+        if (bridge != null) {
+            reclaimOrphanedServiceManager(bridge, bridge.resolvePidFile(rootfs));
+        }
+        try {
+            // The active rootfs is persistent app storage, while guest /tmp is
+            // session-temporary by contract. Clear stale files after any
+            // previous tracer/tracee has been reclaimed, before a new guest
+            // process can create or depend on temporary state.
+            GuestEphemeralStateCleaner.clearGuestTmp(rootfs);
+        } catch (IOException e) {
+            fail(listener, "could not reset guest temporary storage: " + e.getMessage());
+            return;
+        }
 
         char[] token = credential.token();
         if (token == null || token.length == 0) {
@@ -231,11 +300,21 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             return;
         }
 
+        AndroidCapabilityBridge capabilityBridge = new AndroidCapabilityBridge(context);
         try {
+            capabilityBridge.start();
+            if (bridge != null) {
+                // Host-side idempotent wiring: link the overlay's public paths
+                // into the rootfs and create the /run/systemd/system marker
+                // before any guest process can ask for them.
+                bridge.wireInto(rootfs);
+            }
+            GuestAwarenessReadmeWriter.ensure(rootfs, appVersion());
             writeDaemonConfig(rootfs, daemon);
             PublicKey hostKey = ensureHostKey(rootfs, daemon);
             runGuestSetup(session, daemon, token, inheritedGroupEntries());
-            launchVerifiedDaemon(session, listener, daemon, pidFile, hostKey);
+            launchVerifiedDaemon(session, listener, daemon, pidFile, hostKey, bridge,
+                    capabilityBridge, rootfs);
         } catch (GuestSshdBindFailureException e) {
             Log.e(TAG, "guest sshd fixed-port bind conflict on "
                     + e.getEndpoint().getHost() + ":" + e.getEndpoint().getPort(), e);
@@ -244,6 +323,12 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             Log.e(TAG, "guest sshd start failed", e);
             fail(listener, "guest sshd start failed: " + e.getMessage());
         } finally {
+            // Once launchVerifiedDaemon hands the bridge to active, teardown owns
+            // it. All rejected/failed starts close the local instance here.
+            ActiveDaemon current = active;
+            if (current == null || current.capabilityBridge != capabilityBridge) {
+                capabilityBridge.close();
+            }
             zero(token);
         }
     }
@@ -261,11 +346,21 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
      * fallback, or attached to.</p>
      */
     private void launchVerifiedDaemon(SessionSnapshot session, WorkloadListener listener,
-                                      GuestSshDaemon daemon, Path pidFile, PublicKey hostKey)
+                                      GuestSshDaemon daemon, Path pidFile, PublicKey hostKey,
+                                      GuestServiceBridge bridge,
+                                      AndroidCapabilityBridge capabilityBridge,
+                                      Path rootfs)
             throws IOException, GuestSshdBindFailureException {
         RuntimePort endpoint = LocalSshEndpoint.endpoint();
         Files.deleteIfExists(pidFile);
-        Process process = launchDaemon(session, daemon, endpoint.getPort());
+        if (bridge != null) {
+            // The session supervisor maintains both files; a stale pair must
+            // never be mistaken for this run's manager.
+            Files.deleteIfExists(bridge.resolvePidFile(rootfs));
+            Files.deleteIfExists(bridge.resolveExitFile(rootfs));
+        }
+        Process process = launchDaemon(session, daemon, endpoint.getPort(), bridge, capabilityBridge,
+                rootfs);
         // Until the daemon is handed over to `active`, every exit path tears the
         // tracer down: a rejected start must not leave a guest daemon (or a
         // tracer holding the fixed port) behind.
@@ -301,11 +396,19 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             }
 
             pinGuestHostKey(hostKey, endpoint);
-            active = new ActiveDaemon(process, daemon, pidFile, endpoint, listener, monitor);
+            active = new ActiveDaemon(process, daemon, pidFile, endpoint, listener, monitor,
+                    capabilityBridge);
             supervised = true;
             // Keep the guest resolver current while the daemon runs: the bound
             // resolv.conf is rewritten in place when the active network changes.
             launcher.startResolverRefresh();
+            // The shared tracer's supervisor is already backgrounding
+            // `systemctl init`; attach the host's view of it (pid/exit files)
+            // so its lifecycle is logged and its services are stopped before
+            // the daemon on teardown (ADR-0024).
+            if (bridge != null) {
+                attachServiceManager(active, bridge, rootfs);
+            }
             Log.i(TAG, "guest " + daemon.label() + " ready on "
                     + endpoint.getHost() + ":" + endpoint.getPort());
             callbackExecutor.execute(() -> listener.onReadiness(new ReadinessFrame(
@@ -323,7 +426,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                 // on-device), so signal the daemon through its pid file — with
                 // the same identity check every stop path uses — before tearing
                 // the tracer down. An orphan must not keep holding its port.
-                reclaimRejectedDaemon(daemon, pidFile, process);
+                reclaimRejectedDaemon(daemon, pidFile, process, bridge, rootfs);
             }
         }
     }
@@ -338,9 +441,21 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
      * the rejected path no pin was ever stored (a successful pin is what hands
      * the daemon over to {@code active}).
      */
-    private void reclaimRejectedDaemon(GuestSshDaemon daemon, Path pidFile, Process process) {
+    private void reclaimRejectedDaemon(GuestSshDaemon daemon, Path pidFile, Process process,
+                                       GuestServiceBridge bridge, Path rootfs) {
+        if (bridge != null) {
+            // The shared tracer's supervisor may already have started the
+            // manager — and it enabled services — before the start was
+            // rejected. Signal the manager first so its graceful stop runs
+            // while the tree is still intact.
+            Long initPid = GuestSshdPidFile.read(bridge.resolvePidFile(rootfs));
+            if (initPid != null && signalGuestProcess(
+                    initPid, bridge.getBinaryPath(), bridge.label())) {
+                waitForExitMarker(bridge.resolveExitFile(rootfs), MANAGER_STOP_TIMEOUT_MILLIS);
+            }
+        }
         Long pid = GuestSshdPidFile.read(pidFile);
-        if (pid != null && signalGuestDaemon(pid, daemon)) {
+        if (pid != null && signalGuestProcess(pid, daemon.getBinaryPath(), "guest sshd")) {
             Log.i(TAG, "signalled rejected guest sshd pid " + pid + " to stop");
         }
         stopProcess(process);
@@ -361,15 +476,194 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         return answering;
     }
 
-    private Process launchDaemon(SessionSnapshot session, GuestSshDaemon daemon, int port)
+    private Process launchDaemon(SessionSnapshot session, GuestSshDaemon daemon, int port,
+                                 GuestServiceBridge bridge,
+                                 AndroidCapabilityBridge capabilityBridge,
+                                 Path rootfs)
             throws IOException {
         try {
+            // One session = one PRoot tree (ADR-0024): with the service bridge
+            // installed, the tracer's initial tracee is the session supervisor
+            // which backgrounds `systemctl init` and runs the daemon as its
+            // sibling — PRoot mediates kill(2), so a terminal `systemctl stop`
+            // only reaches a manager-run service when both share the tree.
+            List<String> argv = bridge != null
+                    ? bridge.sessionArgv(daemon.daemonArgv(port))
+                    : daemon.daemonArgv(port);
+            boolean fakeRoot = daemon.requiresFakeRoot()
+                    || (bridge != null && bridge.requiresFakeRoot());
+            List<ProotBindMount> binds = new ArrayList<>(daemon.requiredBinds());
+            binds.addAll(capabilityBridge.requiredBinds(rootfs));
+            Map<String, String> environment = daemonEnv(daemon);
+            environment.putAll(capabilityBridge.environment());
             ProotLaunchSpec spec = launcher.buildSpec(
-                    session.getAppId(), daemon.daemonArgv(port),
-                    daemon.requiredBinds(), daemonEnv(daemon), daemon.requiresFakeRoot());
+                    session.getAppId(), argv, binds, environment, fakeRoot);
             return launcher.launchProcess(spec);
         } catch (ProotLaunchException e) {
             throw new IOException("guest " + daemon.label() + " launch rejected", e);
+        }
+    }
+
+    /**
+     * Attach the guest service manager to the verified session: the shared
+     * tracer's supervisor is already backgrounding {@code systemctl init} and
+     * maintaining its pid/exit files, so the host's part is a watcher thread
+     * that turns those files into honest lifecycle logging — the pid file's
+     * appearance is the "launched" signal, the exit marker's appearance is
+     * the "exited" signal, and a manager that never reports a pid is logged
+     * rather than silently absent.
+     */
+    private void attachServiceManager(ActiveDaemon daemon, GuestServiceBridge bridge,
+                                      Path rootfs) {
+        ActiveServiceManager manager = new ActiveServiceManager(
+                bridge, bridge.resolvePidFile(rootfs), bridge.resolveExitFile(rootfs));
+        daemon.serviceManager = manager;
+        Thread watcher = new Thread(
+                () -> watchServiceManager(daemon, manager), "lw-services-init-watch");
+        watcher.setDaemon(true);
+        watcher.start();
+    }
+
+    private void watchServiceManager(ActiveDaemon daemon, ActiveServiceManager manager) {
+        boolean launched = false;
+        for (long waited = 0; waited < MANAGER_LAUNCH_TIMEOUT_MILLIS; waited += 500L) {
+            if (managerGone(daemon, manager)) {
+                return;
+            }
+            if (Files.isRegularFile(manager.pidFile)) {
+                launched = true;
+                break;
+            }
+            if (Files.isRegularFile(manager.exitFile)) {
+                break;
+            }
+            if (!sleepQuietly(500L)) {
+                return;
+            }
+        }
+        if (managerGone(daemon, manager)) {
+            return;
+        }
+        if (launched) {
+            Log.i(TAG, "guest service manager launched; enabled services are autostarting");
+        } else {
+            Log.w(TAG, "guest service manager did not report a pid within "
+                    + MANAGER_LAUNCH_TIMEOUT_MILLIS + " ms");
+        }
+        while (!managerGone(daemon, manager)
+                && !Files.isRegularFile(manager.exitFile)) {
+            if (!sleepQuietly(500L)) {
+                return;
+            }
+        }
+        if (!managerGone(daemon, manager)) {
+            workExecutor.execute(() -> onServiceManagerExited(daemon, manager));
+        }
+    }
+
+    private boolean managerGone(ActiveDaemon daemon, ActiveServiceManager manager) {
+        return active != daemon || daemon.serviceManager != manager
+                || daemon.stopRequested || manager.stopRequested;
+    }
+
+    private static boolean sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /**
+     * The manager's exit marker appeared while its session is still current:
+     * the session daemon keeps running — the terminal and endpoint do not
+     * depend on the manager — but the loss is logged loudly and the manager
+     * detached so teardown does not signal a stale pid.
+     */
+    private void onServiceManagerExited(ActiveDaemon daemon, ActiveServiceManager manager) {
+        if (managerGone(daemon, manager)) {
+            return;
+        }
+        daemon.serviceManager = null;
+        Log.w(TAG, "guest service manager exited ("
+                + readExitMarker(manager) + "); enabled services are no longer supervised");
+    }
+
+    private static String readExitMarker(ActiveServiceManager manager) {
+        try {
+            return "exit " + new String(
+                    Files.readAllBytes(manager.exitFile), StandardCharsets.UTF_8).trim();
+        } catch (IOException | RuntimeException e) {
+            return "exit marker unreadable";
+        }
+    }
+
+    /**
+     * Stop the supervised service manager: signal the guest init tracee so it
+     * shuts its enabled services down. The manager shares the session daemon's
+     * tracer, so there is no process to destroy here — the bounded wait for
+     * the supervisor's exit marker is the manager's graceful-stop window
+     * before the daemon itself is stopped.
+     */
+    private void stopServiceManager(ActiveServiceManager manager) {
+        Long pid = GuestSshdPidFile.read(manager.pidFile);
+        if (pid == null || !signalGuestProcess(pid, manager.bridge.getBinaryPath(),
+                manager.bridge.label())) {
+            return;
+        }
+        Log.i(TAG, "signalled guest service manager pid " + pid + " to stop");
+        waitForExitMarker(manager.exitFile, MANAGER_STOP_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * Bounded wait for the supervisor's manager-exit marker. Returning on
+     * timeout is fine: the caller proceeds to stop the daemon, and the
+     * supervisor's own post-daemon shutdown bounds whatever the manager still
+     * runs inside the tree.
+     */
+    private static void waitForExitMarker(Path exitFile, long timeoutMillis) {
+        for (long waited = 0; waited < timeoutMillis
+                && !Files.isRegularFile(exitFile); waited += 100L) {
+            if (!sleepQuietly(100L)) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * Reclaim a service manager a previous session or crashed host process
+     * left behind, mirroring {@link #reclaimOrphanedDaemon}: the pid file is
+     * trusted only together with the tracee's own command line. The manager's
+     * SIGTERM stops its enabled services, so wait for the tracee to exit
+     * before the new session wires fresh status state — a manager still
+     * writing shutdown marks must not race the wipe.
+     */
+    private void reclaimOrphanedServiceManager(GuestServiceBridge bridge, Path pidFile) {
+        if (!Files.isRegularFile(pidFile)) {
+            return;
+        }
+        Long pid = GuestSshdPidFile.read(pidFile);
+        if (pid == null || !signalGuestProcess(pid, bridge.getBinaryPath(), bridge.label())) {
+            return;
+        }
+        Log.i(TAG, "reclaimed orphaned guest service manager pid " + pid);
+        for (long waited = 0; waited < MANAGER_STOP_TIMEOUT_MILLIS
+                && processAlive(pid); waited += 100L) {
+            if (!sleepQuietly(100L)) {
+                return;
+            }
+        }
+    }
+
+    /** Whether the host can still reach {@code pid} (kill(2) probe, no signal). */
+    private static boolean processAlive(long pid) {
+        try {
+            Os.kill((int) pid, 0);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -383,8 +677,14 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             return;
         }
         Long pid = GuestSshdPidFile.read(pidFile);
-        if (pid != null && signalGuestDaemon(pid, daemon)) {
+        if (pid != null && signalGuestProcess(pid, daemon.getBinaryPath(), "guest sshd")) {
             Log.i(TAG, "reclaimed orphaned guest sshd pid " + pid);
+            for (long waited = 0; waited < STOP_TIMEOUT_MILLIS && processAlive(pid);
+                 waited += 100L) {
+                if (!sleepQuietly(100L)) {
+                    return;
+                }
+            }
         }
     }
 
@@ -403,10 +703,14 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         Path overlay = ProotPaths.activeAddonPath(
                 filesDir, CuratedRuntimeCatalog.guestSshAddon().getAddonId());
         GuestSshDaemon daemon = GuestSshDaemon.detect(rootfs, overlay);
-        if (daemon == null) {
-            return;
+        if (daemon != null) {
+            reclaimOrphanedDaemon(daemon, daemon.resolvePidFile(rootfs));
         }
-        reclaimOrphanedDaemon(daemon, daemon.resolvePidFile(rootfs));
+        GuestServiceBridge bridge = GuestServiceBridge.detect(ProotPaths.activeAddonPath(
+                filesDir, CuratedRuntimeCatalog.guestServiceBridge().getAddonId()));
+        if (bridge != null) {
+            reclaimOrphanedServiceManager(bridge, bridge.resolvePidFile(rootfs));
+        }
     }
 
     /**
@@ -418,11 +722,24 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         // resolver. Idempotent, so safe alongside the stop() call below.
         launcher.stopResolverRefresh();
         daemon.stopRequested = true;
+        // The service manager goes down first so its SIGTERM can run the
+        // enabled services' stop steps while the session is still intact.
+        ActiveServiceManager manager = daemon.serviceManager;
+        daemon.serviceManager = null;
+        if (manager != null) {
+            manager.stopRequested = true;
+            stopServiceManager(manager);
+        }
         Long pid = GuestSshdPidFile.read(daemon.pidFile);
-        if (pid != null && signalGuestDaemon(pid, daemon.daemon)) {
+        if (pid != null && signalGuestProcess(pid, daemon.daemon.getBinaryPath(),
+                "guest sshd")) {
             Log.i(TAG, "signalled guest sshd pid " + pid + " to stop");
         }
         stopProcess(daemon.process);
+        if (daemon.capabilityBridge != null) {
+            daemon.capabilityBridge.close();
+        }
+        clearGuestTmpAfterStop();
         clearPin(daemon.endpoint);
         if (healthProbe.isHealthy(
                 daemon.endpoint.getHost(), daemon.endpoint.getPort(), STOP_VERIFY_TIMEOUT_MILLIS)) {
@@ -435,26 +752,27 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
     }
 
     /**
-     * Send SIGTERM to the daemon pid, but only when the process at that pid is
-     * really this daemon (a stale pid file must never signal an unrelated
-     * process). A pid file whose process is gone is simply stale.
+     * Send SIGTERM to a guest pid, but only when the process at that pid is
+     * really the process {@code binaryPath} names (a stale pid file must never
+     * signal an unrelated process). A pid file whose process is gone is simply
+     * stale.
      *
      * @return true when the signal was delivered
      */
-    private boolean signalGuestDaemon(long pid, GuestSshDaemon daemon) {
+    private boolean signalGuestProcess(long pid, String binaryPath, String label) {
         String commandLine = readCommandLine(pid);
         if (commandLine == null) {
             return false;
         }
-        if (!GuestSshdPidFile.matchesDaemon(commandLine, daemon.getBinaryPath())) {
-            Log.w(TAG, "pid " + pid + " is not this guest sshd; leaving it alone");
+        if (!GuestSshdPidFile.matchesDaemon(commandLine, binaryPath)) {
+            Log.w(TAG, "pid " + pid + " is not this " + label + "; leaving it alone");
             return false;
         }
         try {
             Os.kill((int) pid, OsConstants.SIGTERM);
             return true;
         } catch (Exception e) {
-            Log.w(TAG, "could not signal guest sshd pid " + pid, e);
+            Log.w(TAG, "could not signal " + label + " pid " + pid, e);
             return false;
         }
     }
@@ -468,6 +786,22 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             return text.isEmpty() ? null : text;
         } catch (IOException | RuntimeException e) {
             return null;
+        }
+    }
+
+    /** Clear session-temporary guest state after the tracer has stopped. */
+    private void clearGuestTmpAfterStop() {
+        Path rootfs = ProotPaths.activeRootfsPath(
+                filesDir, CuratedRuntimeCatalog.ubuntuBaseArm64().getAppId());
+        if (!Files.isDirectory(rootfs)) {
+            return;
+        }
+        try {
+            GuestEphemeralStateCleaner.clearGuestTmp(rootfs);
+        } catch (IOException e) {
+            // Stop remains honest even when cleanup is blocked; the next start
+            // retries before launching any guest process.
+            Log.w(TAG, "could not clear guest temporary storage after stop", e);
         }
     }
 
@@ -523,6 +857,27 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             Thread.currentThread().interrupt();
         }
         return "";
+    }
+
+    /** Read the installed APK version that owns the generated guest README. */
+    private String appVersion() throws IOException {
+        try {
+            String version;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                version = context.getPackageManager()
+                        .getPackageInfo(context.getPackageName(),
+                                PackageManager.PackageInfoFlags.of(0L)).versionName;
+            } else {
+                version = context.getPackageManager()
+                        .getPackageInfo(context.getPackageName(), 0).versionName;
+            }
+            if (version == null || version.trim().isEmpty()) {
+                throw new IOException("installed APK has no version name");
+            }
+            return version;
+        } catch (PackageManager.NameNotFoundException e) {
+            throw new IOException("could not read installed APK version", e);
+        }
     }
 
     /** Extra env for the daemon launch: the overlay library path when used. */

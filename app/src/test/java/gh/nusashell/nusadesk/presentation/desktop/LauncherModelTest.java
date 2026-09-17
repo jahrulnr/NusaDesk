@@ -38,7 +38,7 @@ public class LauncherModelTest {
                 return "Add app";
             case CURATED:
                 return DesktopApp.fromId(entry.getId()) == DesktopApp.TERMINAL
-                        ? "Terminal" : "Linux System";
+                        ? "Terminal" : "System";
             default:
                 return entry.getLabel();
         }
@@ -72,7 +72,21 @@ public class LauncherModelTest {
         assertFalse(add.isOpenable());
         assertFalse(add.isWebApp());
         assertTrue(add.getLabelRes() != 0);
-        assertTrue(add.getGlyphRes() != 0);
+        assertTrue(add.getIconRes() != 0);
+    }
+
+    /**
+     * A web app carries no bundled vector icon: its tile walks the user image →
+     * favicon → monogram order ({@link LauncherIconPolicy}) instead, and that
+     * fallback chain must stay reachable through {@code iconRes == 0}.
+     */
+    @Test
+    public void webAppsHaveNoBundledIconSoTheirOwnImagePolicyApplies() {
+        for (LauncherEntry entry : LauncherModel.entries(WEB_APPS)) {
+            if (entry.isWebApp()) {
+                assertEquals(0, entry.getIconRes());
+            }
+        }
     }
 
     @Test

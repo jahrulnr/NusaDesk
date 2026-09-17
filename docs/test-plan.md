@@ -14,8 +14,13 @@ Evidence status:
   endpoint, autostart, the foreground service, and a live guest shell in the
   terminal are implemented and device-verified on one Android 10/API 29 arm64
   device. Other API levels, 16 KB-page devices, and OEMs are open.
-- **Presentation:** the launcher, readiness pill, add/edit/remove web-app form,
-  web-app surface states, terminal prompts, system screen, landscape, tablet,
+- **Compose adapter only:** the bounded `udocker compose` guest CLI
+  (ADR-0025) is additionally device-verified on one Android 12/API 31 arm64
+  device (Samsung S10e) — see the *udocker compose verification* table below.
+  This extends Compose evidence to API 31 only; it does not extend the core
+  runtime's API-29 evidence boundary.
+- **Presentation:** the launcher, non-ready status visibility, add/edit/remove web-app form,
+  web-app surface states, terminal prompts, system screen, permission shortcut,
   light/dark themes, and font scaling are UX-verified on an x86_64 emulator
   (API 35). The emulator cannot run the arm64 PRoot bridge, so it is not runtime
   evidence.
@@ -57,7 +62,7 @@ and persistence.
 | UI-003 | Install failed | Wizard shows the reason and `Try again`; no tile claims a usable desktop |
 | UI-004 | System installed, terminal component missing | A dedicated "Add the Linux terminal component" card, and **no** status line that contradicts it |
 | UI-005 | System and component installed, session starting | The pill reads `Starting Linux…` with **no action**; the terminal surface shows a passive wait |
-| UI-006 | Session running | Pill reads `Linux ready`; tiles are enabled; the task bar shows only the way back, the title, and (for a web app) options |
+| UI-006 | Session running | No launcher status pill is shown in the normal ready state; tiles are enabled; the task bar shows only the way back, the title, and (for a web app) options |
 | UI-007 | Session stopped (notification `Stop` tapped while the app is foregrounded) | Pill reads `Linux stopped` and states that Linux starts again on the next app launch; **no** start button; opening the app again starts it |
 | UI-008 | Session failed | Pill shows the host reason and no action; nothing anywhere shows a false running state |
 | UI-009 | Terminal with no session | Full-bleed dark surface, honest waiting prompt, one `Go to all apps` action, disabled accessory keys; **no** start/stop control |
@@ -75,6 +80,8 @@ and persistence.
 | UI-021 | One-finger drag on the terminal | Scrolls the scrollback without stealing taps; while scrolled back a jump button offers a return to live output and hides again at the bottom |
 | UI-022 | Holding an accessory arrow key | One key on tap, repeats while held, stops on release, cancel, or sliding off the key; TalkBack activation still emits a single key |
 | UI-023 | Rotation with a live terminal | No Activity recreation; the same WebView, buffer, and SSH attachment refit to the new dimensions |
+| UI-024 | System tile and permission shortcut | Launcher tile is labelled `System`; opening it shows the App permissions card; one tap opens this app's Android App Info page, where platform permissions can be reviewed; no runtime prompt is shown inside NusaDesk |
+| UI-025 | Launcher icon plate contrast | In light and dark themes, the neutral launcher icon plate separates the bright teal vector/monogram from the desktop background without reducing label or icon legibility |
 
 ### User web-app cases
 
@@ -146,6 +153,46 @@ and persistence.
 | SSH-008 | Reconnect after controlled restart | WebView reconnects only after new identity/readiness, not on a stale PID |
 | SSH-009 | Activity recreation during connect | Connect/cancellation/resume state survives a real recreation, not silently dropped; rotation alone no longer recreates the Activity — the retained terminal refits in place |
 
+## udocker compose verification (implemented; device-verified on Android 12)
+
+The bounded `udocker compose` adapter (ADR-0025) runs inside the guest as a
+product-owned CLI on pinned udocker 1.3.17/PyYAML 6.0.1 source. Host-side
+coverage: the domain suite (64 tests), the parser suite (22), the asset
+harness (`assets/compose/test/run_tests.py`, 35 tests against the real
+pinned tarballs and a fake `lw-udocker` child), and the
+payload/wiring/launcher suites.
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| CMP-001 | Compose file with an unsupported key (`build`, `networks`, `healthcheck`, `deploy`, `secrets`, `configs`, anchors/aliases/tags, `${...}` interpolation, long-form `depends_on`, `on-failure`, named volumes, container-only ports, key-only `environment`) | Parse fails closed with a path-specific error; nothing is silently ignored |
+| CMP-002 | `ports:` declared on any service | Refused at `up` admission (`runtime_problems()`), re-refused on every supervisor scan, and fail-closed again at argv build; no `--publish` token reaches udocker |
+| CMP-003 | Bind source outside the workspace, or `ro`/`read_only` | Rejected: sources must resolve inside `~/nusadesk`; udocker volumes are always read-write |
+| CMP-004 | `up` without `-d` | Refused: there is no foreground `up` |
+| CMP-005 | `restart: always` service exits | Supervisor respawns with exponential backoff (1 s doubling to 60 s, reset after 30 s healthy); `ps` reports honest states |
+| CMP-006 | `stop`/`down`, then a session restart | Persisted `manual_stop` keeps the project down for every policy until `start`/`up` clears it |
+| CMP-007 | `down` while a pid file still names a live child | `down` refuses to remove containers/state (it would orphan the child); state stays `desired=false, manual_stop=true` |
+| CMP-008 | Environment values | Written to a mode-0600 env file passed as `--env-file`; never on argv; redacted in supervisor logs; newline values rejected |
+| CMP-009 | Re-`up` after a changed image | `--pull=reuse` reuses the named container; a `down` is required to recreate |
+| CMP-010 | `down` cleanup | `udocker rm` per service is best-effort after all pid files are dead, then project state is removed; a container udocker cannot remove is left for manual `udocker rm` |
+
+Device pass (2026-09-16, Samsung S10e SM-G970F `R39M209Q3TM`, Android
+12/API 31, arm64, 4 KB pages; guest endpoint `127.0.0.1:22022`):
+
+| Case | Observed result |
+| --- | --- |
+| Wired overlay | 14 vendored files on disk; compose paths, inner-PRoot and `/system` binds, pre-created `multi-user.target.wants` link; `systemctl` running with `lw-compose-supervisor` active/enabled; `/usr/local/bin/udocker --version` and image list OK |
+| `up -d` on a pre-existing alpine image | Supervisor spawned the child through `/usr/local/bin/udocker`; nested PRoot executed it; the marker appended through the read-write workspace bind |
+| `restart: always` | Six restart cycles observed |
+| `stop` | Marker froze; `manual_stop` persisted |
+| `down` | Project state and container removed; nothing left behind |
+| Uncached `busybox:latest` pull | Completed in 16.36 s through upstream udocker's download path; arm64 manifest verified; image removed afterwards |
+| `unless-stopped` | Service returned after host force-stop/relaunch and stayed down after `stop` until explicit `start` |
+| Port declaration traffic test | `ports: ["127.0.0.1:18924:8080/tcp"]` produced **no** `:18924` listener while the container kept listening on `*:8080`, reachable via the device LAN IP — udocker/PRoot strips `host_ip`, so the MVP rejects every `ports:` declaration |
+| Same-version overlay refresh | The initial pass predates the digest-aware `detect()` guard and deleted one stale compose file by hand; the guard now re-hashes every vendored file per session and reinstalls a stale overlay automatically |
+
+Not covered: other API levels, 16 KB-page devices, and OEMs; no full
+Compose compatibility is claimed.
+
 ## Readiness and endpoint cases
 
 | ID | Case | Expected result |
@@ -204,6 +251,42 @@ or port parameter is ever added).
 | AUTO-009 | Terminal component installed while the app is open | The launcher requests the runtime without waiting for the next foreground event; the request stays idempotent |
 | AUTO-010 | Half-installed device (system missing or component missing) | No start is requested; the launcher states the missing setup step |
 
+## Guest awareness README cases
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| README-001 | New/first guest session | App creates writable `/root/README.md` with concise feature awareness, management notice, and installed APK version |
+| README-002 | Same app version, unchanged file | No rewrite is needed; content remains unchanged |
+| README-003 | App version changed or README stale/edited | App atomically regenerates only `/root/README.md`; unrelated `/root` files remain untouched |
+| README-004 | `/root` is a symlink or unsafe path | Session setup fails closed; writer never escapes the active rootfs |
+
+## Guest os-release metadata
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| OSREL-001 | New PRoot spec | Effective `/etc/os-release` keeps Ubuntu fields and contains namespaced contributor/source assignments |
+| OSREL-002 | Base `/usr/lib/os-release` changes after apt/base-files update | Next PRoot spec regenerates overlay from updated base content while preserving NusaDesk assignments |
+| OSREL-003 | Base os-release symlink escapes active rootfs | PRoot spec fails closed; no outside file is copied |
+
+## Resolver doctor and session-temporary state
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| DOC-001 | Valid Android DNS and matching host source | Doctor reports `OK`; no rewrite |
+| DOC-002 | Host resolver source missing, modified, oversized, or symlinked | Doctor atomically repairs only the source file when valid Android DNS exists; symlink target is never followed |
+| DOC-003 | Android has no usable DNS | Doctor reports `NO_ACTIVE_DNS`; it does not write an empty file or public-DNS fallback |
+| DOC-004 | Burst of resolver `rename`/`delete`/`create` events | Parent-directory observer debounces the burst; periodic tick remains the correctness fallback |
+| DOC-005 | Guest/package operation changes `/etc/resolv.conf` | Fresh PRoot launch and device probe confirm whether the host source repair reaches the guest; no arbitrary rootfs repair is attempted |
+| TMP-001 | Marker files/directories/symlinks under active rootfs `/tmp` before a new session | Cleanup removes only `/tmp` children and preserves the real `/tmp` directory and symlink targets outside it |
+| TMP-002 | Rootfs `/tmp` missing, symlinked, or a regular file | Missing directory is created; symlink/non-directory fails closed before guest launch |
+| TMP-003 | Normal stop/restart | `/tmp` is cleared after the tracer stops; workspace, `/var/tmp`, package state, and compose cache remain |
+| TMP-004 | Force-stop/reboot | Immediate cleanup is not claimed; the next explicit app launch clears stale `/tmp` before Linux starts |
+| SYS-001 | Rootfs has apt-installed real/native `systemctl` or Python paths | Strict PRoot file binds make product `systemctl3`/Python effective without deleting rootfs-owned files |
+
+The resolver policy is covered by `GuestResolverDoctorTest`; temporary-state
+cleanup is covered by `GuestEphemeralStateCleanerTest`; strict systemctl
+binds are covered by `GuestServiceBridgeTest` and `ProotBindMountTest`.
+
 ## WebView cases
 
 - Loads only the exact generated `http://127.0.0.1:<port>` origin.
@@ -213,6 +296,74 @@ or port parameter is ever added).
 - Shows startup timeout, runtime stopped, process failure, and retry states.
 - Does not expose filesystem, shell, or unrestricted Android JavaScript interfaces.
 - Works at 320dp, 600dp+, landscape, rotation, and increased font scale.
+
+## Android capability bridge and live media (ADR-0030, ADR-0031)
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| ACB-001 | Malformed, oversized, duplicate-key, or unknown-version request | Parser rejects the frame; the live server maps it to a bounded connection response without exposing platform detail |
+| ACB-002 | Missing or wrong per-session token | Response is `unauthorized`; the capability source is not called |
+| ACB-003 | Unsupported method | Response is `unsupported-method`; no shell/reflection/Android class dispatch occurs |
+| ACB-004 | Battery source unavailable or a platform field is unknown | RPC returns explicit unavailable/unknown values; no fabricated public fallback is emitted |
+| ACB-005 | Battery snapshot projection | Guest `/sys/class/power_supply/battery` values map to the documented Linux-shaped units and are atomically refreshed |
+| ACB-006 | Projection state path is symlinked or unsafe | The optional sysfs bind is omitted; the RPC bridge remains independent and usable |
+| ACB-007 | Guest session stops, fails, or is rejected before readiness | TCP listener, worker pools, token, and projection are closed/cleared; no bridge survives the session |
+| ACB-008 | Guest calls `battery.status` from the active session | Physical device returns Android-backed capacity/status and the projection is readable from inside the guest |
+| ACB-009 | Background location, FGS start, or automatic permission prompt | Remains intentionally unwired; no background wake-up or consent UI comes from the bridge worker |
+| ACB-010 | Sensor source unavailable, timeout, registration failure, or non-finite platform values | RPC returns `sensor-unavailable`, `sensor-timeout`, or bounded unavailable error; no fabricated reading is encoded |
+| ACB-011 | Guest calls `sensor.accelerometer`/`sensor.gyroscope` from the active session | Physical device returns finite x/y/z values, bounded accuracy text, and platform timestamp, or an explicit unavailable/timeout result |
+| ACB-012 | Location grant missing, previously denied, provider disabled, or no fix | RPC returns `location-permission-required`, `location-permission-denied`, `location-unavailable`, or `location-timeout`; it never opens a permission UI |
+| ACB-013 | Foreground location grant and usable provider | Guest receives a bounded finite location fix when the provider actually delivers one; background/continuous location is not claimed |
+| ACB-014 | Camera/mic/messaging/telephony permission missing or side-effect method requested | Each read/action returns a typed permission/unavailable error; `sms.send` and `phone.call` return `action-unsupported` |
+| ACB-015 | Unified live media control contract | `media.start`/`media.status`/`media.stop` return the documented explicit states and typed `media-*` errors; no request parameters or media bytes cross JSONL |
+| ACB-016 | Location stream start/poll/stop | Foreground-only bounded queue/poll works; stop/close removes listener; no FGS/background claim |
+| ACB-017 | Loopback RTSP server protocol | Server binds only IPv4 `127.0.0.1`, accepts RTSP-over-TCP interleaving only, advertises H.264/AAC SDP, replays a keyframe, caps clients, and drops slow consumers |
+| ACB-018 | Positive live media consumer on a physical device | With test-only camera/mic grants and visible app, guest receives a running RTSP URL; `ffprobe`/`ffmpeg -f null -` sees H.264/AAC for a bounded interval; `media.stop` removes the stream and grants are revoked |
+
+JVM coverage implements ACB-001 through ACB-007, ACB-010, ACB-012, and ACB-014 through ACB-017. ACB-007 cleanup is covered by
+the physical stop/relaunch pass below; the bridge is deliberately a single-use
+session object and is not unit-restarted. ACB-009 remains a scope guard; ACB-008,
+ACB-011, and ACB-018 are covered on the physical devices documented below.
+
+Physical ACB-008 and ACB-011 passes (2026-09-16), plus ACB-018 (2026-09-17):
+
+- Samsung S10e SM-G970F `R39M209Q3TM` (Android 12/API 31, arm64, 4 KB
+  pages): a Python probe executed inside the live guest read
+  `/run/nusadesk/android-bridge.env`, called `battery.status` over the session
+  loopback port, and received `ok=true`, `available=true`,
+  `capacity_percent=84`, `status=not-charging`, and `health=good`. The same
+  probe read `capacity=84` and `status=Not charging` from
+  `/sys/class/power_supply/battery`. The notification Stop action stopped the
+  session and the host-side bridge config/projection files disappeared; a
+  fresh user-visible launch recreated them.
+- Samsung S7 Edge SM-G935F `ce0516054597102d05` (Android 10/API 29, arm64,
+  4 KB pages): the same guest probe received `ok=true`, `available=true`,
+  `capacity_percent=100`, `status=full`, `health=good`, and matching
+  `capacity=100`/`status=Full` from projected sysfs.
+
+- On the same two devices, guest calls to `sensor.accelerometer` and
+  `sensor.gyroscope` returned `ok=true`, `available=true`, finite x/y/z values,
+  `accuracy="high"`, and platform timestamps. This is one-shot evidence only;
+  streaming/backpressure is unverified.
+
+- On S10e, `location.get` returned `location-permission-denied` with the app's
+  foreground grants absent. After a test-only foreground grant, the same
+  request returned the bounded `location-timeout` result because no fresh
+  provider fix arrived; the grant was revoked afterwards. A successful live
+  fix remains unverified.
+
+- On S10e on 2026-09-17, with test-only CAMERA and RECORD_AUDIO grants and
+  the Activity visible, the actual guest CLI ran `media.start` and returned
+  `running` with `rtsp://127.0.0.1:<port>/`, H.264/AAC, 1280x720, 30 fps, and
+  `client_limit=2`. An `adb forward` exposed that device-loopback port only to
+  the host test consumer: `ffprobe` enumerated H.264 1280x720 and AAC 44.1 kHz
+  mono, and `ffmpeg -t 3 -f null -` exited successfully with no decode errors.
+  The guest CLI then ran `media.stop` and `media.status` (`stopped`), the
+  foreground service disappeared, and both test-only grants were revoked.
+  No capture file was written.
+
+These are device evidence for API 29/API 31 on two Samsung arm64 devices, not a
+product-wide OEM/API claim.
 
 ## Device matrix
 
@@ -265,6 +416,20 @@ produced by placing the app-private marker files the runtime detects
 snapshot in the app's own storage with `run-as`. Nothing was executed by that
 instrumentation: it drives the presentation states only. The markers were removed
 after that pass.
+
+**Launcher/System follow-up (2026-09-17).** The rebuilt APK was installed and
+visually inspected on two physical arm64 phones:
+
+- Samsung S7 Edge SM-G935F, Android 10/API 29: launcher showed `System` with
+  no normal `Linux ready` pill; the neutral icon plates separated the bright
+  teal vectors from the dark desktop. The System screen showed the App
+  permissions card and one tap opened Android Settings → NusaDesk App Info.
+- ASUS ROG Phone 2 ASUS_I001DE, Android 11/API 30: the same launcher/status and
+  contrast behavior was visible; the System screen's `Open app settings` button
+  opened `com.android.settings/.applications.InstalledAppDetails` for NusaDesk.
+
+No permission was granted and no runtime permission prompt was added during this
+UI pass; the settings shortcut was verified as navigation only.
 
 ### Favicon fallback run (2026-09-14, emulator-5554, API 35)
 

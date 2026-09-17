@@ -1,0 +1,66 @@
+Third-party notices for the guest service-bridge assets in this directory.
+============================================================================
+
+These files back the curated `guest-service-bridge` add-on (ADR-0024). The
+vendored upstream script is included verbatim and is NOT homemade service
+management. Do not modify it; to upgrade, re-fetch the pinned artifact from
+the upstream tag, re-verify the SHA-256 below, and update the catalog pin in
+CuratedRuntimeCatalog.guestServiceBridge() together with this notice.
+
+1. docker-systemctl-replacement — systemctl3.py
+   File:        systemctl3.py
+   Package:     docker-systemctl-replacement
+   Version:     v1.7.1097 (__version__ = "1.7.1097")
+   Commit:      8bd65bec50650fcc740e2d55c32162ba7bafdfc8
+   SHA-256:     5f5a47f321c7a8881dfd01f774106dc4012d664bee238eada86a7112674fea93
+                (345521 bytes)
+   License:     EUPL-1.2 (European Union Public Licence)
+   Source:      https://github.com/gdraheim/docker-systemctl-replacement
+   Artifact:    https://raw.githubusercontent.com/gdraheim/docker-systemctl-
+                replacement/8bd65bec50650fcc740e2d55c32162ba7bafdfc8/
+                files/docker/systemctl3.py
+   Local copy:  EUPL-LICENSE.md (upstream EUPL-LICENSE.md at the same commit,
+                14024 bytes, sha256
+                67e6b5e4f3f4c6b3c4fbca47f0202823f38344f03f1b54e3dce9aef17406b0a1)
+   Copyright:   (c) 2014-2023 Guido Draheim and contributors
+
+   The script is a partial systemctl/systemd replacement written for
+   containers. It is installed into the guest overlay as /usr/bin/systemctl
+   and runs under the add-on's pinned Python 3 payload. Its EUPL licence is
+   permissive about covered artifacts; the verbatim file, licence text, and
+   provenance above satisfy the distribution obligations. NusaDesk's own code
+   remains under its own licence — the EUPL applies to the vendored file
+   itself.
+
+2. service(8) shim — lw-service-shim
+   File:        lw-service-shim
+   License:     same as the NusaDesk project (product-owned; not third-party)
+   Purpose:     maps `service NAME ACTION` onto the vendored systemctl
+                replacement. Pinned in the catalog by SHA-256 like the
+                upstream file so packaged-asset tampering fails closed.
+
+3. Session supervisor — lw-session-supervisor
+   File:        lw-session-supervisor
+   License:     same as the NusaDesk project (product-owned; not third-party)
+   Purpose:     runs as the session tracer's initial tracee: backgrounds
+                `systemctl init`, records its real pid and exit marker under
+                /run, then runs the session daemon as a sibling so manager,
+                daemon, and terminal shells share one PRoot tree — the only
+                shape in which a terminal `systemctl` can signal
+                manager-run services. Pinned in the catalog by SHA-256.
+
+The Python 3 runtime the bridge executes is NOT vendored here: it is a
+curated add-on payload of fourteen digest-pinned Ubuntu Noble arm64 .deb
+artifacts from ports.ubuntu.com, listed with their digests in
+CuratedRuntimeCatalog.guestServiceBridge() and recorded in the activated
+overlay's lw-addon-manifest. Ubuntu package licences are documented by the
+source packages on ports.ubuntu.com.
+
+The same `guest-service-bridge` overlay installs the compose payload vendored
+in the sibling `../compose/` directory: the product-owned
+`lw_compose_runtime.py` runner with its `udocker` and `lw-compose-supervisor`
+launchers, byte-for-byte udocker 1.3.17 (Apache-2.0) and PyYAML 6.0.1 (MIT)
+source tarballs, and the global `lw-compose-supervisor.service` unit enabled
+before `systemctl init`. Provenance, licence texts, and the honest runtime
+contract are documented in `../compose/THIRD_PARTY_NOTICES.md`, which is
+itself vendored into the overlay at usr/share/lw-services/compose/.

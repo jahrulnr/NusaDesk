@@ -11,6 +11,14 @@
         style="@style/Widget.LinuxWrapper.AppTileIcon">
 
         <ImageView
+            android:id="@+id/tile_vector"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:scaleType="centerInside"
+            android:visibility="gone" />
+
+        <ImageView
             android:id="@+id/tile_image"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
@@ -19,8 +27,8 @@
             android:visibility="gone" />
 
         <TextView
-            android:id="@+id/tile_glyph"
-            style="@style/Widget.LinuxWrapper.AppTileGlyph" />
+            android:id="@+id/tile_monogram"
+            style="@style/Widget.LinuxWrapper.AppTileMonogram" />
     </LinearLayout>
 
     <TextView

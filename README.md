@@ -85,6 +85,18 @@ runtime requirements.
   Copy action mode — the app ships no custom clipboard code.
 - Terminal buffer and SSH attachment stay intact across navigation and screen
   rotation; the existing surface only refits to the new dimensions.
+- A workspace folder you choose on the device appears at `~/nusadesk` inside
+  Linux, so the same files are editable from Android and from the guest shell.
+- Guest services are managed with a familiar `systemctl`/`service` surface:
+  enabled services start with the Linux session and stop when it stops
+  (ADR-0024; a curated replacement, not real systemd — socket activation,
+  timers, and systemd sandboxing are out of scope).
+- Multi-service projects can be declared with a bounded `udocker compose`
+  subset — for example `udocker compose -f ~/nusadesk/demo/compose.yaml up -d`
+  in the guest terminal (ADR-0025, device-verified on the Samsung S10e). It
+  is not Docker: no network isolation or service DNS, `ports` are rejected
+  (udocker/PRoot cannot enforce a loopback-only bind), and bind sources are
+  limited to the workspace folder.
 - Reconnect and failure states that explain what is happening instead of
   pretending everything is running.
 

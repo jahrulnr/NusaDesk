@@ -4,7 +4,7 @@ The project follows risk-first vertical slices. The highest-risk question is nat
 
 The accepted product direction is a **Linux desktop on Android** (ADR-0012): the launcher is the home surface, the terminal is one Linux app, and one long-lived session is owned by the Android host. Linux is **background infrastructure** (ADR-0013) — it starts from an app launch and stops only from the platform notification — and the desktop's web apps are the ones the **user registers** (ADR-0014). SSH (ADR-0007) is the transport between the host and the guest, not the product surface.
 
-Implemented and device-verified on Android 10/API 29 arm64: the packaged standalone PRoot execution bridge, the curated OpenSSH add-on (ADR-0010), the fixed local SSH endpoint and autostart boundary (ADR-0013), and a live guest shell in the terminal app surface. Implemented and UX-verified on an x86_64 emulator (API 35): the launcher — search, readiness pill, setup steps, the dashed `Add app` tile, the curated surfaces, and user web apps — the add/edit/remove web-app form, the web-app surface's probing/unreachable/loaded states, the terminal's waiting and failure prompts, the system screen, landscape, tablet, light/dark themes, and font scaling. The emulator's ARM translation is **not** runtime evidence. Remaining: the wider device matrix (other API levels, 16 KB pages, OEMs) and any future curated runtime profile.
+Implemented and device-verified on Android 10/API 29 arm64: the packaged standalone PRoot execution bridge, the curated OpenSSH add-on (ADR-0010), the fixed local SSH endpoint and autostart boundary (ADR-0013), and a live guest shell in the terminal app surface. Implemented and device-verified on the Samsung S10e (SM-G970F, Android 12/API 31, arm64, 4 KB pages): the bounded `udocker compose` adapter end to end (ADR-0025, Phase 3B). Implemented and UX-verified on an x86_64 emulator (API 35): the launcher — search, readiness pill, setup steps, the dashed `Add app` tile, the curated surfaces, and user web apps — the add/edit/remove web-app form, the web-app surface's probing/unreachable/loaded states, the terminal's waiting and failure prompts, the system screen, landscape, tablet, light/dark themes, and font scaling. The emulator's ARM translation is **not** runtime evidence. Remaining: the wider device matrix (other API levels, 16 KB pages, OEMs) and any future curated runtime profile. The published-port traffic test ran and proved `host_ip` is stripped, so Compose `ports` are rejected in the MVP.
 
 ## Phase 0 — foundation (current)
 
@@ -159,6 +159,54 @@ Exit criteria:
 - Restart preserves the app's documented state.
 - Process crash reaches `FAILED` or `RECOVERING`, never false `RUNNING`.
 - Previous payload remains available after a failed update.
+
+## Phase 3B — bounded `udocker compose` adapter
+
+**Status:** implemented and device-verified on the Samsung S10e (SM-G970F,
+Android 12/API 31, arm64, 4 KB pages, 2026-09-16), including an uncached
+registry image pull and `unless-stopped` across a session restart. The
+published-port traffic test ran on that pass and proved udocker/PRoot
+strips `host_ip` (no loopback-only enforcement), so `ports` is rejected
+at admission. Remaining: the wider device matrix.
+
+**Question:** Can a deliberately small Compose subset run honestly on udocker
+inside the curated guest — with restart semantics that do not pretend to be
+Docker?
+
+Scope:
+
+- [x] Strict-subset domain contract and mirrored YAML parsers (host-side
+      SnakeYAML Engine, guest-side vendored PyYAML); unsupported keys and
+      unenforceable declarations are rejected, never ignored.
+- [x] Product-owned guest runtime: pinned udocker 1.3.17 + PyYAML 6.0.1
+      source, the packaged NusaDesk PRoot as the inner runtime behind fixed
+      binds, and one global supervisor owning restart/backoff/manual-stop
+      (ADR-0025). The upstream helper tarball is never shipped or
+      downloaded.
+- [x] Host-side evidence: asset harness (35 tests), domain (64), parser
+      (22), and the payload/wiring/launcher suites; lint.
+- [x] Physical end-to-end pass on the S10e (SM-G970F, Android 12/API 31,
+      arm64, 4 KB pages, 2026-09-16): wired overlay on disk (14-file
+      manifest, compose paths, inner-PRoot/system binds, pre-init wants
+      link), `systemctl` running with `lw-compose-supervisor`
+      active/enabled, product `/usr/local/bin/udocker` version and image
+      list OK, and a real project on a pre-existing alpine image —
+      `up -d` → supervisor-spawned argv → nested PRoot → marker through
+      the workspace bind → six `always` restarts → persisted `manual_stop`
+      on `stop` → `down` removed the project and container. The pass also
+      covered an uncached `busybox:latest` pull (16.36 s, arm64 manifest
+      verified) and `unless-stopped` across a force-stop/relaunch. A
+      same-version overlay install did not self-refresh during the pass
+      (one stale compose file was deleted to force it); the digest-aware
+      `detect()` guard added afterwards now triggers the reinstall
+      automatically.
+- [x] Published-port traffic device test: a `127.0.0.1`-declared publish
+      produced no loopback listener while the container stayed on `*:8080`
+      (LAN-reachable) — udocker/PRoot strips `host_ip`, so `ports` is
+      rejected at admission until a real loopback-only proxy exists.
+- [x] Image pull and `unless-stopped` across a session restart (same
+      S10e pass).
+- [ ] The wider device matrix (other API levels, 16 KB pages, OEMs).
 
 ## Phase 4 — second curated runtime profile
 

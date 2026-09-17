@@ -10,6 +10,10 @@
     <color name="primary">#0F6269</color>
     <color name="primary_dark">#08474D</color>
     <color name="primary_tint">#DDF1EF</color>
+    <!-- The light counterpart of Color Hunt's neutral #393E46 keeps the
+         launcher plate distinct from the light desktop while preserving icon
+         contrast. -->
+    <color name="tile_icon_plate">#E4E8EB</color>
     <color name="success">#277A5E</color>
     <color name="success_tint">#E3F3EC</color>
     <color name="warning">#8A4A0D</color>

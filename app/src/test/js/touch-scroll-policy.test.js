@@ -226,13 +226,26 @@ check(
 const viewport = { clientHeight: 100, scrollHeight: 1100, scrollTop: 1000 };
 const xtermRoot = { classList: { contains: () => false } };
 const listeners = {};
+const animationFrames = [];
 const fakeContainer = {
-  ownerDocument: { getSelection: () => null },
+  ownerDocument: {
+    getSelection: () => null,
+    defaultView: {
+      requestAnimationFrame: (callback) => {
+        animationFrames.push(callback);
+        return animationFrames.length;
+      },
+    },
+  },
   querySelector: (selector) => selector === ".xterm-viewport" ? viewport : xtermRoot,
   addEventListener: (name, handler) => { listeners[name] = handler; },
 };
 const lineMoves = [];
-const fakeTerminal = { rows: 10, scrollLines: (lines) => lineMoves.push(lines) };
+const fakeTerminal = {
+  rows: 10,
+  buffer: { active: { viewportY: 100, length: 1010 } },
+  scrollLines: (lines) => lineMoves.push(lines),
+};
 global.document = {
   querySelector: (selector) => selector === ".xterm-viewport" ? viewport : xtermRoot,
 };
@@ -241,6 +254,25 @@ check("pixel delta scrolls whole xterm rows", scrollBy(-25), true);
 check("scroll uses xterm public API", lineMoves, [-2]);
 check("fractional pixels accumulate to the next row", scrollBy(-5), true);
 check("accumulated movement emits one more row", lineMoves, [-2, -1]);
+
+// 13. Multiple touchmove events that arrive before the next paint are folded
+//     into one xterm refresh. The platform still receives preventDefault on
+//     each active move, so it cannot pan the page while the update is queued.
+const preventedMoves = [];
+listeners.touchstart({ touches: [{ clientY: 200 }] });
+listeners.touchmove({
+  touches: [{ clientY: 170 }],
+  preventDefault: () => preventedMoves.push("first"),
+});
+listeners.touchmove({
+  touches: [{ clientY: 140 }],
+  preventDefault: () => preventedMoves.push("second"),
+});
+check("touchmove queues one animation frame", animationFrames.length, 1);
+check("queued moves prevent native page panning", preventedMoves, ["first", "second"]);
+check("queued moves do not refresh xterm early", lineMoves, [-2, -1]);
+animationFrames.shift()();
+check("one animation frame combines both deltas", lineMoves, [-2, -1, 6]);
 delete global.document;
 
 if (failures > 0) {

@@ -174,6 +174,95 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Workspace: a user-picked folder bound into the guest at ~/nusadesk. -->
+        <!-- The card states why Android 11+ needs all-files access, and says so -->
+        <!-- honestly when the platform cannot host a workspace at all (ADR-0023). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/section_gap"
+            android:background="@drawable/card_surface"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                style="@style/Widget.LinuxWrapper.Eyebrow"
+                android:text="@string/system_workspace_label" />
+
+            <TextView
+                android:id="@+id/system_workspace_value"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/system_workspace_value_none"
+                android:textColor="@color/ink"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/system_workspace_detail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:lineSpacingExtra="2dp"
+                android:textColor="@color/ink_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/system_workspace_action"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/button_height"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/button_secondary"
+                android:fontFamily="sans"
+                android:minHeight="@dimen/touch_target"
+                android:textAllCaps="false"
+                android:textColor="@color/primary_dark"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- App permissions: the Android permission switches for this app live in
+             the platform's own App Info page. NusaDesk never prompts for these
+             here — the shortcut only opens that page (ADR-0023 leaves storage
+             access to the workspace card; everything else is managed in
+             Settings). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/section_gap"
+            android:background="@drawable/card_surface"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                style="@style/Widget.LinuxWrapper.Eyebrow"
+                android:text="@string/system_permissions_label" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:lineSpacingExtra="2dp"
+                android:text="@string/system_permissions_detail"
+                android:textColor="@color/ink_secondary"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/system_permissions_action"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/button_height"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/button_secondary"
+                android:fontFamily="sans"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/system_permissions_action"
+                android:textAllCaps="false"
+                android:textColor="@color/primary_dark"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

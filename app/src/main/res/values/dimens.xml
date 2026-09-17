@@ -22,7 +22,7 @@
     <dimen name="tile_padding">12dp</dimen>
     <dimen name="tile_gap">12dp</dimen>
     <dimen name="tile_icon_size">44dp</dimen>
-    <dimen name="tile_glyph_size">20sp</dimen>
+    <dimen name="tile_monogram_size">20sp</dimen>
     <dimen name="tile_label_size">13sp</dimen>
 
     <!-- Add / edit web app form -->

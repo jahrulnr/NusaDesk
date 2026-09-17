@@ -3,9 +3,12 @@
 ## Project status
 
 NusaDesk is an Android/Linux workspace. The current
-version is `0.0.0`, and runtime evidence is limited to one Android 10 / API 29
-ARM64 device. Security behavior on other Android versions, OEMs, and 16 KB
-page-size devices is not yet covered by the same evidence.
+version is `0.1.0`. Runtime evidence covers the core runtime (Ubuntu Base
+install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
+Android 10 / API 29 ARM64 device, and the bounded `udocker compose` adapter on
+one Android 12 / API 31 ARM64 device (Samsung S10e). Security behavior on
+other Android versions, OEMs, and 16 KB page-size devices is not yet covered
+by the same evidence.
 
 ## Reporting a vulnerability
 
@@ -68,6 +71,32 @@ The following are deliberate properties of the current design:
 - **The runtime is app-visible.** Linux starts from an Activity foreground
   event and remains visible through an Android foreground-service notification.
   There is no boot or silent LAN autostart path.
+- **Guest services stay inside the session.** The `systemctl` replacement is a
+  curated, digest-pinned guest payload — not systemd, and never installed or
+  invoked on the Android host. Its manager runs as a tracee of the session's
+  own PRoot tracer, signalled only through a command-line-verified pid file,
+  and guest services bind loopback paths under the same rules as every other
+  guest process. PRoot mediates `kill(2)` by tracer tree, so a guest command
+  cannot signal processes outside its own session tree (ADR-0024).
+- **Shared storage is opt-in and narrow.** The Linux workspace binds exactly one
+  user-chosen folder into the guest at `~/nusadesk`. On Android 11+ that needs
+  all-files access, which the product asks for from a visible explanation and
+  never assumes: without the grant, or when a probe write into the chosen folder
+  fails, the guest simply starts without a workspace. Everything else — rootfs,
+  session state, host keys — stays in app-private storage (ADR-0023). Publishing
+  on Google Play would additionally require the all-files access declaration and
+  an approved use case.
+- **The `udocker compose` adapter is a strict subset, not Docker.** The guest
+  CLI accepts only a bounded service model on digest-pinned udocker/PyYAML
+  source; unsupported keys and unenforceable declarations are rejected rather
+  than ignored (ADR-0025). There is no Docker isolation, bridge, NAT, or
+  service DNS — containers share the guest network namespace, and every
+  `ports:` declaration is refused at admission because udocker/PRoot provably
+  cannot enforce a loopback-only bind. Volume sources must resolve inside the
+  user-chosen workspace and are always read-write. Service environment values
+  travel only through a mode-0600 env file, never on process argv. Image
+  pulls are delegated to upstream udocker's own registry download path; the
+  host still accepts no arbitrary rootfs URL or shell command API.
 
 See the [architecture](docs/architecture.md), [limitations](docs/limitations.md),
 and [architecture decisions](docs/decisions/) for the detailed security model

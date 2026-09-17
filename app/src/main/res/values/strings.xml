@@ -54,11 +54,9 @@
     <!-- Launcher app tiles -->
     <string name="apps_unavailable_note">Apps unlock when Linux setup finishes.</string>
     <string name="app_terminal">Terminal</string>
-    <string name="app_terminal_glyph">&gt;_</string>
     <string name="app_terminal_desc">Terminal. A full Linux shell.</string>
-    <string name="app_system">Linux System</string>
-    <string name="app_system_glyph">⚙</string>
-    <string name="app_system_desc">Linux System. Install state, session details, and how it works.</string>
+    <string name="app_system">System</string>
+    <string name="app_system_desc">System. Install state, session details, and how it works.</string>
     <string name="app_locked">Locked</string>
     <string name="app_tile_open_desc">%1$s Double tap to open.</string>
     <string name="app_tile_locked_desc">%1$s Finish Linux setup to open it.</string>
@@ -121,7 +119,6 @@
          there is no URL field, and no host, credential, or profile input. -->
     <string name="webapp_add_title">Add app</string>
     <string name="launcher_add_label">Add</string>
-    <string name="webapp_add_glyph">+</string>
     <string name="webapp_add_desc">Add app. Register a local web app by name, image, and port.</string>
     <string name="webapp_edit_title">Edit app</string>
     <!-- Accessible sentence for a user web app tile: the app's own name, then the
@@ -189,6 +186,31 @@
     <string name="system_how_title">How NusaDesk works</string>
     <string name="system_how_body">Android host → verified system → Android-owned session → loopback endpoint → app surface. Linux starts when you open the app and keeps running in the background; the notification\'s Stop action stops it, and opening the app starts it again. A running process is not the same as a ready session, and loopback is reachability, not authentication.</string>
     <string name="action_read_contract">How it works</string>
+
+    <!-- Workspace folder: a user-picked folder bound into the guest at ~/nusadesk.
+         The state text is explicit about why a broad grant is needed and about
+         the Android 10 limitation, so the screen never offers a folder that
+         could not work (ADR-0023). -->
+    <string name="system_workspace_label">Workspace folder</string>
+    <string name="system_workspace_value_none">Not chosen</string>
+    <string name="system_workspace_value_app_folder">App folder</string>
+    <string name="system_workspace_detail_none">Bind a folder from this device into Linux at ~/nusadesk.</string>
+    <string name="system_workspace_detail_permission">A shared folder lives outside app storage, so Android 11+ requires all-files access. Nothing is bound until you allow it.</string>
+    <string name="system_workspace_detail_app_folder">Android 10 cannot bind a shared folder, so Linux uses this app\'s own folder: %1$s. A file manager can still reach it on this Android version.</string>
+    <string name="system_workspace_detail_chosen">Appears at ~/nusadesk. Applies the next time Linux starts.</string>
+    <string name="system_workspace_action_grant">Allow all-files access</string>
+    <string name="system_workspace_action_choose">Choose folder</string>
+    <string name="system_workspace_action_change">Change folder</string>
+    <string name="system_workspace_unavailable">That folder cannot be used: pick one this app can write to.</string>
+
+    <!-- App permissions: Android's own App Info page manages the camera,
+         microphone, location, contacts, SMS and other permission switches for
+         this app. NusaDesk never prompts for them on this screen; the card only
+         shortcuts to the Settings page that owns them. -->
+    <string name="system_permissions_label">App permissions</string>
+    <string name="system_permissions_detail">Camera, microphone, location, contacts, SMS and other Android permissions for this app are managed in this device\'s own settings. Open the app info page to review or change them.</string>
+    <string name="system_permissions_action">Open app settings</string>
+    <string name="system_permissions_unavailable">The Android app settings screen is not available right now.</string>
 
     <!-- Installer wizard -->
     <string name="wizard_welcome_title">Set up your Linux desktop</string>

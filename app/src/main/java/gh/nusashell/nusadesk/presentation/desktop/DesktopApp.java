@@ -21,23 +21,23 @@ import java.util.List;
  */
 public enum DesktopApp {
 
-    TERMINAL("terminal", R.string.app_terminal, R.string.app_terminal_glyph,
+    TERMINAL("terminal", R.string.app_terminal, R.drawable.ic_launcher_terminal,
             R.string.app_terminal_desc, DesktopDestination.TERMINAL),
 
-    SYSTEM("system", R.string.app_system, R.string.app_system_glyph,
+    SYSTEM("system", R.string.app_system, R.drawable.ic_launcher_system,
             R.string.app_system_desc, DesktopDestination.SYSTEM);
 
     private final String id;
     private final int labelRes;
-    private final int glyphRes;
+    private final int iconRes;
     private final int descriptionRes;
     private final DesktopDestination destination;
 
-    DesktopApp(String id, int labelRes, int glyphRes, int descriptionRes,
+    DesktopApp(String id, int labelRes, int iconRes, int descriptionRes,
                DesktopDestination destination) {
         this.id = id;
         this.labelRes = labelRes;
-        this.glyphRes = glyphRes;
+        this.iconRes = iconRes;
         this.descriptionRes = descriptionRes;
         this.destination = destination;
     }
@@ -51,8 +51,14 @@ public enum DesktopApp {
         return labelRes;
     }
 
-    public int getGlyphRes() {
-        return glyphRes;
+    /**
+     * Drawable resource for the tile icon. The icon is a bundled vector asset,
+     * not a font glyph: a glyph's shape depends on the OEM system font and can
+     * degrade to a missing-glyph square, while a packaged vector renders the
+     * same on every device.
+     */
+    public int getIconRes() {
+        return iconRes;
     }
 
     /** Accessible one-sentence description of what the app is. */

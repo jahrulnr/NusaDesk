@@ -10,6 +10,9 @@
     <color name="primary">#83DDD6</color>
     <color name="primary_dark">#A9EEE9</color>
     <color name="primary_tint">#1C3B3D</color>
+    <!-- Color Hunt's #393E46 neutral separates the bright teal icon from the
+         dark green-teal desktop in night mode. -->
+    <color name="tile_icon_plate">#393E46</color>
     <color name="success">#83D5AB</color>
     <color name="success_tint">#1C3A31</color>
     <color name="warning">#F1B878</color>

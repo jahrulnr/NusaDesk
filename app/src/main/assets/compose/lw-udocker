@@ -1,0 +1,35 @@
+#!/usr/bin/python3.12
+# lw-udocker — NusaDesk product-owned udocker launcher (Phase 3A asset).
+#
+# Thin entry point: all behaviour lives in lw_compose_runtime.py next to the
+# pinned source tarballs. It pins the PRoot contract environment, extracts the
+# vendored udocker/PyYAML sources on first use, intercepts the product-owned
+# 'compose' and 'compose-supervise' commands, disables 'udocker install'
+# (NusaDesk supplies the inner PRoot; the upstream helper tarball is never
+# bundled or downloaded), prepends --allow-root, then dispatches everything
+# else to upstream udocker.maincmd.main — no shell anywhere.
+import os
+import sys
+
+_HERE = os.path.dirname(os.path.realpath(__file__))
+_FOUND = False
+for _candidate in (
+        os.environ.get("LW_COMPOSE_HOME"),
+        _HERE,
+        os.path.join(_HERE, "compose"),
+        os.path.join(_HERE, os.pardir, "lib", "nusadesk", "compose"),
+        "/usr/local/lib/nusadesk/compose"):
+    if _candidate and os.path.isfile(
+            os.path.join(_candidate, "lw_compose_runtime.py")):
+        sys.path.insert(0, os.path.abspath(_candidate))
+        _FOUND = True
+        break
+if not _FOUND:
+    sys.stderr.write(
+        "lw-udocker: cannot locate lw_compose_runtime.py "
+        "(set LW_COMPOSE_HOME to the asset directory)\n")
+    sys.exit(127)
+
+import lw_compose_runtime as _runtime  # noqa: E402
+
+sys.exit(_runtime.lw_udocker_main(sys.argv))

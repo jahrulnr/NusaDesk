@@ -1,0 +1,33 @@
+#!/bin/sh
+# NusaDesk guest `service(8)` shim (product-owned, see ADR-0024).
+#
+# The guest service bridge vendors a `systemctl` replacement but no `service`
+# binary. This shim maps the SysV-style `service NAME ACTION` interface onto it
+# so the familiar command works for the subset the bridge supports. Actions
+# outside that subset fail with an explicit error rather than guessing.
+set -u
+
+SYSTEMCTL=/usr/bin/systemctl
+
+if [ "${1:-}" = "--status-all" ]; then
+    exec "$SYSTEMCTL" list-units --type=service
+fi
+
+if [ $# -lt 2 ]; then
+    echo "usage: service NAME {start|stop|status|restart|reload|enable|disable|is-active|is-enabled|is-failed}" >&2
+    exit 2
+fi
+
+name=$1
+action=$2
+shift 2
+
+case "$action" in
+    start|stop|status|restart|reload|enable|disable|is-active|is-enabled|is-failed) ;;
+    *)
+        echo "service: unsupported action: $action" >&2
+        exit 2
+        ;;
+esac
+
+exec "$SYSTEMCTL" "$action" "$name" "$@"

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Add app" tile icon. A bundled vector, not a font glyph: a glyph's shape
+     depends on the OEM system font and can degrade to a missing-glyph square,
+     while a packaged vector renders the same on every device. Decorative: the
+     tile root carries the accessible description. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,5.5v13M5.5,12h13"
+        android:strokeColor="@color/primary"
+        android:strokeLineCap="round"
+        android:strokeWidth="2" />
+</vector>

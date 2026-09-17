@@ -2,9 +2,11 @@ name: NusaDesk debug APK
 
 on:
   push:
-    # Validate every direct push and merge commit landing on master. Feature
-    # branches are covered by pull_request runs, saving free-tier minutes.
-    branches: ["master"]
+    # Feature branches are validated on every push. Pushes to master are
+    # deliberately excluded: master is covered by pull_request runs, and a push
+    # that changes VERSION is covered by the release workflow, so master never
+    # runs this workflow and the release workflow in parallel.
+    branches-ignore: ["master"]
   pull_request:
   workflow_dispatch:
 
@@ -50,6 +52,18 @@ jobs:
             "platforms;android-37.0" \
             "build-tools;36.0.0"
           yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Cache Robolectric Android runtimes
+        uses: actions/cache@v6
+        with:
+          # Robolectric fetches one android-all jar (~110-160 MB) per API level
+          # the launch test covers, into the local Maven repository rather than
+          # the Gradle cache. Keyed on the test file so a change to the covered
+          # SDK set re-seeds the entry instead of silently missing it.
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('app/src/test/java/gh/nusashell/nusadesk/presentation/MainActivityApiLevelLaunchTest.java') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
 
       - name: Run tests, lint, and assemble debug
         run: make check

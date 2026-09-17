@@ -26,7 +26,8 @@ import gh.nusashell.nusadesk.presentation.GuestSshUiState;
  * </ol>
  *
  * <p>Pure presentation vocabulary: it maps published states to copy and colour,
- * never invents a state, and carries no action.</p>
+ * records whether a state deserves launcher attention, never invents a state,
+ * and carries no action.</p>
  */
 public final class LauncherStatus {
 
@@ -130,6 +131,15 @@ public final class LauncherStatus {
     /** True only when Linux is up and usable. */
     public boolean isReady() {
         return kind == Kind.READY;
+    }
+
+    /**
+     * True when this status deserves a launcher pill. Normal readiness is the
+     * absence of status chrome; setup has its own installer surface, while
+     * session transitions, stopped, and failed states need an explicit notice.
+     */
+    public boolean isVisibleInLauncher() {
+        return kind != Kind.SETUP && kind != Kind.READY;
     }
 
     /** Semantic tint resource for the pill. */

@@ -4,8 +4,9 @@
      and tablets all use this layout instead of a variant each.
 
      Order follows the launcher reference: search at the top, then the app
-     header with its count and the passive Linux readiness pill, then the grid —
-     whose first tile is the "Add" action. Setup steps appear only
+     header with its count. The Linux status pill stays hidden while the
+     session is normally ready and appears only for a non-ready session state,
+     then the grid — whose first tile is the "Add" action. Setup steps appear only
      while they are actually missing, and there is no session control anywhere. -->
 <merge xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -67,9 +68,9 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- App header: the launcher title, how many apps it holds, and the one
-             passive statement about Linux. The pill has no action: Linux starts
-             from an app launch, so a start button here would be a lie. -->
+        <!-- App header: the launcher title and how many apps it holds. A
+             non-ready session notice is added only when it needs attention;
+             normal Linux readiness stays visually quiet. -->
         <LinearLayout
             android:id="@+id/apps_header_row"
             android:layout_width="match_parent"

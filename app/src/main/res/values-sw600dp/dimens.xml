@@ -16,7 +16,7 @@
     <dimen name="tile_padding">16dp</dimen>
     <dimen name="tile_gap">16dp</dimen>
     <dimen name="tile_icon_size">48dp</dimen>
-    <dimen name="tile_glyph_size">22sp</dimen>
+    <dimen name="tile_monogram_size">22sp</dimen>
     <dimen name="tile_label_size">14sp</dimen>
 
     <dimen name="task_bar_height">48dp</dimen>

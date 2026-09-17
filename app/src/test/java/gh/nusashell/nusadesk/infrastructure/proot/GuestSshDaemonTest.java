@@ -1,6 +1,6 @@
 package gh.nusashell.nusadesk.infrastructure.proot;
 
-import gh.nusashell.nusadesk.domain.runtime.GuestSshPayloadProfile;
+import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -56,38 +56,38 @@ public class GuestSshDaemonTest {
 
     @Test
     public void detectFindsOverlayDaemon() throws Exception {
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon daemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
         assertNotNull(daemon);
         assertEquals(GuestSshDaemon.Kind.OPENSSH, daemon.getKind());
         assertTrue(daemon.isOverlay());
-        assertEquals(GuestSshPayloadProfile.GUEST_DIR + "/" + GuestSshPayloadProfile.ENTRYPOINT,
+        assertEquals(CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR + "/" + CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT,
                 daemon.getBinaryPath());
-        assertEquals(GuestSshPayloadProfile.GUEST_DIR + "/usr/lib/aarch64-linux-gnu",
+        assertEquals(CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR + "/usr/lib/aarch64-linux-gnu",
                 daemon.overlayLibraryPath());
-        assertEquals(GuestSshPayloadProfile.GUEST_DIR + "/etc/ssh_host_ed25519_key",
+        assertEquals(CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR + "/etc/ssh_host_ed25519_key",
                 daemon.hostKeyPath());
-        assertEquals(GuestSshPayloadProfile.GUEST_DIR + "/etc/sshd_config",
+        assertEquals(CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR + "/etc/sshd_config",
                 daemon.configPath());
     }
 
     @Test
     public void overlayDaemonRequiresOverlayBind() throws Exception {
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon daemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
         List<ProotBindMount> binds = daemon.requiredBinds();
         assertEquals(1, binds.size());
         ProotBindMount bind = binds.get(0);
         assertEquals(overlay.getRoot().getAbsolutePath(), bind.getHostPath());
-        assertEquals(GuestSshPayloadProfile.GUEST_DIR, bind.getGuestPath());
+        assertEquals(CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR, bind.getGuestPath());
     }
 
     @Test
     public void overlayDaemonWinsOverRootfsDaemon() throws Exception {
         touch(rootfs.getRoot(), "usr/sbin/sshd");
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon daemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
         assertTrue(daemon.isOverlay());
@@ -95,7 +95,7 @@ public class GuestSshDaemonTest {
 
     @Test
     public void resolveGuestFileMapsOverlayAndRootfsPaths() throws Exception {
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon overlayDaemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
         Path key = overlayDaemon.resolveGuestFile(
@@ -109,7 +109,7 @@ public class GuestSshDaemonTest {
 
     @Test
     public void daemonArgvBindsLoopbackOnlyThroughConfig() throws Exception {
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon daemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
         List<String> argv = daemon.daemonArgv(45678);
@@ -133,10 +133,10 @@ public class GuestSshDaemonTest {
 
     @Test
     public void pidFileIsPersistedInsideTheDaemonsConfigDirectory() throws Exception {
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon overlayDaemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
-        assertEquals(GuestSshPayloadProfile.GUEST_DIR + "/etc/sshd.pid",
+        assertEquals(CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR + "/etc/sshd.pid",
                 overlayDaemon.pidFilePath());
         assertEquals(overlay.getRoot().toPath().resolve("etc/sshd.pid"),
                 overlayDaemon.resolvePidFile(rootfs.getRoot().toPath()));
@@ -153,7 +153,7 @@ public class GuestSshDaemonTest {
 
     @Test
     public void daemonArgvRejectsOutOfRangePorts() throws Exception {
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon daemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
         for (int port : new int[]{0, -1, 65536}) {
@@ -167,7 +167,7 @@ public class GuestSshDaemonTest {
 
     @Test
     public void setupArgvCarriesTokenByEnvOnlyAndAvoidsPamHelpers() throws Exception {
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon daemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
         List<String> argv = daemon.setupArgv();
@@ -190,7 +190,7 @@ public class GuestSshDaemonTest {
 
     @Test
     public void setupArgvNamesInheritedAndroidGroupsByIdempotentGuestEntry() throws Exception {
-        touch(overlay.getRoot(), GuestSshPayloadProfile.ENTRYPOINT);
+        touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
         GuestSshDaemon daemon = GuestSshDaemon.detect(
                 rootfs.getRoot().toPath(), overlay.getRoot().toPath());
         List<String> argv = daemon.setupArgv();

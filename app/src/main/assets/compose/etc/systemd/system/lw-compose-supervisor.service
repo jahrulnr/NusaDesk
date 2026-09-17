@@ -1,0 +1,22 @@
+[Unit]
+Description=NusaDesk Compose supervisor (global guest service supervision)
+# Autostart primitive for the NEXT session only: the vendored systemctl3 on
+# this guest snapshots the enabled-unit set at `systemctl init` and never
+# re-reads it, so a unit enabled mid-session runs but is not supervised until
+# the next session. Compose projects therefore never get their own units —
+# restart/manual-stop semantics live inside lw-compose-supervisor itself.
+# This unit is meant to be installed and enabled by the product before
+# session init (the guest-service-bridge layout, ADR-0024).
+
+[Service]
+Type=simple
+Environment=HOME=/root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/bin/lw-compose-supervisor
+# Restarting the SUPERVISOR is safe: it was enabled at init, so systemctl3
+# really does supervise it. The 5s gap bounds crash-loop churn.
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

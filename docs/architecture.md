@@ -20,7 +20,7 @@ daemon on the fixed loopback endpoint, the SSH client bridge with host-key
 pinning, and a live guest shell in the terminal app surface.
 
 Implemented and UX-verified on an x86_64 emulator (API 35): the launcher, the
-readiness pill, the add/edit/remove web-app form with its field validation and
+non-ready launcher status states, the add/edit/remove web-app form with its field validation and
 document-picker icon, the tile's favicon fallback (ADR-0015), the web-app
 surface's probing/unreachable/loaded states, the terminal's waiting and failure
 prompts, the system screen, landscape, tablet, and light/dark themes. The
@@ -105,7 +105,9 @@ extraction/atomic-activation adapter, the PRoot launcher, the guest OpenSSH
 daemon workload on the fixed loopback port, the foreground host service with its
 status bus, the Android SSH client bridge with host-key pinning and
 Keystore-backed credentials, the local-only client factory, the bounded web-app
-readiness observer, and the loopback WebView boundary.
+readiness observer, the loopback WebView boundary, the user-chosen workspace
+bind (ADR-0023), and the guest service bridge wiring `systemctl` plus the
+bounded `udocker compose` payload into the session (ADR-0024, ADR-0025).
 
 ### `presentation/`
 
@@ -119,10 +121,11 @@ presentation/
   RuntimeStateDescriptor.java install-state copy (pure, unit-tested)
   GuestSshUiState.java        terminal-component state (pure)
   desktop/
-    DesktopHomeView.java      the launcher: search, readiness pill, setup steps, grid
+    DesktopHomeView.java      the launcher: search, non-ready status visibility,
+                             setup steps, grid, and neutral icon plates
     LauncherModel.java        the grid's entries and its search rule (pure)
     LauncherEntry.java        Add app | curated surface | user web app (pure)
-    LauncherStatus.java       one passive readiness statement (pure)
+    LauncherStatus.java       one passive non-ready status statement (pure)
     LauncherHeaderText.java   the header's count wording (pure)
     LauncherGridView.java     responsive tile grid (columns follow real width)
     LauncherTileView.java     one tile: icon plate, label, honest status
@@ -135,7 +138,7 @@ presentation/
     WebAppFormError.java      registry reason -> form field (pure)
     WebAppSurfaceView.java    probe, then the exact generated origin in a WebView
   system/
-    SystemScreenView.java     install state, session/service status, technical detail
+    SystemScreenView.java     install/session/technical detail + Android App Info shortcut
   widget/
     TerminalBridgeView.java   owned-origin xterm host, WebMessagePort only
     InstallerWizardView.java  first-run setup steps
@@ -148,9 +151,11 @@ Rules this layer enforces:
   event and is stopped from the platform notification. `LauncherStatus` and
   `SessionUiState` expose no action at all, and a reflection test fails if either
   type grows one back.
-- **One truth per surface.** The launcher's pill folds install, component, and
-  session state into one sentence; the system screen reports the same states as
-  labelled rows.
+- **One truth per surface.** The launcher folds install, component, and session
+  state into one sentence, but keeps the normal ready state visually quiet and
+  shows the status pill only when setup or a non-ready session needs attention;
+  the system screen reports the same states as labelled rows and exposes the
+  platform-owned App Info page for permission management.
 - **No fake state.** The launcher lists only surfaces the build can open; there
   is no placeholder desktop or file browser. A web app tile is a registered
   entry, and the surface says "not running" until the endpoint answers.
@@ -313,12 +318,83 @@ The service must treat process lifetime as lossy:
 - a PID is not equivalent to readiness;
 - restart attempts must be bounded and observable.
 
+## Android capability bridge boundary (implemented control and live-media slices)
+
+The guest cannot invoke Android framework APIs directly, so the host exposes
+only reviewed capability adapters (ADR-0030, ADR-0031). The adapters are owned
+by the same `GuestSshdWorkload` session:
+
+```mermaid
+flowchart LR
+    Battery["Android BatteryManager"] --> Adapter["AndroidCapabilityBridge\nallowlisted JSONL RPC"]
+    Sensors["Android sensors/location"] --> Adapter
+    MediaControl["media.start/status/stop"] --> MediaService["camera|microphone FGS"]
+    MediaService --> Capture["Camera2 + AudioRecord\nMediaCodec H.264 + AAC"]
+    Capture --> RTSP["RTSP over TCP\n127.0.0.1:ephemeral"]
+    Adapter --> Loopback["127.0.0.1:ephemeral\nper-session token"]
+    RTSP --> Guest["guest tools\nffplay/ffmpeg/OpenCV"]
+    Loopback --> Guest
+    Adapter --> Sysfs["product-owned snapshot\n/sys/class/power_supply/battery"]
+    Sysfs --> Guest
+```
+
+- The TCP listener binds IPv4 loopback explicitly; it never binds LAN or
+  wildcard addresses. Loopback is not auth, so every control request carries a
+  fresh session token passed through the guest environment.
+- The control protocol is versioned, line-delimited, flat JSON with bounded
+  frames, socket timeouts, and a small concurrency cap. The allowlisted methods
+  include `bridge.info`, battery/sensor/location reads, read-only
+  contacts/call-log/SMS/telephony reads, the foreground-only location stream,
+  and `media.start`, `media.status`, `media.stop`. There is no arbitrary shell,
+  reflection, URI, or Binder proxy. A strict-bound
+  `/run/nusadesk/android-bridge.env` file gives authorized guest tools the
+  current endpoint and token.
+- `battery.status` uses Android's permission-free battery snapshot. The
+  best-effort sysfs projection gives existing Linux programs a familiar read
+  path, but it is not kernel sysfs, can be stale/unavailable, and guest writes
+  may be overwritten by the next refresh.
+- `sensor.accelerometer` and `sensor.gyroscope` are bounded one-shot reads.
+  They return finite x/y/z values, bounded accuracy text, and platform event
+  timestamps. Continuous sensor streaming and rate/backpressure contracts are
+  intentionally not promised yet.
+- `location.get` is a bounded foreground-only one-shot adapter. It checks the
+  current grant per request and returns explicit permission-required/denied,
+  unavailable, timeout, or finite fix results. It never prompts, requests
+  background location, or claims continuous GPS behavior.
+- Live media is deliberately separate from the short RPC response: Android
+  captures the back camera and microphone, encodes H.264/AAC with MediaCodec,
+  and serves a unified RTSP-over-TCP stream on an explicit `127.0.0.1`
+  ephemeral port. The server accepts at most two clients, uses bounded per-
+  client queues, and disconnects a slow consumer rather than blocking capture.
+  It stores no JPEG, M4A, MP4, or other capture artifact; a guest consumer
+  saves manually when needed.
+- `media.start` never opens a permission prompt. It succeeds only after the
+  camera/microphone foreground service is eligible, the RTSP listener is bound,
+  and both encoder metadata sets are ready. Background starts, missing/denied
+  grants, busy cameras, unavailable hardware, and encoder failures are typed
+  errors. `media.stop` and bridge/session teardown close the service, clients,
+  encoders, camera, microphone, and listener.
+- The bridge closes with the guest session and is not a second long-lived
+  Android service. The media foreground service is short-lived and exists only
+  while an explicit live stream is active; it has its own user-visible Stop
+  notification action.
+- Contacts/call-log/SMS/telephony methods are read-only, row/byte bounded, and
+  redact sensitive fields; SMS send and phone call remain unsupported.
+- The location stream is foreground-only, pull-based, and queue-bounded. It
+  does not start an FGS, request background permission, or wake the app.
+- Bluetooth, calendar, usage stats, overlay, notification-listener,
+  accessibility, raw `/dev` hardware, Binder, GPU/NPU, kernel, and SELinux
+  operations remain separately scoped limitations.
+
 ## Explicit non-goals
 
 - no curated desktop web-app profile: the user's registered web apps are the
   desktop, and the product ships no built-in desktop or file browser;
 - no external SSH client: no remote host, port, profile, or credential UI;
-- no arbitrary URL/image/package execution;
+- no arbitrary URL/image/package execution by the host — the one bounded
+  exception is the ADR-0025 `udocker compose` guest adapter, which delegates
+  registry image pulls to udocker's own download path under its strict
+  subset; arbitrary rootfs URLs and shell-command APIs remain out of scope;
 - no local-network/LAN sharing;
 - no target-specific app integration;
 - no second concurrent Linux session;

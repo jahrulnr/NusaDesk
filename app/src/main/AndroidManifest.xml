@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Runtime foundation: the curated payload download/verify pipeline, the
+         guest SSH client on loopback, and the web-app favicon fetch. Normal
+         permission, no runtime grant. No LAN exposure is implied — every
+         server this app talks to or starts is loopback or an allowlisted
+         HTTPS catalog. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!--
         Required to read the active network's DNS servers
@@ -12,6 +18,205 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!--
+        Workspace folder (ADR-0023). A user-picked folder (for example
+        Documents/nusadesk) is bound into the guest at ~/nusadesk.
+
+        PRoot binds a real host path, and on Android 11+ only all-files access
+        lets this app open a shared-storage path directly: a Storage Access
+        Framework grant yields a content URI, which cannot be bound. The
+        permission is therefore tied to an explicit user action — the workspace
+        action in the Linux system screen explains why it is needed and sends
+        the user to Settings — and it is never assumed: with no grant, or with a
+        folder that fails a probe write, the guest simply starts without a
+        workspace. Android 10 cannot grant it at all: there the workspace is the
+        app's own external folder, which needs no permission, and the screen says
+        exactly that instead of offering a folder that could not work.
+
+        Distribution note: this permission exists from API 30. The project
+        currently ships only the signed GitHub release APK; publishing on Google
+        Play would additionally require the All files access declaration form
+        and an approved use case.
+    -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <!--
+        ==========================================================================
+        Android capability bridge — permissions declared ahead of implementation
+        ==========================================================================
+
+        A non-root PRoot guest cannot call Android platform APIs: SELinux denies
+        /dev/binder, the app has no Android framework in the guest, and a PRoot
+        "root" is a user-namespace root, not a host one. Any device capability
+        (camera, location, microphone, sensors, Bluetooth) therefore has to be
+        fetched by this app and handed to the guest over an owned channel.
+
+        These permissions are the reviewed set for the shipped and future
+        capability paths. The live media slice checks CAMERA and RECORD_AUDIO,
+        starts its dedicated camera|microphone foreground service only after
+        the guest requests `media.start`, and never prompts from the bridge.
+        Other declared permissions remain explicit future scope and must not be
+        treated as implemented merely because they appear in the manifest.
+
+        Rules that still apply:
+        - Nothing may request a runtime grant at launch. A grant is only ever
+          asked for from an explicit user action that explains the capability.
+        - Special access (overlay, usage stats, battery exemption, all-files)
+          is never assumed: the capability reports itself unavailable until the
+          user enables it in Settings.
+        - No LAN binding is declared or implied. Loopback is the only channel.
+        - Every permission here must either be used by a shipped capability or
+          be removed again before a stable release: an unused sensitive
+          permission still shows up in the installer's permission list.
+
+        Hosting decision: the control bridge remains owned by the existing
+        user-visible Linux session, while live camera/microphone capture uses
+        a separate unexported foreground service only for the duration of an
+        explicit `media.start` request. The matching type permissions and
+        service declaration are enforced by the media implementation.
+    -->
+
+    <!-- Camera capability (live-only media stream; no capture artifact). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Microphone capability. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Location capability. Coarse is declared alongside fine because the
+         platform can grant either level. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Lifts the platform's default 200 Hz sensor sampling cap, so a guest
+         automation script can read accelerometer/gyroscope at full rate.
+         Normal permission, granted at install, no prompt. Lint flags it as
+         rarely needed; that flag is overridden deliberately because the whole
+         point of this block is to expose an API surface the user opts into. -->
+    <uses-permission
+        android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS"
+        tools:ignore="HighSamplingRate" />
+    <!-- Step/motion detection for guest automation. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Bridge status notifications. The runtime's own foreground-service
+         notification stays exempt from this; the permission exists for a
+         capability that needs to tell the user something on its own. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Bluetooth capability.
+         API 31+ uses the runtime-granted SCAN/CONNECT pair; scan results are
+         never used to derive location, which is what the flag asserts. The
+         flag attribute itself only exists from API 31, so it carries a
+         targetApi marker for the API 29 floor build. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <!-- API 30 and below instead use the install-granted legacy pair. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <!-- Foreground-service types the capabilities will declare at runtime. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Bounded data-processing work for a user-invoked automation run. The
+         AGENTS.md rule still stands: this type must never be used as an
+         indefinite server process. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!--
+        User-invoked automation surface.
+
+        Some users want to drive Android from inside their Linux workspace:
+        a guest script that reads location, watches motion, reacts to a call,
+        or posts an overlay. The product's job is to expose the API and hold
+        the grant; whether a capability is ever exercised is the user's
+        decision, made at the moment they run something that needs it.
+
+        Nothing here is requested at launch or in the background. Each grant is
+        asked for from an explicit user action that explains the capability,
+        and a user who never touches automation is never prompted. A capability
+        whose grant is missing reports itself unavailable to the guest instead
+        of failing silently.
+
+        Distribution note: several of these are Google Play "restricted" or
+        "special access" permissions (background location, battery-exemption,
+        call log, SMS, all-packages, overlay, usage stats). That is acceptable
+        for this project's declared channel — signed GitHub releases and
+        F-Droid — but a Play submission would need the matching declaration
+        forms and approved use cases first. See docs/limitations.md.
+    -->
+
+    <!-- Background location. Restricted on API 30+: the user must first grant
+         foreground location, then choose "Allow all the time" in Settings;
+         there is no single dialog that grants it. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Telephony and messaging inputs for automation triggers. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Keep the CPU alive during a user-invoked automation run. Normal
+         permission, granted at install; the runtime still releases it. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Ask the user to exempt the app from battery optimization. Special
+         access via Settings, never assumed. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Draw over other apps, for a guest-driven overlay. Special access via
+         Settings, never assumed. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Per-app usage statistics, for automation that reacts to what the user
+         is doing. Special access via Settings, never assumed. -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Enumerate launchable apps so a guest script can start one.
+         Lint prefers a narrower <queries> block; that is the right answer once
+         the concrete automation use cases are known, because it needs no
+         blanket grant and no store declaration. The blanket form is kept for
+         now so a guest script can resolve any package the user names at
+         runtime, which is the point of exposing the surface. Install-time
+         permission: the user cannot revoke it per-app, so revisit this before a
+         stable release. -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <!--
+        Not declared here, because they are not plain permissions and each needs
+        its own accepted decision:
+        - Accessibility service: declared as a <service> with
+          BIND_ACCESSIBILITY_SERVICE, and it can read all on-screen content
+          including credentials. That is a different class of capability, not
+          an API surface to opt into.
+        - Notification listener: declared as a <service> with
+          BIND_NOTIFICATION_LISTENER_SERVICE plus the user enabling
+          notification access in Settings; it reads every app's notifications.
+        - SMS receive trigger: needs a broadcast receiver component, which
+          would reintroduce a background wake-up path the autostart contract
+          deliberately forbids. READ_SMS above covers on-demand reads only.
+        - WRITE_EXTERNAL_STORAGE: grants nothing extra on API 30+ alongside
+          MANAGE_EXTERNAL_STORAGE, so it would be pure installer noise.
+    -->
+
+    <!--
+        Declaring CAMERA/RECORD_AUDIO/ACCESS_*_LOCATION makes Google Play imply
+        the matching hardware features as REQUIRED, which would hide the app
+        from devices without them. The product runs a curated Linux runtime, so
+        these features are optional: the bridge simply reports an unavailable
+        capability instead of the app becoming uninstallable.
+    -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
 
     <application
         android:name=".infrastructure.integration.LinuxWrapperApplication"
@@ -55,6 +260,22 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="linux_runtime_host: supervises a packaged, verified guest runtime on the fixed loopback SSH endpoint for the in-app terminal; started from a user-visible launch, user-visible with a Stop action, not a background server" />
         </service>
+
+        <!--
+            Live camera + microphone foreground service (media.start/status/
+            stop). Started only by a guest command through the capability
+            bridge while the app is foreground-eligible (the platform's
+            background-start ban is the enforcement, mapped to
+            media-foreground-required). It posts a user-visible notification
+            with a Stop action, serves the H.264/AAC stream on the loopback
+            RTSP listener only (127.0.0.1, ephemeral port), and stops cleanly
+            with the owning bridge session. No capture artifact is written;
+            consumers may save manually.
+        -->
+        <service
+            android:name=".infrastructure.service.LiveMediaService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone" />
     </application>
 
 </manifest>

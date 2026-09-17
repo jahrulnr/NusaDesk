@@ -28,12 +28,14 @@ public class DesktopAppTest {
     }
 
     @Test
-    public void everyEntryHasRenderableCopy() {
+    public void everyEntryHasRenderableCopyAndABundledIcon() {
         for (DesktopApp app : DesktopApp.curated()) {
             assertTrue(app.getId(), app.getLabelRes() != 0);
-            assertTrue(app.getId(), app.getGlyphRes() != 0);
+            assertTrue(app.getId(), app.getIconRes() != 0);
             assertTrue(app.getId(), app.getDescriptionRes() != 0);
         }
+        // Two surfaces must not silently share one vector.
+        assertTrue(DesktopApp.TERMINAL.getIconRes() != DesktopApp.SYSTEM.getIconRes());
     }
 
     /**

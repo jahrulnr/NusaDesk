@@ -1,0 +1,40 @@
+#!/usr/bin/python3.12
+# lw-compose-supervisor — NusaDesk global compose supervisor (Phase 3A asset).
+#
+# Foreground long-lived process; the only restart authority for compose
+# services on this guest. Equivalent to 'lw-udocker compose-supervise --all'
+# and the ExecStart of the shipped lw-compose-supervisor.service unit.
+#
+# It exists as a separate name so the systemd unit and process listings read
+# honestly, and so it stays runnable when a future layout installs the CLI
+# and the supervisor at different paths.
+import os
+import sys
+
+_HERE = os.path.dirname(os.path.realpath(__file__))
+_FOUND = False
+for _candidate in (
+        os.environ.get("LW_COMPOSE_HOME"),
+        _HERE,
+        os.path.join(_HERE, "compose"),
+        os.path.join(_HERE, os.pardir, "lib", "nusadesk", "compose"),
+        "/usr/local/lib/nusadesk/compose"):
+    if _candidate and os.path.isfile(
+            os.path.join(_candidate, "lw_compose_runtime.py")):
+        sys.path.insert(0, os.path.abspath(_candidate))
+        _FOUND = True
+        break
+if not _FOUND:
+    sys.stderr.write(
+        "lw-compose-supervisor: cannot locate lw_compose_runtime.py "
+        "(set LW_COMPOSE_HOME to the asset directory)\n")
+    sys.exit(127)
+
+import lw_compose_runtime as _runtime  # noqa: E402
+
+try:
+    _runtime.ensure_runtime_env()
+    sys.exit(_runtime.supervise_main(sys.argv[1:] or ["--all"]))
+except _runtime.ComposeError as _failure:
+    sys.stderr.write("lw-compose-supervisor: %s\n" % _failure)
+    sys.exit(1)

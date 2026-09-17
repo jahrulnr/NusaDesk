@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.View;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -43,8 +44,9 @@ public final class LauncherTileView extends LinearLayout {
     private static final int ICON_CORNER_RADIUS_DP = 14;
 
     private LinearLayout iconPlate;
+    private ImageView vectorView;
     private ImageView imageView;
-    private TextView glyphView;
+    private TextView monogramView;
     private TextView labelView;
     private TextView statusView;
 
@@ -65,8 +67,9 @@ public final class LauncherTileView extends LinearLayout {
         setGravity(Gravity.CENTER_HORIZONTAL);
         LayoutInflater.from(getContext()).inflate(R.layout.widget_launcher_tile, this, true);
         iconPlate = findViewById(R.id.tile_icon);
+        vectorView = findViewById(R.id.tile_vector);
         imageView = findViewById(R.id.tile_image);
-        glyphView = findViewById(R.id.tile_glyph);
+        monogramView = findViewById(R.id.tile_monogram);
         labelView = findViewById(R.id.tile_label);
         statusView = findViewById(R.id.tile_status);
 
@@ -99,10 +102,10 @@ public final class LauncherTileView extends LinearLayout {
 
         // Every tile shares one borderless surface. The "Add" action used to
         // carry a dashed outline; the product now keeps the grid uniform and
-        // lets the tile's own glyph and label say what it does.
+        // lets the tile's own icon and label say what it does.
         setBackgroundResource(R.drawable.tile_surface);
         labelView.setText(label);
-        renderGlyph(entry, label, favicon);
+        renderIcon(entry, label, favicon);
         setEnabled(openable);
         iconPlate.setAlpha(openable ? 1f : UNAVAILABLE_ICON_ALPHA);
 
@@ -140,17 +143,25 @@ public final class LauncherTileView extends LinearLayout {
     }
 
     /**
-     * Renders the icon plate by walking {@link LauncherIconPolicy}'s order — the
-     * user's own image, then the app's favicon, then a glyph or a monogram — and
-     * stopping at the first source that actually renders.
+     * Renders the icon plate. A bundled vector icon — the {@code Add} action and
+     * the curated surfaces — is an app asset, so it renders identically whatever
+     * the OEM system font does; a user web app instead walks
+     * {@link LauncherIconPolicy}'s order — its own image, then the favicon its
+     * endpoint served, then a monogram of its name — and stops at the first
+     * source that actually renders.
      */
-    private void renderGlyph(LauncherEntry entry, String label, Bitmap favicon) {
+    private void renderIcon(LauncherEntry entry, String label, Bitmap favicon) {
+        if (entry.getIconRes() != 0) {
+            vectorView.setImageResource(entry.getIconRes());
+            showPlateChild(vectorView);
+            return;
+        }
         boolean hasFavicon = favicon != null;
         LauncherIconPolicy.Source source =
                 LauncherIconPolicy.preferred(entry.getIconUri(), hasFavicon);
         if (source == LauncherIconPolicy.Source.USER_IMAGE) {
             if (showUserImage(entry.getIconUri())) {
-                showImage();
+                showPlateChild(imageView);
                 return;
             }
             // The token is still the app's icon, it just cannot be read any more
@@ -159,27 +170,26 @@ public final class LauncherTileView extends LinearLayout {
             source = LauncherIconPolicy.after(source, hasFavicon);
         }
         if (source == LauncherIconPolicy.Source.FAVICON && showFavicon(favicon)) {
-            showImage();
+            showPlateChild(imageView);
             return;
         }
-        imageView.setVisibility(GONE);
-        glyphView.setVisibility(VISIBLE);
-        showGlyph(entry, label);
+        monogramView.setText(monogram(label));
+        showPlateChild(monogramView);
     }
 
-    private void showImage() {
-        imageView.setVisibility(VISIBLE);
-        glyphView.setVisibility(GONE);
-    }
-
-    /** Renders the literal glyph a curated entry carries, or a monogram. */
-    private void showGlyph(LauncherEntry entry, String label) {
-        if (entry.getGlyphRes() != 0) {
-            glyphView.setText(entry.getGlyphRes());
-        } else if (entry.getGlyph() != null) {
-            glyphView.setText(entry.getGlyph());
-        } else {
-            glyphView.setText(monogram(label));
+    /**
+     * Shows exactly one plate child and clears the others, so a rebound tile
+     * never keeps a stale image, vector, or monogram from the previous entry.
+     */
+    private void showPlateChild(View chosen) {
+        vectorView.setVisibility(chosen == vectorView ? VISIBLE : GONE);
+        imageView.setVisibility(chosen == imageView ? VISIBLE : GONE);
+        monogramView.setVisibility(chosen == monogramView ? VISIBLE : GONE);
+        if (chosen != imageView) {
+            imageView.setImageDrawable(null);
+        }
+        if (chosen != monogramView) {
+            monogramView.setText(null);
         }
     }
 

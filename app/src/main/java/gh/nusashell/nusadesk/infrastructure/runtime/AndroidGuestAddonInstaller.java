@@ -1,28 +1,35 @@
 package gh.nusashell.nusadesk.infrastructure.runtime;
 
 import android.content.Context;
+import android.content.res.AssetManager;
 import android.os.Build;
 import android.os.StatFs;
 
-import gh.nusashell.nusadesk.application.runtime.GuestSshAddonInstallUseCase;
+import gh.nusashell.nusadesk.application.runtime.GuestAddonInstallUseCase;
 import gh.nusashell.nusadesk.application.runtime.RuntimeInstallationException;
 import gh.nusashell.nusadesk.application.runtime.RuntimeInstallationUseCase;
-import gh.nusashell.nusadesk.domain.runtime.GuestSshPayloadProfile;
+import gh.nusashell.nusadesk.domain.runtime.GuestAddonPayloadProfile;
 import gh.nusashell.nusadesk.domain.runtime.PayloadArtifact;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
+import gh.nusashell.nusadesk.domain.runtime.VendoredFile;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotLauncher;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotPaths;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Set;
 
 /**
- * Installs the curated guest-SSH add-on profile as a private overlay directory
+ * Installs a curated guest add-on profile as a private overlay directory
  * activated alongside — never inside — the already-active rootfs.
  *
  * <p>Pipeline (all under {@link PayloadIo#INSTALL_LOCK}, shared with the
@@ -38,9 +45,14 @@ import java.nio.file.StandardOpenOption;
  *       {@code dpkg-deb --fsys-tarfile} emits the payload tar under PRoot, and
  *       {@link PayloadIo#extractTar} applies the same traversal, file-type,
  *       symlink, and size rules as the rootfs path.</li>
+ *   <li>Copy each pinned {@link VendoredFile} from the packaged assets into
+ *       the staging tree, verifying its SHA-256 — a packaged file is verified
+ *       exactly like a downloaded one, so a tampered APK asset fails
+ *       closed.</li>
  *   <li>Validate the overlay: the declared entrypoint must exist and be an
- *       AArch64 ELF, and the rootfs tools the setup step needs
- *       ({@code perl}, {@code grep}, {@code chmod}) must be present.</li>
+ *       AArch64 ELF, every declared {@code requiredFiles} member must resolve,
+ *       and the {@code requiredRootfsTools} the profile's guest setup needs
+ *       must be present in the active rootfs.</li>
  *   <li>Write a provenance manifest into the overlay, then activate
  *       atomically (staging → active, active → previous), leaving the active
  *       rootfs entirely untouched.</li>
@@ -51,19 +63,19 @@ import java.nio.file.StandardOpenOption;
  * verified, already-activated rootfs used strictly as a decoder — the add-on
  * payload itself stays data until PRoot launches it at session start.</p>
  */
-public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstallUseCase {
+public final class AndroidGuestAddonInstaller implements GuestAddonInstallUseCase {
     private static final long EXTRA_STORAGE_BYTES = 16L * 1024L * 1024L;
     private static final String MANIFEST_NAME = "lw-addon-manifest";
 
     private final Context context;
     private final DebDecoder debDecoder;
 
-    public AndroidGuestSshAddonInstaller(Context context) {
+    public AndroidGuestAddonInstaller(Context context) {
         this(context, null);
     }
 
     /** Test seam: inject a decoder so installs run without a real PRoot. */
-    AndroidGuestSshAddonInstaller(Context context, DebDecoder debDecoder) {
+    AndroidGuestAddonInstaller(Context context, DebDecoder debDecoder) {
         this.context = context.getApplicationContext();
         this.debDecoder = debDecoder;
     }
@@ -79,16 +91,28 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
         return ProotPaths.activeAddonPath(filesDir, addonId);
     }
 
-    /** Whether the overlay currently provides a usable daemon entrypoint. */
-    public static boolean isInstalled(Path filesDir, GuestSshPayloadProfile profile) {
+    /**
+     * Whether the overlay currently provides a usable payload: the entrypoint
+     * plus every vendored file, so an app upgrade that adds vendored members
+     * re-installs instead of running a stale partial overlay.
+     */
+    public static boolean isInstalled(Path filesDir, GuestAddonPayloadProfile profile) {
         Path active = activeOverlayDir(filesDir, profile.getAddonId());
-        return active != null
-                && Files.isRegularFile(active.resolve(profile.getEntrypoint()));
+        if (active == null
+                || !Files.isRegularFile(active.resolve(profile.getEntrypoint()))) {
+            return false;
+        }
+        for (VendoredFile vendored : profile.getVendoredFiles()) {
+            if (!Files.isRegularFile(active.resolve(vendored.getOverlayPath()))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
     public void install(
-            GuestSshPayloadProfile profile,
+            GuestAddonPayloadProfile profile,
             String runtimeAppId,
             RuntimeInstallationUseCase.ProgressListener listener)
             throws RuntimeInstallationException {
@@ -105,7 +129,8 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
             try {
                 if (!Files.isDirectory(rootfs)) {
                     throw new RuntimeInstallationException(
-                            "install the curated runtime before the guest SSH payload");
+                            "install the curated runtime before the " + profile.getDisplayName()
+                                    + " add-on");
                 }
                 if (!Files.isRegularFile(rootfs.resolve(GuestDebExtractor.DPKG_DEB))) {
                     throw new RuntimeInstallationException(
@@ -157,7 +182,11 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
                 }
 
                 publish(profile, RuntimeState.VERIFYING,
-                        "Validating the SSH payload", listener);
+                        "Installing " + profile.getDisplayName() + " payload files", listener);
+                installVendoredFiles(staging, profile);
+
+                publish(profile, RuntimeState.VERIFYING,
+                        "Validating " + profile.getDisplayName(), listener);
                 validateOverlay(staging, rootfs, profile);
                 writeManifest(staging, profile);
                 activate(staging, active, previous);
@@ -183,7 +212,7 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
         }
     }
 
-    private void checkGuestAbi(GuestSshPayloadProfile profile)
+    private void checkGuestAbi(GuestAddonPayloadProfile profile)
             throws RuntimeInstallationException {
         for (PayloadArtifact artifact : profile.getArtifacts()) {
             if (!"linux/arm64".equals(artifact.getGuestAbi())) {
@@ -200,7 +229,7 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
                 "this device does not expose the required arm64-v8a ABI");
     }
 
-    private void checkStorage(GuestSshPayloadProfile profile)
+    private void checkStorage(GuestAddonPayloadProfile profile)
             throws RuntimeInstallationException {
         StatFs statFs = new StatFs(context.getFilesDir().getPath());
         long required = profile.totalCompressedBytes()
@@ -214,32 +243,88 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
     }
 
     /**
-     * Post-extract validation: the declared daemon entrypoint must be an
-     * AArch64 ELF, and the rootfs must carry the tools the guest setup step
-     * uses ({@code perl} for the shadow edit, {@code grep}/{@code chmod} for
-     * account provisioning).
+     * Copies every packaged vendored file into the staging overlay at its
+     * declared guest-relative path, then verifies the written bytes against
+     * the pinned digest. A packaged asset is trusted only after the same
+     * digest check a downloaded artifact gets; mode 0755 is applied to
+     * executables so guest {@code execve} resolves them under PRoot.
      */
-    private void validateOverlay(Path staging, Path rootfs, GuestSshPayloadProfile profile)
+    private void installVendoredFiles(Path staging, GuestAddonPayloadProfile profile)
+            throws IOException, RuntimeInstallationException {
+        AssetManager assets = context.getAssets();
+        for (VendoredFile file : profile.getVendoredFiles()) {
+            Path target = staging.resolve(file.getOverlayPath());
+            if (!target.normalize().startsWith(staging)) {
+                throw new RuntimeInstallationException(
+                        "vendored overlay path escapes staging: " + file.getOverlayPath());
+            }
+            Files.createDirectories(target.getParent());
+            try (InputStream in = assets.open(file.getAssetPath());
+                 OutputStream out = Files.newOutputStream(target,
+                         StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                byte[] buffer = new byte[64 * 1024];
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                }
+            } catch (IOException e) {
+                throw new RuntimeInstallationException(
+                        "packaged asset is missing or unreadable: " + file.getAssetPath(), e);
+            }
+            PayloadIo.verifyDigest(target, file.getSha256());
+            applyMode(target, file.isExecutable());
+        }
+    }
+
+    private static void applyMode(Path target, boolean executable) throws IOException {
+        Set<PosixFilePermission> mode = executable
+                ? PosixFilePermissions.fromString("rwxr-xr-x")
+                : PosixFilePermissions.fromString("rw-r--r--");
+        try {
+            Files.setPosixFilePermissions(target, mode);
+        } catch (UnsupportedOperationException e) {
+            // App-private files are already owner-only; a filesystem without
+            // POSIX modes (FAT/FUSE) still gets a readable, executable-by-
+            // convention file — PRoot honours the mode bits it can read.
+        }
+    }
+
+    /**
+     * Post-extract validation: the declared entrypoint must be an AArch64 ELF
+     * (for a script-driven add-on the ELF is the interpreter the script execs
+     * through), every declared {@code requiredFiles} member must resolve
+     * inside the overlay, and every declared {@code requiredRootfsTools}
+     * member must exist in the active rootfs.
+     */
+    private void validateOverlay(Path staging, Path rootfs, GuestAddonPayloadProfile profile)
             throws IOException, RuntimeInstallationException {
         Path entrypoint = staging.resolve(profile.getEntrypoint());
         if (!Files.isRegularFile(entrypoint)) {
             throw new RuntimeInstallationException(
-                    "SSH payload is missing " + profile.getEntrypoint());
+                    profile.getDisplayName() + " payload is missing " + profile.getEntrypoint());
         }
-        ElfAbi.requireAarch64(entrypoint, "guest SSH daemon");
-        for (String tool : new String[] { "usr/bin/perl", "usr/bin/grep", "usr/bin/chmod" }) {
+        ElfAbi.requireAarch64(entrypoint, profile.getDisplayName() + " entrypoint");
+        for (String required : profile.getRequiredFiles()) {
+            if (!Files.exists(staging.resolve(required))) {
+                throw new RuntimeInstallationException(
+                        profile.getDisplayName() + " payload is missing " + required);
+            }
+        }
+        for (String tool : profile.getRequiredRootfsTools()) {
             if (!Files.isRegularFile(rootfs.resolve(tool))) {
                 throw new RuntimeInstallationException(
-                        "installed rootfs lacks the tool required by guest SSH setup: " + tool);
+                        "installed rootfs lacks the tool required by "
+                                + profile.getDisplayName() + ": " + tool);
             }
         }
     }
 
     /**
-     * Record provenance inside the overlay: which pinned artifacts produced
-     * it, with their digests. Plain text, guest-visible, no secrets.
+     * Record provenance inside the overlay: which pinned artifacts and
+     * vendored files produced it, with their digests. Plain text,
+     * guest-visible, no secrets.
      */
-    private void writeManifest(Path staging, GuestSshPayloadProfile profile)
+    private void writeManifest(Path staging, GuestAddonPayloadProfile profile)
             throws IOException {
         StringBuilder manifest = new StringBuilder();
         manifest.append("addon=").append(profile.getAddonId()).append('\n');
@@ -248,6 +333,10 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
             manifest.append("artifact=").append(artifact.getArtifactId())
                     .append(' ').append(artifact.getPackageVersion())
                     .append(' ').append(artifact.getSha256()).append('\n');
+        }
+        for (VendoredFile vendored : profile.getVendoredFiles()) {
+            manifest.append("vendored=").append(vendored.getOverlayPath())
+                    .append(' ').append(vendored.getSha256()).append('\n');
         }
         Files.write(staging.resolve(MANIFEST_NAME),
                 manifest.toString().getBytes(StandardCharsets.US_ASCII),
@@ -268,12 +357,12 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
                 PayloadIo.moveAtomically(previous, active);
             }
             throw new RuntimeInstallationException(
-                    "could not activate the verified SSH payload", exception);
+                    "could not activate the verified add-on payload", exception);
         }
     }
 
     private void publish(
-            GuestSshPayloadProfile profile,
+            GuestAddonPayloadProfile profile,
             RuntimeState state,
             String detail,
             RuntimeInstallationUseCase.ProgressListener listener) {
@@ -285,7 +374,7 @@ public final class AndroidGuestSshAddonInstaller implements GuestSshAddonInstall
     }
 
     private void publishFailure(
-            GuestSshPayloadProfile profile,
+            GuestAddonPayloadProfile profile,
             String detail,
             RuntimeInstallationUseCase.ProgressListener listener) {
         publish(profile, RuntimeState.FAILED, detail, listener);

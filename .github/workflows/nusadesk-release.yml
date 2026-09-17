@@ -115,6 +115,19 @@ jobs:
             "build-tools;36.0.0"
           yes | sdkmanager --licenses >/dev/null || true
 
+      - name: Cache Robolectric Android runtimes
+        if: steps.release_gate.outputs.should_release == 'true'
+        uses: actions/cache@v6
+        with:
+          # Robolectric fetches one android-all jar (~110-160 MB) per API level
+          # the launch test covers, into the local Maven repository rather than
+          # the Gradle cache. Keyed on the test file so a change to the covered
+          # SDK set re-seeds the entry instead of silently missing it.
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('app/src/test/java/gh/nusashell/nusadesk/presentation/MainActivityApiLevelLaunchTest.java') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
       - name: Run tests, lint, and assemble debug APK
         if: steps.release_gate.outputs.should_release == 'true'
         run: make check

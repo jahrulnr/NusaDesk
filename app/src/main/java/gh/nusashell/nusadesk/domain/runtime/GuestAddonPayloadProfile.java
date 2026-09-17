@@ -5,51 +5,57 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Curated guest SSH add-on profile: an ordered, pinned set of upstream
- * artifacts whose contents install into a private overlay directory that the
- * runtime binds into the guest.
+ * Curated guest add-on profile: an ordered, pinned set of upstream artifacts
+ * plus packaged vendored files whose contents install into a private overlay
+ * directory that the runtime binds into the guest.
  *
  * <p>The profile is the allowlisted unit of trust: artifact URLs, digests,
  * and sizes are fixed product data reviewed in the catalog; nothing here is
  * user input. {@link #getGuestDir()} is the fixed guest-visible mount point
  * the overlay is bound at, and {@link #getEntrypoint()} is the guest-relative
- * daemon path that must exist after a verified install.</p>
+ * executable path that must exist after a verified install. The entrypoint is
+ * always an AArch64 ELF — for a script-driven add-on it is the interpreter,
+ * not the script — so the installer can keep one uniform ABI check.</p>
  */
-public final class GuestSshPayloadProfile {
-    /** Fixed guest-visible mount point for the activated overlay. */
-    public static final String GUEST_DIR = "/opt/lw-ssh";
-    /** Guest-relative daemon path the profile must provide under {@link #GUEST_DIR}. */
-    public static final String ENTRYPOINT = "usr/sbin/sshd";
-
+public final class GuestAddonPayloadProfile {
     private final String addonId;
     private final String displayName;
     private final String version;
     private final String guestDir;
     private final String entrypoint;
     private final List<PayloadArtifact> artifacts;
+    private final List<VendoredFile> vendoredFiles;
+    private final List<String> requiredFiles;
+    private final List<String> requiredRootfsTools;
 
-    public GuestSshPayloadProfile(
+    public GuestAddonPayloadProfile(
             String addonId,
             String displayName,
             String version,
             String guestDir,
             String entrypoint,
-            List<PayloadArtifact> artifacts) {
+            List<PayloadArtifact> artifacts,
+            List<VendoredFile> vendoredFiles,
+            List<String> requiredFiles,
+            List<String> requiredRootfsTools) {
         this.addonId = requireSegment(addonId, "addonId");
         this.displayName = requireText(displayName, "displayName");
         this.version = requireText(version, "version");
         this.guestDir = requireGuestDir(guestDir);
         this.entrypoint = requireEntrypoint(entrypoint);
-        if (artifacts == null || artifacts.isEmpty()) {
+        this.artifacts = immutableList(artifacts, "artifacts");
+        if (this.artifacts.isEmpty()) {
             throw new IllegalArgumentException("artifacts must not be empty");
         }
-        List<PayloadArtifact> copy = new ArrayList<>(artifacts);
-        for (PayloadArtifact artifact : copy) {
-            if (artifact == null) {
-                throw new IllegalArgumentException("artifacts must not contain null");
+        this.vendoredFiles = immutableList(vendoredFiles, "vendoredFiles");
+        this.requiredFiles = immutablePathList(requiredFiles, "requiredFiles");
+        this.requiredRootfsTools =
+                immutablePathList(requiredRootfsTools, "requiredRootfsTools");
+        for (VendoredFile vendored : this.vendoredFiles) {
+            if (vendored == null) {
+                throw new IllegalArgumentException("vendoredFiles must not contain null");
             }
         }
-        this.artifacts = Collections.unmodifiableList(copy);
     }
 
     public String getAddonId() {
@@ -69,13 +75,43 @@ public final class GuestSshPayloadProfile {
         return guestDir;
     }
 
-    /** Guest-relative daemon path (under {@link #getGuestDir()}) that must exist. */
+    /**
+     * Guest-relative executable path (under {@link #getGuestDir()}) that must
+     * exist after install and be an AArch64 ELF.
+     */
     public String getEntrypoint() {
         return entrypoint;
     }
 
+    /** Downloaded, digest-pinned {@code .deb} artifacts, in install order. */
     public List<PayloadArtifact> getArtifacts() {
         return artifacts;
+    }
+
+    /**
+     * Files vendored into the app package and copied into the overlay at
+     * install time, each verified against its pinned digest.
+     */
+    public List<VendoredFile> getVendoredFiles() {
+        return vendoredFiles;
+    }
+
+    /**
+     * Additional guest-relative overlay paths that must resolve after install
+     * (e.g. a vendored script or a payload-shipped symlink). Checked after the
+     * entrypoint's ELF validation; entries may be symlinks.
+     */
+    public List<String> getRequiredFiles() {
+        return requiredFiles;
+    }
+
+    /**
+     * Guest-relative paths that must exist inside the already-installed
+     * rootfs because the profile's guest-side setup consumes them
+     * (e.g. {@code usr/bin/perl} for the SSH account setup).
+     */
+    public List<String> getRequiredRootfsTools() {
+        return requiredRootfsTools;
     }
 
     /** Sum of all artifact download sizes; used for storage and progress. */
@@ -94,6 +130,30 @@ public final class GuestSshPayloadProfile {
             total += artifact.getUncompressedBytes();
         }
         return total;
+    }
+
+    private static <T> List<T> immutableList(List<T> values, String field) {
+        if (values == null) {
+            throw new IllegalArgumentException(field + " must not be null");
+        }
+        return Collections.unmodifiableList(new ArrayList<>(values));
+    }
+
+    private static List<String> immutablePathList(List<String> values, String field) {
+        List<String> copy = new ArrayList<>();
+        if (values == null) {
+            throw new IllegalArgumentException(field + " must not be null");
+        }
+        for (String value : values) {
+            if (value == null || value.trim().isEmpty()
+                    || value.startsWith("/") || value.contains("..")
+                    || value.indexOf('\0') >= 0) {
+                throw new IllegalArgumentException(
+                        field + " entries must be relative guest paths: " + value);
+            }
+            copy.add(value);
+        }
+        return Collections.unmodifiableList(copy);
     }
 
     private static String requireText(String value, String field) {
