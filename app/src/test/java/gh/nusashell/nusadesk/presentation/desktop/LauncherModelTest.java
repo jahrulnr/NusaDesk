@@ -37,8 +37,11 @@ public class LauncherModelTest {
             case ADD_APP:
                 return "Add app";
             case CURATED:
-                return DesktopApp.fromId(entry.getId()) == DesktopApp.TERMINAL
-                        ? "Terminal" : "System";
+                DesktopApp app = DesktopApp.fromId(entry.getId());
+                if (app == DesktopApp.TERMINAL) {
+                    return "Terminal";
+                }
+                return app == DesktopApp.SYSTEM ? "System" : "Logs";
             default:
                 return entry.getLabel();
         }
@@ -60,9 +63,10 @@ public class LauncherModelTest {
         assertEquals(LauncherEntry.ADD_APP_ID, entries.get(0).getId());
         assertEquals("terminal", entries.get(1).getId());
         assertEquals("system", entries.get(2).getId());
-        assertEquals("notebook", entries.get(3).getId());
-        assertEquals("wiki", entries.get(4).getId());
-        assertEquals(5, entries.size());
+        assertEquals("logs", entries.get(3).getId());
+        assertEquals("notebook", entries.get(4).getId());
+        assertEquals("wiki", entries.get(5).getId());
+        assertEquals(6, entries.size());
     }
 
     @Test
@@ -91,7 +95,7 @@ public class LauncherModelTest {
 
     @Test
     public void aWebAppEntryCarriesItsOwnDefinitionSoTheTileCanOpenIt() {
-        LauncherEntry entry = LauncherModel.entries(WEB_APPS).get(3);
+        LauncherEntry entry = LauncherModel.entries(WEB_APPS).get(4);
 
         assertTrue(entry.isWebApp());
         assertTrue(entry.isOpenable());
@@ -104,7 +108,7 @@ public class LauncherModelTest {
     public void noWebAppsIsAValidLauncher() {
         List<LauncherEntry> entries = LauncherModel.entries(null);
 
-        assertEquals(3, entries.size());
+        assertEquals(4, entries.size());
         assertFalse(entries.get(1).isWebApp());
     }
 

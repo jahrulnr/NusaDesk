@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Drains a guest {@code sshd} process's output and turns it into lifecycle
@@ -30,6 +31,12 @@ import java.util.List;
  * <p>Draining is also required for correctness on its own: an unread pipe fills
  * at ~64 KiB and blocks the writer, which would wedge a chatty daemon.</p>
  *
+ * <p>An optional {@code lineSink} receives every drained line (both pipes) on
+ * the drain thread; the session's boot log writer hangs off it, so the same
+ * console the supervisor shares — setup script, {@code systemctl init}, the
+ * daemon's {@code -e} log — is also persisted to the guest's
+ * {@code /var/log/lw/boot.log}.</p>
+ *
  * <p>Constructible from raw streams so the parsing/waiting behaviour is
  * unit-testable without spawning a process.</p>
  */
@@ -41,6 +48,7 @@ public final class GuestSshdStderrMonitor {
     private final InputStream stderr;
     private final InputStream stdout;
     private final Runnable onClosed;
+    private final Consumer<String> lineSink;
     private final Object lock = new Object();
     private final Deque<String> recent = new ArrayDeque<>();
 
@@ -53,21 +61,39 @@ public final class GuestSshdStderrMonitor {
      * @param onClosed invoked once, on the drain thread, after stderr reaches EOF
      */
     public GuestSshdStderrMonitor(InputStream stderr, InputStream stdout, Runnable onClosed) {
+        this(stderr, stdout, onClosed, null);
+    }
+
+    /**
+     * @param stderr   the daemon's stderr (the readiness channel)
+     * @param stdout   the daemon's stdout (drained; lines go to the sink)
+     * @param onClosed invoked once, on the drain thread, after stderr reaches EOF
+     * @param lineSink receives every drained line from both pipes; may be null
+     */
+    public GuestSshdStderrMonitor(InputStream stderr, InputStream stdout,
+                                Runnable onClosed, Consumer<String> lineSink) {
         if (stderr == null || stdout == null) {
             throw new IllegalArgumentException("stderr and stdout are required");
         }
         this.stderr = stderr;
         this.stdout = stdout;
         this.onClosed = onClosed;
+        this.lineSink = lineSink;
     }
 
     /** Monitor a live process's two output pipes. */
     public static GuestSshdStderrMonitor forProcess(Process process, Runnable onClosed) {
+        return forProcess(process, onClosed, null);
+    }
+
+    /** Monitor a live process's two output pipes, feeding {@code lineSink}. */
+    public static GuestSshdStderrMonitor forProcess(Process process, Runnable onClosed,
+                                                  Consumer<String> lineSink) {
         if (process == null) {
             throw new IllegalArgumentException("process must not be null");
         }
         return new GuestSshdStderrMonitor(
-                process.getErrorStream(), process.getInputStream(), onClosed);
+                process.getErrorStream(), process.getInputStream(), onClosed, lineSink);
     }
 
     /** Start the drain threads. */
@@ -132,6 +158,9 @@ public final class GuestSshdStderrMonitor {
                     }
                     lock.notifyAll();
                 }
+                if (lineSink != null) {
+                    lineSink.accept(line);
+                }
             }
         } catch (IOException ignored) {
             // A closed pipe is the normal teardown path; EOF is reported below.
@@ -147,10 +176,15 @@ public final class GuestSshdStderrMonitor {
     }
 
     private void drainStdout() {
-        byte[] buffer = new byte[1024];
-        try (InputStream in = stdout) {
-            while (in.read(buffer) != -1) {
-                // Discard: guest sshd logs to stderr; this only keeps the pipe open.
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(stdout, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                // Guest sshd logs to stderr; stdout lines are the session
+                // supervisor's / systemctl's — they still belong in boot.log.
+                if (lineSink != null) {
+                    lineSink.accept(line);
+                }
             }
         } catch (IOException ignored) {
             // Teardown closes the pipe; nothing to report.

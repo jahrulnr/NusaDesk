@@ -36,6 +36,9 @@ import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.workspace.WorkspaceFolder;
+import gh.nusashell.nusadesk.infrastructure.logs.GuestLog;
+import gh.nusashell.nusadesk.infrastructure.logs.GuestLogCatalog;
+import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTail;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshDaemon;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotPaths;
@@ -43,9 +46,8 @@ import gh.nusashell.nusadesk.infrastructure.runtime.AndroidGuestAddonInstaller;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidRuntimeInstaller;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidRuntimeStateStore;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeHostService;
-import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesHostKeyTrustStore;
-import gh.nusashell.nusadesk.infrastructure.ssh.KeystoreVaultCredentialProvider;
-import gh.nusashell.nusadesk.infrastructure.ssh.SshReconnectPolicy;
+import gh.nusashell.nusadesk.infrastructure.service.TerminalSessionBus;
+import gh.nusashell.nusadesk.infrastructure.service.TerminalSessionRegistry;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshSecurityInitializer;
 import gh.nusashell.nusadesk.infrastructure.webapp.SharedPreferencesWebAppStore;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppFaviconFetcher;
@@ -55,6 +57,7 @@ import gh.nusashell.nusadesk.presentation.desktop.AppSurfaceHostView;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopApp;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopHomeView;
 import gh.nusashell.nusadesk.presentation.desktop.LauncherEntry;
+import gh.nusashell.nusadesk.presentation.logs.LogsScreenView;
 import gh.nusashell.nusadesk.presentation.system.SystemScreenView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppFormView;
@@ -115,7 +118,13 @@ public final class MainActivity extends Activity {
     private DesktopHomeView desktopHome;
     private AppSurfaceHostView appSurfaceHost;
     private SystemScreenView systemScreen;
+    /** Created lazily on first open: the view owns a WebView, so it costs. */
+    private LogsScreenView logsScreen;
     private FoundationContractDialog contractDialog;
+    /** The tail feeding the Logs viewer, if one is open. */
+    private GuestLogTail.TailHandle logTail;
+    /** Monotonic token so a superseded tail's late output is dropped. */
+    private int logTailGeneration;
 
     private RuntimeStateStore stateStore;
     private RuntimeInstallationUseCase installer;
@@ -279,6 +288,10 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        // The Logs tail follows a real file on a daemon thread; without this
+        // it would outlive the view it feeds.
+        stopLogTail();
+        contractDialog.dispose();
         installExecutor.shutdownNow();
         probeExecutor.shutdownNow();
         faviconExecutor.shutdownNow();
@@ -308,6 +321,14 @@ public final class MainActivity extends Activity {
 
     /** @return true when the shell consumed Back instead of leaving the product. */
     private boolean handleBack() {
+        // Inside the log viewer, Back steps one level up — to the log list —
+        // before a second Back returns to the launcher, matching the viewer
+        // header's close icon.
+        if (activeDestination == DesktopDestination.LOGS
+                && logsScreen != null && logsScreen.isViewingLog()) {
+            logsScreen.showLogList();
+            return true;
+        }
         if (activeDestination == DesktopDestination.HOME && activeWebAppId == null) {
             return false;
         }
@@ -432,6 +453,11 @@ public final class MainActivity extends Activity {
         }
         appSurfaceHost.setAppTitle(destination.getTitleRes());
         appSurfaceHost.setMenuActions(Collections.emptyList());
+        if (destination == DesktopDestination.LOGS) {
+            // Re-scan on every open: log files appear and rotate while the
+            // surface is away, so a retained list would go stale.
+            refreshLogList();
+        }
     }
 
     /** Shows one user web app surface, probing its endpoint before it loads. */
@@ -537,6 +563,9 @@ public final class MainActivity extends Activity {
         if (destination == DesktopDestination.TERMINAL) {
             return createTerminalSurface();
         }
+        if (destination == DesktopDestination.LOGS) {
+            return createLogsSurface();
+        }
         if (destination == DesktopDestination.ADD_WEB_APP) {
             return createWebAppForm();
         }
@@ -544,19 +573,91 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Builds the terminal surface. It has no target to choose: the local-only
-     * factory fixes the endpoint, the credential, and the pinned-host-key-only
-     * trust policy (ADR-0013).
+     * Builds the terminal surface. The session itself lives in the host
+     * service (ADR-0033): this surface consumes it through the registry and
+     * the status bus, and never opens or closes an SSH connection of its own —
+     * there is no target to choose, exactly as the local-only factory
+     * contract requires (ADR-0013).
      */
     private TerminalAppView createTerminalSurface() {
         TerminalAppView terminal = new TerminalAppView(this);
         terminal.setOnGoToDesktopListener(view -> showShell());
-        terminal.setSshDependencies(
-                new KeystoreVaultCredentialProvider(this),
-                SshReconnectPolicy.DEFAULT,
-                new SharedPreferencesHostKeyTrustStore(this),
-                System::currentTimeMillis);
+        terminal.setTerminalDependencies(
+                TerminalSessionRegistry.getInstance(), TerminalSessionBus.getInstance());
         return terminal;
+    }
+
+    /**
+     * Builds the Logs surface. The view only lists and renders; this host owns
+     * the catalog scan and the {@link GuestLogTail} lifecycle, so a tail can
+     * never outlive the surface that displays it.
+     */
+    private LogsScreenView createLogsSurface() {
+        logsScreen = new LogsScreenView(this);
+        logsScreen.setListener(new LogsScreenView.Listener() {
+            @Override
+            public void onLogItemSelected(GuestLog log) {
+                startLogTail(log);
+            }
+
+            @Override
+            public void onLogViewClosed() {
+                stopLogTail();
+            }
+        });
+        return logsScreen;
+    }
+
+    // ---- Logs surface ----
+
+    /**
+     * Scans the guest log catalog off the UI thread and pushes the items to
+     * the surface. The rootfs is app-private storage, so a plain file listing
+     * is all a "journal" needs here — no guest process is involved.
+     */
+    private void refreshLogList() {
+        if (logsScreen == null) {
+            return;
+        }
+        logsScreen.showReading();
+        Path rootfs = ProotPaths.activeRootfsPath(
+                getFilesDir().toPath(), catalogEntry.getAppId());
+        probeExecutor.execute(() -> {
+            List<GuestLog> items = GuestLogCatalog.list(rootfs);
+            mainHandler.post(() -> {
+                if (!isDestroyed() && logsScreen != null) {
+                    logsScreen.renderLogs(items);
+                }
+            });
+        });
+    }
+
+    /**
+     * Starts following one guest log file into the viewer. A superseded
+     * tail's late chunks are dropped through the generation token rather than
+     * racing the new file's output.
+     */
+    private void startLogTail(GuestLog log) {
+        stopLogTail();
+        final int generation = ++logTailGeneration;
+        logTail = GuestLogTail.follow(log.getHostPath(),
+                text -> mainHandler.post(() -> {
+                    if (!isDestroyed() && generation == logTailGeneration
+                            && logsScreen != null) {
+                        logsScreen.writeLogOutput(text);
+                    }
+                }),
+                GuestLogTail.DEFAULT_INITIAL_BYTES, GuestLogTail.POLL_MS);
+    }
+
+    /** Stops the active tail, if any. Idempotent. */
+    private void stopLogTail() {
+        logTailGeneration++;
+        GuestLogTail.TailHandle tail = logTail;
+        logTail = null;
+        if (tail != null) {
+            tail.stop();
+        }
     }
 
     private WebAppFormView createWebAppForm() {

@@ -75,6 +75,10 @@ runtime requirements.
 - A clean, launcher-first home surface.
 - Search across the apps available in the workspace.
 - Curated system surfaces alongside your own web apps.
+- A Logs surface that reads the guest like a real Linux box: the session
+  console at `/var/log/lw/boot.log` (one previous boot kept) plus a live tail
+  of each service's `systemctl` journal — all size-bounded and viewed in the
+  same terminal surface (ADR-0034).
 - Responsive layouts for phones, landscape, tablets, and larger font sizes.
 
 ### A local Linux terminal

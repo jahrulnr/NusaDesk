@@ -55,6 +55,35 @@ public class TerminalMessageCodecTest {
     }
 
     @Test
+    public void encodesResetCommand() {
+        // The Logs surface switches files on one terminal: the reset command
+        // is what clears the previous file's output first.
+        assertEquals("{\"t\":\"reset\"}",
+                TerminalMessageCodec.encode(
+                        TerminalMessage.signal(TerminalMessage.Type.RESET)));
+    }
+
+    @Test
+    public void resetIsNotAcceptedFromThePage() {
+        // Host-originated tags are never accepted back from the page.
+        assertNull(TerminalMessageCodec.decode("{\"t\":\"reset\"}"));
+    }
+
+    @Test
+    public void encodesFontSizeCommand() {
+        // The Logs viewer renders denser than the shell; fontSize carries the
+        // px value on the wire so the packaged page can refit the grid.
+        assertEquals("{\"t\":\"fontSize\",\"d\":11}",
+                TerminalMessageCodec.encode(
+                        TerminalMessage.size(TerminalMessage.Type.FONT_SIZE, 11, 0)));
+    }
+
+    @Test
+    public void fontSizeIsNotAcceptedFromThePage() {
+        assertNull(TerminalMessageCodec.decode("{\"t\":\"fontSize\",\"d\":11}"));
+    }
+
+    @Test
     public void encodeEscapesQuotesBackslashesAndControlChars() {
         String json = TerminalMessageCodec.encode(
                 TerminalMessage.text(TerminalMessage.Type.WRITE, "a\"b\\c\t\u0001"));

@@ -22,8 +22,20 @@ assert.doesNotMatch(html, /addon-(?:canvas|webgl)|WebglAddon|CanvasAddon/i,
 assert.doesNotMatch(css, /\.xterm \.xterm-screen canvas\s*\{/,
   "vendored terminal CSS must not retain a canvas renderer hook");
 assert.match(html, /smoothScrollDuration:\s*[1-9]\d*/,
-  "touch scrollback must animate through xterm instead of jumping one rendered row at a time");
+  "mouse-wheel scrolling must retain xterm's short interpolation");
+assert.match(touchScroll, /_scrollableElement/,
+  "touch scrolling must use xterm's fractional pixel viewport");
+assert.match(touchScroll, /FLING_FRICTION_PX_PER_MS2/,
+  "touch scrolling must preserve native-like release momentum");
+assert.match(html, /setNativeTextSelectionEnabled/,
+  "terminal page must support disabling native selection for read-only viewers");
+assert.match(html, /native-selection-disabled/,
+  "read-only viewers must have a CSS selection-disabled mode");
+assert.match(html, /native-selection-disabled[^}]*touch-action:\s*none/s,
+  "read-only logs must keep every touchmove in the scroll adapter");
+assert.match(touchScroll, /hasDomSelection/,
+  "interactive terminal must retain its native-selection guard");
 assert.match(touchScroll, /requestAnimationFrame/,
-  "touch scrollback must batch move events to one xterm update per animation frame");
+  "touch release momentum must be frame-scheduled");
 
 console.log("ok - terminal renderer contract is DOM-only with no selection mirror");

@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.Map;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
@@ -124,7 +125,7 @@ public final class TerminalBridgeView extends FrameLayout {
         scrollBottomButton.setMinHeight((int) (40 * getResources().getDisplayMetrics().density));
         scrollBottomButton.setMinWidth((int) (88 * getResources().getDisplayMetrics().density));
         scrollBottomButton.setContentDescription("Scroll terminal to live output");
-        scrollBottomButton.setBackgroundResource(R.drawable.terminal_key_surface);
+        scrollBottomButton.setBackgroundResource(R.drawable.terminal_live_surface);
         scrollBottomButton.setTextColor(getResources().getColor(R.color.terminal_key_ink, null));
         scrollBottomButton.setVisibility(GONE);
         scrollBottomButton.setOnClickListener(v -> scrollToBottom());
@@ -197,6 +198,43 @@ public final class TerminalBridgeView extends FrameLayout {
     public void scrollToBottom() {
         scrollBottomButton.setVisibility(GONE);
         postToPage(TerminalMessage.signal(TerminalMessage.Type.SCROLL_BOTTOM));
+    }
+
+    /**
+     * Clear the screen and the scrollback buffer. Used when the surface
+     * switches its content source — the Logs surface selects a different
+     * file — so output from the previous source is never carried over.
+     * Must be called on the UI thread.
+     */
+    public void clear() {
+        scrollBottomButton.setVisibility(GONE);
+        postToPage(TerminalMessage.signal(TerminalMessage.Type.RESET));
+    }
+
+    /**
+     * Set the xterm font size in px for this surface (the Logs viewer renders
+     * denser than the interactive shell). Clamped to a sane range; the page
+     * refits afterwards so column count follows the new cell size. Must be
+     * called on the UI thread, after the bridge reports ready.
+     */
+    public void setFontSize(int px) {
+        int clamped = Math.max(8, Math.min(px, 24));
+        postToPage(TerminalMessage.size(TerminalMessage.Type.FONT_SIZE, clamped, 0));
+    }
+
+    /**
+     * Enable or disable Android's native text selection for this surface. Read-only
+     * log viewers disable it so a long press cannot steal an ongoing scroll
+     * gesture; the interactive shell leaves it enabled for Copy.
+     * Must be called on the UI thread after the page reports ready.
+     */
+    public void setNativeTextSelectionEnabled(boolean enabled) {
+        String value = enabled ? "true" : "false";
+        webView.evaluateJavascript(
+                "(function(){var t=window.LinuxWrapperTerminal;"
+                        + "if(t&&t.setNativeTextSelectionEnabled){"
+                        + "t.setNativeTextSelectionEnabled(" + value + ");}})();",
+                null);
     }
 
     /**
@@ -406,7 +444,12 @@ public final class TerminalBridgeView extends FrameLayout {
             }
             try {
                 InputStream in = view.getContext().getAssets().open(ASSET_DIR + file);
-                return new WebResourceResponse(mimeTypeFor(file), "utf-8", in);
+                // Packaged assets change with the APK; a stale cached page would
+                // silently drop newer bridge commands (e.g. fontSize/reset).
+                Map<String, String> headers = Collections.singletonMap(
+                        "Cache-Control", "no-store");
+                return new WebResourceResponse(mimeTypeFor(file), "utf-8",
+                        200, "OK", headers, in);
             } catch (IOException e) {
                 return notFound();
             }
@@ -478,6 +521,8 @@ public final class TerminalBridgeView extends FrameLayout {
 +       "case 'fit':term.fit();break;"
 +       "case 'focus':term.focus();break;"
 +       "case 'scrollBottom':if(window.LinuxWrapperTouchScroll){window.LinuxWrapperTouchScroll.scrollToBottom();}break;"
++       "case 'reset':if(term.reset){term.reset();}break;"
++       "case 'fontSize':if(typeof m.d==='number'&&term.fontSize){term.fontSize(m.d);}break;"
 +     "}"
 +   "};"
 +   "term.onInput(function(d){send({t:'input',d:d});});"

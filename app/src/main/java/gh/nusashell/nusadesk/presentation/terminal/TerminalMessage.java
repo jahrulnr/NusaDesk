@@ -7,10 +7,12 @@ package gh.nusashell.nusadesk.presentation.terminal;
  *
  * <p>This is a tiny, fixed protocol — not a generic RPC. The native side encodes
  * {@link Type#WRITE}, {@link Type#WRITE_STDERR}, {@link Type#SET_SIZE},
- * {@link Type#FIT}, {@link Type#FOCUS}, and {@link Type#SCROLL_BOTTOM} commands
- * to the page; the page encodes {@link Type#READY}, {@link Type#INPUT},
- * {@link Type#RESIZE} and {@link Type#SCROLL_STATE} events back. Only the
- * fields each type uses are meaningful; the others are zero/null/false.</p>
+ * {@link Type#FIT}, {@link Type#FOCUS}, {@link Type#SCROLL_BOTTOM},
+ * {@link Type#RESET}, and {@link Type#FONT_SIZE} commands to the page; the
+ * page encodes {@link Type#READY},
+ * {@link Type#INPUT}, {@link Type#RESIZE} and {@link Type#SCROLL_STATE} events
+ * back. Only the fields each type uses are meaningful; the others are
+ * zero/null/false.</p>
  *
  * <p>Carrying no secrets and doing no I/O, this object is safe to unit-test without
  * Android. See {@link TerminalMessageCodec} for the on-wire JSON form and the
@@ -38,7 +40,11 @@ public final class TerminalMessage {
         /** Host -> page: scroll the xterm viewport to the newest output. */
         SCROLL_BOTTOM,
         /** Host -> page: focus the terminal for input. */
-        FOCUS
+        FOCUS,
+        /** Host -> page: clear the screen and scrollback (content source switch). */
+        RESET,
+        /** Host -> page: set the xterm font size in px ({@link #cols} carries px). */
+        FONT_SIZE
     }
 
     private final Type type;
@@ -74,7 +80,7 @@ public final class TerminalMessage {
         return new TerminalMessage(type, null, cols, rows, false);
     }
 
-    /** A parameterless message (FIT/FOCUS). */
+    /** A parameterless message (FIT/FOCUS/SCROLL_BOTTOM/RESET). */
     public static TerminalMessage signal(Type type) {
         if (type == null) {
             throw new IllegalArgumentException("type must not be null");

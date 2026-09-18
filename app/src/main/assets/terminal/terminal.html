@@ -19,6 +19,8 @@
     resize(cols, rows)        host -> terminal: set the PTY size and refit.
     fit()                     fit the terminal to its container.
     focus()                   focus the terminal for input.
+    reset()                   clear the screen and scrollback (new log/source).
+    fontSize(px)              host -> terminal: set cell font size, then refit.
     size()                    terminal -> host: {cols, rows} actually rendered.
     onInput(callback)         terminal -> host: callback(data:string) for stdin.
     onResize(callback)        terminal -> host: callback(cols, rows) on resize.
@@ -69,6 +71,20 @@
     .xterm .xterm-helper-textarea {
       pointer-events: none;
     }
+    /* Read-only log viewers must keep the gesture for scrollback. The
+       interactive shell leaves this class absent so Android still owns its
+       long-press text selection and Copy action mode. */
+    #terminal.native-selection-disabled {
+      /* Read-only logs do not need browser selection or page panning. Keep
+         every touchmove in the adapter so a held drag remains realtime. */
+      touch-action: none;
+    }
+    #terminal.native-selection-disabled .xterm,
+    #terminal.native-selection-disabled .xterm .xterm-screen .xterm-rows,
+    #terminal.native-selection-disabled .xterm .xterm-screen .xterm-rows * {
+      -webkit-user-select: none !important;
+      user-select: none !important;
+    }
   </style>
 </head>
 <body>
@@ -89,10 +105,9 @@
         rows: 24,
         cursorBlink: true,
         scrollback: 1000,
-        // Touch events frequently move by less than one rendered row. The
-        // adapter intentionally preserves xterm's line-based scrollback API,
-        // so a short xterm-owned interpolation prevents those rows from
-        // appearing as discrete jumps while keeping a direct finger drag.
+        // Touch scrolling bypasses this wheel-step animation and writes the
+        // xterm pixel position directly, while mouse-wheel scrolling keeps its
+        // short native-like interpolation.
         smoothScrollDuration: 80,
         // Compact monospace stack: the bundled WebView ships a default
         // monospace; the named faces are tried first where present and fall back
@@ -130,6 +145,15 @@
         }
       }
 
+      function setNativeTextSelectionEnabled(enabled) {
+        var shouldEnable = enabled !== false;
+        container.classList.toggle("native-selection-disabled", !shouldEnable);
+        if (!shouldEnable) {
+          var selection = document.getSelection ? document.getSelection() : null;
+          if (selection) { selection.removeAllRanges(); }
+        }
+      }
+
       // Decode bytes (ArrayBuffer/Uint8Array) or pass strings straight through.
       function decode(data) {
         if (data == null) return "";
@@ -153,11 +177,12 @@
 
       // Mobile touch-to-scrollback adapter (see touch-scroll.js). xterm.js 6.0.0
       // does not scroll the viewport on a one-finger drag on Android WebView;
-      // this translates such a drag into bounded scrollTop changes without
-      // stealing taps, keyboard input, the platform's own long-press text
-      // selection, or xterm mouse-tracking gestures.
+      // this follows the finger through xterm's fractional pixel controller
+      // and adds bounded release momentum without stealing taps, keyboard
+      // input, native long-press selection, or xterm mouse-tracking gestures.
+      var touchScroll = null;
       if (window.LinuxWrapperTouchScroll) {
-        window.LinuxWrapperTouchScroll.install(container, term);
+        touchScroll = window.LinuxWrapperTouchScroll.install(container, term);
       }
 
       // Tell the host whether the viewport is scrolled away from the live
@@ -198,11 +223,30 @@
         },
         fit: fitWithoutBreakingSelection,
         focus: function () { term.focus(); },
+        setNativeTextSelectionEnabled: setNativeTextSelectionEnabled,
+        reset: function () {
+          /* xterm's own reset: clears the screen, the scrollback, and parser
+             state, so a switched log source never inherits stale output. */
+          try { term.reset(); } catch (e) { /* ignore */ }
+        },
+        fontSize: function (px) {
+          /* The log viewer asks for a denser surface than the shell. Clamped
+             defensively even though the host already clamps, then refit so the
+             column count follows the new cell size. */
+          var n = Math.round(Number(px));
+          if (!isFinite(n)) { return; }
+          term.options.fontSize = Math.min(Math.max(n, 8), 24);
+          fitWithoutBreakingSelection();
+        },
         size: function () { return { cols: term.cols, rows: term.rows }; },
         onInput: function (cb) { inputCb = cb; },
         onResize: function (cb) { resizeCb = cb; },
         onScrollState: function (cb) { scrollStateCb = cb; },
         dispose: function () {
+          if (touchScroll) {
+            touchScroll();
+            touchScroll = null;
+          }
           if (domSelection) { domSelection.dispose(); }
           term.dispose();
         }

@@ -11,37 +11,39 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import gh.nusashell.nusadesk.R;
-import gh.nusashell.nusadesk.application.session.HostKeyTrustStore;
+import gh.nusashell.nusadesk.application.terminal.TerminalOutputListener;
+import gh.nusashell.nusadesk.application.terminal.TerminalSessionPort;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
 import gh.nusashell.nusadesk.domain.session.SessionState;
+import gh.nusashell.nusadesk.domain.terminal.TerminalSessionState;
+import gh.nusashell.nusadesk.domain.terminal.TerminalSessionStatus;
 import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
-import gh.nusashell.nusadesk.infrastructure.ssh.LocalSshSessionFactory;
-import gh.nusashell.nusadesk.infrastructure.ssh.SshClientBridge;
-import gh.nusashell.nusadesk.infrastructure.ssh.SshCredentialProvider;
-import gh.nusashell.nusadesk.infrastructure.ssh.SshReconnectPolicy;
-import gh.nusashell.nusadesk.infrastructure.ssh.SshSessionConfig;
-import gh.nusashell.nusadesk.infrastructure.ssh.SshSessionListener;
-import gh.nusashell.nusadesk.infrastructure.ssh.SshSessionState;
+import gh.nusashell.nusadesk.infrastructure.service.TerminalSessionBus;
+import gh.nusashell.nusadesk.infrastructure.service.TerminalSessionRegistry;
 import gh.nusashell.nusadesk.presentation.SessionStatusAware;
 import gh.nusashell.nusadesk.presentation.widget.TerminalBridgeView;
 
 import java.nio.charset.StandardCharsets;
-import java.util.function.LongSupplier;
 
 /**
  * Terminal — the in-app shell, opened as a maximized surface.
  *
- * <p>It is not an SSH client and has no target to choose. The only endpoint it
- * can dial is the fixed loopback address of the Linux this app started, and it
- * gets it from {@link LocalSshSessionFactory}, which exposes no host, port, or
- * credential parameter at all (ADR-0013). A key this app did not pin is refused
- * rather than trusted on first contact.</p>
+ * <p>The terminal session itself lives in the host service (ADR-0033): the
+ * service opens the SSH session to the fixed loopback endpoint once Linux is
+ * running, keeps it across Activity recreation, and re-attaches it from the
+ * notification when the shell drops. This surface is a <em>consumer</em> of
+ * that session: it renders the session's state from
+ * {@link TerminalSessionBus}, forwards input and geometry through
+ * {@link TerminalSessionPort}, and never opens or closes the SSH connection
+ * itself — detaching the view leaves the shell running.</p>
  *
  * <p>Linux is background infrastructure: it starts from an app launch, so this
  * surface has no session control. While the session is starting it waits
  * passively, and when the session is not running it says so and offers a way
- * back to the launcher — never a second start button.</p>
+ * back to the launcher — never a second start button. A shell that dropped or
+ * failed while Linux stayed up shows the reconnect banner; the same action is
+ * offered by the host notification.</p>
  *
  * <p>The terminal itself is a real WebView host ({@link TerminalBridgeView})
  * running the packaged xterm bundle over an owned origin. Terminal I/O crosses
@@ -49,7 +51,8 @@ import java.util.function.LongSupplier;
  * {@code addJavascriptInterface}.</p>
  */
 public final class TerminalAppView extends FrameLayout
-        implements SshSessionListener, TerminalBridgeView.Listener, SessionStatusAware {
+        implements TerminalSessionBus.Listener, TerminalOutputListener,
+        TerminalBridgeView.Listener, SessionStatusAware {
 
     private enum UiState { IDLE, CONNECTING, RUNNING, RECONNECTING, FAILED }
 
@@ -66,17 +69,12 @@ public final class TerminalAppView extends FrameLayout
     private Button attachAction;
     private View banner;
 
-    private SshCredentialProvider credentialProvider;
-    private SshReconnectPolicy reconnectPolicy;
-    private HostKeyTrustStore trustStore;
-    private LongSupplier clock = System::currentTimeMillis;
-
-    private SshClientBridge sshBridge;
+    private TerminalSessionRegistry terminalRegistry;
+    private TerminalSessionBus terminalBus;
+    private TerminalSessionState terminalState = TerminalSessionState.NOT_STARTED;
     private UiState state = UiState.IDLE;
     private String lastDetail;
     private HostRuntimeStatus hostStatus;
-    /** Session whose shell dropped; the terminal waits for an explicit reconnect. */
-    private String droppedSessionId;
     /** Last size reported by the terminal page; replayed to a newly opened PTY. */
     private int lastCols = INITIAL_COLS;
     private int lastRows = INITIAL_ROWS;
@@ -123,71 +121,42 @@ public final class TerminalAppView extends FrameLayout
     }
 
     /**
-     * Provides the SSH dependencies the surface needs for real connections. All
-     * arguments are required; without a production trust store or credential
-     * provider the surface reports the failure rather than faking a session.
+     * Provides the host-owned terminal session this surface consumes. Both are
+     * singletons (ADR-0033): the registry resolves the current session port and
+     * the bus delivers its state, replayed on registration so a surface created
+     * after a transition renders the retained status.
      */
-    public void setSshDependencies(
-            SshCredentialProvider credentialProvider,
-            SshReconnectPolicy reconnectPolicy,
-            HostKeyTrustStore trustStore,
-            LongSupplier clock) {
-        this.credentialProvider = credentialProvider;
-        this.reconnectPolicy = reconnectPolicy;
-        this.trustStore = trustStore;
-        if (clock != null) {
-            this.clock = clock;
-        }
+    public void setTerminalDependencies(
+            TerminalSessionRegistry terminalRegistry, TerminalSessionBus terminalBus) {
+        this.terminalRegistry = terminalRegistry;
+        this.terminalBus = terminalBus;
         updateUi();
     }
 
     // ---- Session status ----
 
     /**
-     * {@link RuntimeStatusBus} delivery, always on the main thread. Attaches to a
-     * healthy local session exactly once per session, and detaches when the
-     * session it was attached to ends.
+     * {@link RuntimeStatusBus} delivery, always on the main thread. The runtime
+     * and the terminal session are separate concerns: the host service opens
+     * and closes the terminal session as the runtime moves through
+     * {@code RUNNING}, so this surface only reconciles its own UI state when
+     * the runtime session ends.
      */
     @Override
     public void renderSessionStatus(HostRuntimeStatus status) {
         hostStatus = status;
         SessionSnapshot snapshot = status.getSnapshot();
-        if (status.isRuntimeRunning() && snapshot != null) {
-            maybeConnectLocal(snapshot);
-        } else if (snapshot != null && isTerminalState(status.getState())) {
+        if (snapshot != null && isTerminalState(status.getState())) {
             reconcileEndedSession(status);
         }
         updateUi();
     }
 
     private void reconcileEndedSession(HostRuntimeStatus status) {
-        if (sshBridge != null) {
-            closeSshBridge();
-            setState(status.getState() == SessionState.FAILED
-                    ? UiState.FAILED : UiState.IDLE, status.getFailureReason());
-        }
-        // A dropped shell has already released its bridge and remembered the
-        // session it belonged to; the attach prompt explains the rest.
-    }
-
-    private void maybeConnectLocal(SessionSnapshot snapshot) {
-        if (sshBridge != null) {
-            return; // already connecting, running, or reconnecting
-        }
-        if (snapshot.getSessionId().equals(droppedSessionId)) {
-            return; // the shell dropped: wait for the user's explicit reconnect
-        }
-        connectLocal();
-    }
-
-    /** Explicit re-attach after the shell dropped while the session stayed up. */
-    private void reconnectLocal() {
-        SessionSnapshot snapshot = hostStatus == null ? null : hostStatus.getSnapshot();
-        if (snapshot == null || hostStatus.getState() != SessionState.RUNNING) {
-            return;
-        }
-        droppedSessionId = null;
-        connectLocal();
+        // The host service closes the terminal session with the runtime; the
+        // terminal bus already delivered NOT_STARTED. This surface only drops
+        // any local connection state so the attach panel renders the truth.
+        setState(UiState.IDLE);
     }
 
     private static boolean isTerminalState(SessionState state) {
@@ -195,75 +164,43 @@ public final class TerminalAppView extends FrameLayout
                 || state == SessionState.CANCELLED || state == SessionState.NOT_STARTED;
     }
 
-    // ---- Local connection ----
-
-    /**
-     * The single connection path. The endpoint and the identity come from
-     * {@link LocalSshSessionFactory}: the fixed loopback host and port, the
-     * app-managed Keystore credential, and the pinned-host-key-only trust policy.
-     * Nothing here can be pointed at another host.
-     */
-    private void connectLocal() {
-        if (trustStore == null || credentialProvider == null) {
-            setState(UiState.FAILED, getContext().getString(R.string.terminal_failed_unknown));
-            return;
-        }
-        SshReconnectPolicy policy = reconnectPolicy != null
-                ? reconnectPolicy : SshReconnectPolicy.DEFAULT;
-        closeSshBridge();
-        sshBridge = new SshClientBridge(credentialProvider, trustStore,
-                LocalSshSessionFactory.pinnedHostKeyOnly(), policy, clock);
-        SshSessionConfig config = LocalSshSessionFactory.create(lastCols, lastRows);
-        setState(UiState.CONNECTING);
-        // The previous bridge's close() posts a deferred CLOSED that would
-        // otherwise land after this connect and stomp the new session's state;
-        // ignore callbacks that arrive from a stale bridge.
-        final SshClientBridge created = sshBridge;
-        sshBridge.start(config, new SshSessionListener() {
-            @Override
-            public void onState(SshSessionState sshState, String detail) {
-                if (sshBridge == created) {
-                    TerminalAppView.this.onState(sshState, detail);
-                }
-            }
-
-            @Override
-            public void onStdout(byte[] data, int len) {
-                if (sshBridge == created) {
-                    TerminalAppView.this.onStdout(data, len);
-                }
-            }
-
-            @Override
-            public void onStderr(byte[] data, int len) {
-                if (sshBridge == created) {
-                    TerminalAppView.this.onStderr(data, len);
-                }
-            }
-
-            @Override
-            public void onClosed(String reason) {
-                if (sshBridge == created) {
-                    TerminalAppView.this.onClosed(reason);
-                }
-            }
-        });
-    }
-
-    private void closeSshBridge() {
-        SshClientBridge b = sshBridge;
-        sshBridge = null;
-        if (b != null) {
-            b.close();
-        }
-    }
-
-    // ---- SshSessionListener (called on background threads) ----
+    // ---- Terminal session state (TerminalSessionBus.Listener, main thread) ----
 
     @Override
-    public void onState(SshSessionState sshState, String detail) {
-        mainHandler.post(() -> onSessionStateUi(sshState, detail));
+    public void onTerminalStatus(TerminalSessionStatus status) {
+        terminalState = status.getState();
+        switch (status.getState()) {
+            case CONNECTING:
+                setState(UiState.CONNECTING, status.getDetail());
+                break;
+            case RUNNING:
+                setState(UiState.RUNNING, status.getDetail());
+                // The freshly opened PTY must agree with the page's real size;
+                // the cached size is replayed whether or not it changed.
+                TerminalSessionPort port = currentPort();
+                if (port != null) {
+                    port.resize(lastCols, lastRows);
+                }
+                bridge.focus();
+                bridge.fit();
+                break;
+            case RECONNECTING:
+                setState(UiState.RECONNECTING, status.getDetail());
+                break;
+            case FAILED:
+                setState(UiState.FAILED, status.getDetail());
+                break;
+            case DROPPED:
+                setState(UiState.IDLE, status.getDetail());
+                break;
+            case NOT_STARTED:
+            default:
+                setState(UiState.IDLE, status.getDetail());
+                break;
+        }
     }
+
+    // ---- TerminalOutputListener (may arrive on background threads) ----
 
     @Override
     public void onStdout(byte[] data, int len) {
@@ -283,24 +220,27 @@ public final class TerminalAppView extends FrameLayout
         mainHandler.post(() -> bridge.writeStderr(text));
     }
 
-    @Override
-    public void onClosed(String reason) {
-        mainHandler.post(() -> {
-            if (state == UiState.FAILED) {
-                return;
-            }
-            // The shell exited or the channel dropped. Remember this session so
-            // the terminal does not silently re-attach to it; the banner offers
-            // an explicit reconnect while Linux stays running.
-            droppedSessionId = currentSessionId();
-            closeSshBridge();
-            setState(UiState.IDLE);
-        });
+    // ---- Local session access ----
+
+    /**
+     * The session port for the current host session, or {@code null} before
+     * the host service has created its terminal session. Resolved fresh on
+     * every use so a recreated service is picked up without re-wiring.
+     */
+    private TerminalSessionPort currentPort() {
+        return terminalRegistry == null ? null : terminalRegistry.port();
     }
 
-    private String currentSessionId() {
+    /** Explicit re-attach after the shell dropped while the session stayed up. */
+    private void reconnectLocal() {
         SessionSnapshot snapshot = hostStatus == null ? null : hostStatus.getSnapshot();
-        return snapshot == null ? null : snapshot.getSessionId();
+        if (snapshot == null || hostStatus.getState() != SessionState.RUNNING) {
+            return;
+        }
+        TerminalSessionPort port = currentPort();
+        if (port != null) {
+            port.reconnect();
+        }
     }
 
     private boolean isSessionRunning() {
@@ -310,42 +250,6 @@ public final class TerminalAppView extends FrameLayout
 
     private SessionState sessionState() {
         return hostStatus == null ? SessionState.NOT_STARTED : hostStatus.getState();
-    }
-
-    private void onSessionStateUi(SshSessionState sshState, String detail) {
-        android.util.Log.i("TerminalAppView",
-                "ssh state " + sshState + (detail != null ? " (" + detail + ")" : ""));
-        switch (sshState) {
-            case CONNECTING:
-            case HOST_KEY_PENDING:
-            case AUTHENTICATING:
-                setState(UiState.CONNECTING);
-                break;
-            case RUNNING:
-                setState(UiState.RUNNING);
-                // The session surface now owns input; move view focus off any
-                // previously focused control onto the terminal, and align the
-                // freshly opened PTY with the size the page already has.
-                bridge.focus();
-                SshClientBridge running = sshBridge;
-                if (running != null) {
-                    running.resize(lastCols, lastRows);
-                }
-                bridge.fit();
-                break;
-            case RECONNECTING:
-                setState(UiState.RECONNECTING);
-                break;
-            case FAILED:
-                setState(UiState.FAILED, detail);
-                break;
-            case CLOSED:
-            default:
-                if (state != UiState.FAILED) {
-                    setState(UiState.IDLE);
-                }
-                break;
-        }
     }
 
     // ---- TerminalBridgeView.Listener (called on the UI thread) ----
@@ -372,25 +276,28 @@ public final class TerminalAppView extends FrameLayout
      * cannot reach the guest any other way.
      */
     private void sendInput(String data) {
-        SshClientBridge b = sshBridge;
-        if (b != null && data != null && !data.isEmpty()) {
-            b.write(data.getBytes(StandardCharsets.UTF_8));
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+        TerminalSessionPort port = currentPort();
+        if (port != null) {
+            port.write(data.getBytes(StandardCharsets.UTF_8));
         }
     }
 
     /**
-     * Forward the terminal's real size to the open SSH channel. The guest runs
-     * a real {@code sshd} that allocates a real PTY, so {@code window-change} is
-     * meaningful; the size is cached as well because the page can resize before a
-     * channel exists (and a channel can open after the page already fitted).
+     * Forward the terminal's real size to the host session. The guest runs a
+     * real {@code sshd} that allocates a real PTY, so {@code window-change} is
+     * meaningful; the size is cached as well because the page can resize before
+     * a shell exists (and a shell can open after the page already fitted).
      */
     @Override
     public void onTerminalResize(int cols, int rows) {
         lastCols = cols;
         lastRows = rows;
-        SshClientBridge b = sshBridge;
-        if (b != null) {
-            b.resize(cols, rows);
+        TerminalSessionPort port = currentPort();
+        if (port != null) {
+            port.resize(cols, rows);
         }
     }
 
@@ -403,6 +310,10 @@ public final class TerminalAppView extends FrameLayout
             // again, and hand input focus back to the terminal. Without the
             // focus re-assert a hardware Enter after a surface switch would press
             // whichever control was focused last.
+            TerminalSessionPort port = currentPort();
+            if (port != null) {
+                port.resize(lastCols, lastRows);
+            }
             bridge.fit();
             bridge.focus();
         }
@@ -423,9 +334,8 @@ public final class TerminalAppView extends FrameLayout
     private void updateUi() {
         SessionState session = sessionState();
         boolean sessionRunning = isSessionRunning();
-        boolean localActive = sshBridge != null
-                && (state == UiState.RUNNING || state == UiState.CONNECTING
-                    || state == UiState.RECONNECTING);
+        boolean localActive = state == UiState.RUNNING
+                || state == UiState.CONNECTING || state == UiState.RECONNECTING;
 
         boolean showAttach = !localActive && !sessionRunning;
         attachPanel.setVisibility(showAttach ? VISIBLE : GONE);
@@ -433,8 +343,12 @@ public final class TerminalAppView extends FrameLayout
             renderAttachPanel(session);
         }
 
+        // The shell dropped or failed while Linux stayed up: offer the explicit
+        // reconnect here and in the host notification.
+        boolean shellNeedsReconnect = terminalState == TerminalSessionState.DROPPED
+                || terminalState == TerminalSessionState.FAILED;
         banner.setVisibility(
-                droppedSessionId != null && sessionRunning && !localActive ? VISIBLE : GONE);
+                shellNeedsReconnect && sessionRunning && !localActive ? VISIBLE : GONE);
 
         // The accessory keys are inert without a live shell; they stay visible
         // so the row does not appear and disappear with the session.
@@ -503,12 +417,28 @@ public final class TerminalAppView extends FrameLayout
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         RuntimeStatusBus.getInstance().register(statusListener);
+        if (terminalBus != null) {
+            terminalBus.register(this);
+        }
+        TerminalSessionPort port = currentPort();
+        if (port != null) {
+            port.setOutputListener(this);
+        }
     }
 
     @Override
     protected void onDetachedFromWindow() {
         RuntimeStatusBus.getInstance().unregister(statusListener);
-        closeSshBridge();
+        if (terminalBus != null) {
+            terminalBus.unregister(this);
+        }
+        // The session belongs to the host service, not this view: detaching
+        // (recreation, rotation, a trip back to the launcher) must leave the
+        // shell running and only stop streaming to this surface.
+        TerminalSessionPort port = currentPort();
+        if (port != null) {
+            port.setOutputListener(null);
+        }
         bridge.setListener(null);
         bridge.release();
         super.onDetachedFromWindow();

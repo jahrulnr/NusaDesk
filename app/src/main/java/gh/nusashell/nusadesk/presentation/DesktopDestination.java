@@ -6,8 +6,8 @@ import gh.nusashell.nusadesk.R;
  * Top-level destinations of the shell.
  *
  * <p>{@link #HOME} is the launcher and the product's default surface. The other
- * destinations are Linux surfaces: the terminal, the Linux system screen, and
- * the add-web-app form. User-defined web apps are not destinations in this
+ * destinations are Linux surfaces: the terminal, the Linux system screen, the
+ * Logs screen, and the add-web-app form. User-defined web apps are not destinations in this
  * enum — there is one per registered app, so the shell keys those surfaces by
  * their persisted web-app id instead.</p>
  *
@@ -18,6 +18,7 @@ public enum DesktopDestination {
     HOME(R.string.launcher_title),
     TERMINAL(R.string.app_terminal),
     SYSTEM(R.string.app_system),
+    LOGS(R.string.app_logs),
     ADD_WEB_APP(R.string.webapp_add_title);
 
     private final int titleRes;

@@ -30,6 +30,8 @@ import java.util.Map;
  *   {"t":"fit"}
  *   {"t":"focus"}
  *   {"t":"scrollBottom"}
+ *   {"t":"reset"}
+ *   {"t":"fontSize","d":13}
  *   {"t":"scrollState","d":1}
  * </pre>
  *
@@ -63,6 +65,10 @@ public final class TerminalMessageCodec {
                 return "{\"t\":\"focus\"}";
             case SCROLL_BOTTOM:
                 return "{\"t\":\"scrollBottom\"}";
+            case RESET:
+                return "{\"t\":\"reset\"}";
+            case FONT_SIZE:
+                return "{\"t\":\"fontSize\",\"d\":" + message.getCols() + "}";
             // Page-originated types are not encoded by the host; reject to catch misuse.
             case READY:
             case INPUT:

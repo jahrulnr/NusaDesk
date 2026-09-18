@@ -10,11 +10,12 @@ import java.util.List;
 /**
  * The Linux surfaces the launcher ships itself.
  *
- * <p>Two entries, because two things are real: the terminal (the in-app shell)
- * and the Linux system screen (install state, technical detail, and the product
- * contract). Everything else in the launcher is either the "Add app" action or a
- * web app the user registered — the product does not fake a built-in desktop,
- * file browser, or app catalogue it cannot open.</p>
+ * <p>Three entries, because three things are real: the terminal (the in-app
+ * shell), the Linux system screen (install state, technical detail, and the
+ * product contract), and the Logs screen (the guest's own boot and service
+ * log files). Everything else in the launcher is either the "Add app" action
+ * or a web app the user registered — the product does not fake a built-in
+ * desktop, file browser, or app catalogue it cannot open.</p>
  *
  * <p>This is presentation vocabulary, not a runtime registry: nothing here
  * starts a process or claims a desktop that does not exist.</p>
@@ -25,7 +26,10 @@ public enum DesktopApp {
             R.string.app_terminal_desc, DesktopDestination.TERMINAL),
 
     SYSTEM("system", R.string.app_system, R.drawable.ic_launcher_system,
-            R.string.app_system_desc, DesktopDestination.SYSTEM);
+            R.string.app_system_desc, DesktopDestination.SYSTEM),
+
+    LOGS("logs", R.string.app_logs, R.drawable.ic_launcher_logs,
+            R.string.app_logs_desc, DesktopDestination.LOGS);
 
     private final String id;
     private final int labelRes;

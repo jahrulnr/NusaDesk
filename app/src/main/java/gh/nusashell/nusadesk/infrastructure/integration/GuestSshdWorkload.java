@@ -18,6 +18,8 @@ import gh.nusashell.nusadesk.domain.session.ReadinessFrame;
 import gh.nusashell.nusadesk.domain.session.ReadinessHealth;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.AndroidCapabilityBridge;
+import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTrim;
+import gh.nusashell.nusadesk.infrastructure.logs.SessionLogWriter;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestAwarenessReadmeWriter;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestEphemeralStateCleaner;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
@@ -40,8 +42,12 @@ import gh.nusashell.nusadesk.infrastructure.ssh.SshHostKeyFingerprintCodec;
 import gh.nusashell.nusadesk.infrastructure.sshserver.SshBridgeCredential;
 import gh.nusashell.nusadesk.infrastructure.sshserver.SshBridgeHealthProbe;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -54,6 +60,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 /**
@@ -129,6 +136,10 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
      * makes it run every enabled service's stop steps before exiting.
      */
     private static final long MANAGER_STOP_TIMEOUT_MILLIS = 8_000L;
+    /** Cadence of the guest journal-file sweep that bounds service log size. */
+    private static final long LOG_SWEEP_INTERVAL_MILLIS = 60_000L;
+    /** Bound on one journal file before the sweeper tail-trims it in place. */
+    private static final long JOURNAL_SWEEP_MAX_BYTES = 2L * 1024 * 1024;
 
     private final Context context;
     private final ProotLauncher launcher;
@@ -157,13 +168,15 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         private final WorkloadListener listener;
         private final GuestSshdStderrMonitor monitor;
         private final AndroidCapabilityBridge capabilityBridge;
+        private final SessionLogWriter sessionLog;
         private volatile boolean stopRequested;
         private volatile ActiveServiceManager serviceManager;
 
         ActiveDaemon(Process process, GuestSshDaemon daemon, Path pidFile,
                      RuntimePort endpoint, WorkloadListener listener,
                      GuestSshdStderrMonitor monitor,
-                     AndroidCapabilityBridge capabilityBridge) {
+                     AndroidCapabilityBridge capabilityBridge,
+                     SessionLogWriter sessionLog) {
             this.process = process;
             this.daemon = daemon;
             this.pidFile = pidFile;
@@ -171,6 +184,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             this.listener = listener;
             this.monitor = monitor;
             this.capabilityBridge = capabilityBridge;
+            this.sessionLog = sessionLog;
         }
     }
 
@@ -301,6 +315,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         }
 
         AndroidCapabilityBridge capabilityBridge = new AndroidCapabilityBridge(context);
+        SessionLogWriter sessionLog = null;
         try {
             capabilityBridge.start();
             if (bridge != null) {
@@ -312,9 +327,14 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             GuestAwarenessReadmeWriter.ensure(rootfs, appVersion());
             writeDaemonConfig(rootfs, daemon);
             PublicKey hostKey = ensureHostKey(rootfs, daemon);
-            runGuestSetup(session, daemon, token, inheritedGroupEntries());
+            // Between "boots" the previous session log becomes boot.log.1 and
+            // each service journal rotates the same way — one generation, like
+            // journalctl -b -1. Runs before any guest process holds them open.
+            SessionLogWriter.rotateAtSessionStart(rootfs);
+            sessionLog = openSessionLog(rootfs);
+            runGuestSetup(session, daemon, token, inheritedGroupEntries(), sessionLog);
             launchVerifiedDaemon(session, listener, daemon, pidFile, hostKey, bridge,
-                    capabilityBridge, rootfs);
+                    capabilityBridge, rootfs, sessionLog);
         } catch (GuestSshdBindFailureException e) {
             Log.e(TAG, "guest sshd fixed-port bind conflict on "
                     + e.getEndpoint().getHost() + ":" + e.getEndpoint().getPort(), e);
@@ -329,7 +349,27 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             if (current == null || current.capabilityBridge != capabilityBridge) {
                 capabilityBridge.close();
             }
+            // Same handoff for the boot-log writer: a rejected start closes it
+            // here; a supervised one is closed by teardown.
+            if (sessionLog != null
+                    && (current == null || current.sessionLog != sessionLog)) {
+                sessionLog.close();
+            }
             zero(token);
+        }
+    }
+
+    /**
+     * Opens the session's boot-log writer inside the rootfs. A failure only
+     * costs the log file — never the session it would describe — so it is
+     * logged and the session continues without persistence.
+     */
+    private SessionLogWriter openSessionLog(Path rootfs) {
+        try {
+            return new SessionLogWriter(rootfs, clock);
+        } catch (IOException | RuntimeException e) {
+            Log.w(TAG, "session console log unavailable; boot log disabled", e);
+            return null;
         }
     }
 
@@ -349,7 +389,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                                       GuestSshDaemon daemon, Path pidFile, PublicKey hostKey,
                                       GuestServiceBridge bridge,
                                       AndroidCapabilityBridge capabilityBridge,
-                                      Path rootfs)
+                                      Path rootfs, SessionLogWriter sessionLog)
             throws IOException, GuestSshdBindFailureException {
         RuntimePort endpoint = LocalSshEndpoint.endpoint();
         Files.deleteIfExists(pidFile);
@@ -366,9 +406,10 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         // tracer holding the fixed port) behind.
         boolean supervised = false;
         try {
+            Consumer<String> lineSink = sessionLog == null ? null : sessionLog::append;
             GuestSshdStderrMonitor monitor = new GuestSshdStderrMonitor(
                     process.getErrorStream(), process.getInputStream(),
-                    () -> onDaemonOutputClosed(process));
+                    () -> onDaemonOutputClosed(process), lineSink);
             monitor.start();
             GuestSshdStartupLog.Event event = monitor.awaitBindEvent(BIND_REPORT_TIMEOUT_MILLIS);
             if (event == null) {
@@ -397,7 +438,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
 
             pinGuestHostKey(hostKey, endpoint);
             active = new ActiveDaemon(process, daemon, pidFile, endpoint, listener, monitor,
-                    capabilityBridge);
+                    capabilityBridge, sessionLog);
             supervised = true;
             // Keep the guest resolver current while the daemon runs: the bound
             // resolv.conf is rewritten in place when the active network changes.
@@ -409,6 +450,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             if (bridge != null) {
                 attachServiceManager(active, bridge, rootfs);
             }
+            startLogSweeper(active, rootfs);
             Log.i(TAG, "guest " + daemon.label() + " ready on "
                     + endpoint.getHost() + ":" + endpoint.getPort());
             callbackExecutor.execute(() -> listener.onReadiness(new ReadinessFrame(
@@ -522,6 +564,53 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                 () -> watchServiceManager(daemon, manager), "lw-services-init-watch");
         watcher.setDaemon(true);
         watcher.start();
+    }
+
+    /**
+     * Bounds the per-service journal files while the session runs. The
+     * vendored {@code systemctl3} appends service output to
+     * {@code /var/log/journal/<unit>.log} without any size policy, and its
+     * services hold the files open in append mode — so the sweeper trims
+     * them in place ({@link GuestLogTrim}) rather than rotating by rename,
+     * which would orphan the open descriptor and let the real file keep
+     * growing under an unlinked inode.
+     */
+    private void startLogSweeper(ActiveDaemon daemon, Path rootfs) {
+        Thread sweeper = new Thread(
+                () -> sweepGuestLogs(daemon, rootfs), "guest-log-sweep");
+        sweeper.setDaemon(true);
+        sweeper.start();
+    }
+
+    private void sweepGuestLogs(ActiveDaemon daemon, Path rootfs) {
+        while (active == daemon && !daemon.stopRequested) {
+            if (!sleepQuietly(LOG_SWEEP_INTERVAL_MILLIS)) {
+                return;
+            }
+            for (String journalDir : SessionLogWriter.JOURNAL_DIRS) {
+                trimJournalDir(rootfs.resolve(journalDir));
+            }
+        }
+    }
+
+    /** Tail-trims every overgrown {@code *.log} in one journal dir; never fails. */
+    private static void trimJournalDir(Path dir) {
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(dir, "*.log")) {
+            for (Path file : files) {
+                try {
+                    if (Files.size(file) > JOURNAL_SWEEP_MAX_BYTES) {
+                        GuestLogTrim.shrinkToTail(file, SessionLogWriter.KEEP_BYTES);
+                    }
+                } catch (IOException | RuntimeException ignored) {
+                    // One unreadable file must not stop the sweep.
+                }
+            }
+        } catch (IOException ignored) {
+            // A journal dir that cannot be listed simply is not swept.
+        }
     }
 
     private void watchServiceManager(ActiveDaemon daemon, ActiveServiceManager manager) {
@@ -736,6 +825,11 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             Log.i(TAG, "signalled guest sshd pid " + pid + " to stop");
         }
         stopProcess(daemon.process);
+        // The tracer is down so the pipes are at EOF; a late drain line landing
+        // after close is dropped rather than a failure.
+        if (daemon.sessionLog != null) {
+            daemon.sessionLog.close();
+        }
         if (daemon.capabilityBridge != null) {
             daemon.capabilityBridge.close();
         }
@@ -922,9 +1016,13 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
      * directory/account, name the inherited Android group IDs, and set
      * {@code root}'s password to the token. Bounded wait; any non-zero exit or
      * timeout fails the start honestly.
+     *
+     * <p>Both output pipes are drained into the session log — the setup
+     * script's output is the first section of the boot log — and the drain
+     * keeps a verbose script from wedging on a full pipe.</p>
      */
     private void runGuestSetup(SessionSnapshot session, GuestSshDaemon daemon, char[] token,
-                               List<String> groupEntries)
+                               List<String> groupEntries, SessionLogWriter sessionLog)
             throws IOException {
         ProotLaunchSpec setup;
         Process process;
@@ -936,6 +1034,8 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         } catch (ProotLaunchException e) {
             throw new IOException("guest sshd setup spec rejected", e);
         }
+        Thread outDrain = drainSetupPipe(process.getInputStream(), sessionLog, "guest-setup-out");
+        Thread errDrain = drainSetupPipe(process.getErrorStream(), sessionLog, "guest-setup-err");
         try {
             boolean done = process.waitFor(SETUP_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
             if (!done) {
@@ -949,6 +1049,42 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             throw new IOException("guest sshd setup interrupted");
         } finally {
             process.destroyForcibly();
+            joinQuietly(outDrain);
+            joinQuietly(errDrain);
+        }
+    }
+
+    /**
+     * Drains one setup-process pipe line by line into the session log. The
+     * drain runs even when {@code sessionLog} is null: an unread pipe fills
+     * and wedges the writer, so it is never left alone.
+     */
+    private static Thread drainSetupPipe(InputStream pipe, SessionLogWriter sessionLog,
+                                         String name) {
+        Thread thread = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(pipe, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (sessionLog != null) {
+                        sessionLog.append(line);
+                    }
+                }
+            } catch (IOException ignored) {
+                // The pipe closing is the normal end of the setup process.
+            }
+        }, name);
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
+    }
+
+    /** Bounded join so the last drained setup lines are flushed before launch. */
+    private static void joinQuietly(Thread thread) {
+        try {
+            thread.join(500L);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

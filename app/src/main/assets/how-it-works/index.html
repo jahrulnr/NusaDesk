@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How NusaDesk works</title>
+  <link rel="stylesheet" href="how-it-works.css">
+</head>
+<body>
+  <main id="document" aria-live="polite">
+    <p class="status">Loading documentation…</p>
+  </main>
+  <script src="marked.umd.js"></script>
+  <script src="mermaid.min.js"></script>
+  <script>
+    (async function () {
+      "use strict";
+      var documentRoot = document.getElementById("document");
+      function showError(message) {
+        documentRoot.innerHTML = '<p class="diagram-error">' + message + '</p>';
+      }
+      try {
+        var response = await fetch("how-it-works.md", { cache: "no-store" });
+        if (!response.ok) { throw new Error("documentation unavailable"); }
+        var markdown = await response.text();
+        documentRoot.innerHTML = window.marked.parse(markdown, {
+          gfm: true,
+          breaks: false,
+          headerIds: false,
+          mangle: false,
+          html: false
+        });
+        window.mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: "base",
+          themeVariables: {
+            background: "#172428",
+            primaryColor: "#203337",
+            primaryTextColor: "#f2f7f6",
+            primaryBorderColor: "#83ddd6",
+            lineColor: "#8da1a1",
+            secondaryColor: "#0f191b",
+            tertiaryColor: "#172428",
+            fontFamily: "sans-serif"
+          }
+        });
+        var diagrams = documentRoot.querySelectorAll("pre code.language-mermaid");
+        for (var index = 0; index < diagrams.length; index++) {
+          var code = diagrams[index];
+          var wrapper = code.parentElement;
+          var source = code.textContent || "";
+          var id = "nusadesk-diagram-" + index;
+          try {
+            var rendered = await window.mermaid.render(id, source);
+            wrapper.outerHTML = '<div class="mermaid" role="img" aria-label="Architecture diagram">'
+              + rendered.svg + '</div>';
+          } catch (diagramError) {
+            wrapper.classList.add("diagram-error");
+            wrapper.setAttribute("aria-label", "Diagram source");
+          }
+        }
+      } catch (error) {
+        showError("Documentation could not be rendered.");
+      }
+    })();
+  </script>
+</body>
+</html>

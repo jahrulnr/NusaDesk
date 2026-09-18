@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Compact live-output button. The native touch target remains large enough,
+     while the painted surface is inset from the terminal edge. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="4dp"
+    android:drawable="@drawable/terminal_key_surface" />

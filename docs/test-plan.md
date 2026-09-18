@@ -262,6 +262,76 @@ or port parameter is ever added).
 | AUTO-009 | Terminal component installed while the app is open | The launcher requests the runtime without waiting for the next foreground event; the request stays idempotent |
 | AUTO-010 | Half-installed device (system missing or component missing) | No start is requested; the launcher states the missing setup step |
 
+## Terminal session ownership cases (ADR-0033)
+
+The terminal SSH session is owned by `RuntimeHostService`, not the terminal
+view: detaching the surface unsubscribes it but never closes the shell, and a
+dropped/failed shell re-attaches only through the explicit Reconnect action
+(banner or notification). JVM-locked by `TerminalSessionControllerTest`,
+`TerminalSessionStatusTest`, and `TerminalNotificationPolicyTest`; the
+lifecycle claims below need the device pass.
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| TSS-001 | Activity destroyed with a live terminal (e.g. "Don't keep activities", then reopen) | The guest shell is still attached; the new surface streams the same session; no disconnect |
+| TSS-002 | Shell drops while Linux stays `RUNNING` (`exit` in the shell) | Terminal state `DROPPED`; banner offers Reconnect; notification shows the terminal line + Reconnect action |
+| TSS-003 | Reconnect from the notification action | A fresh shell opens on the same runtime session; notification returns to "Terminal: connected" |
+| TSS-004 | Reconnect tapped after process death (stale notification) | Service foreground-promotes, finds no runtime, releases foreground, and stops itself — no useless service left behind |
+| TSS-005 | Runtime `Stop` from the notification | Terminal session closes with the runtime; terminal state `NOT_STARTED`; no orphan SSH client |
+| TSS-006 | App backgrounded long then reopened, process alive | Session survives (30 s heartbeat, loopback exempt from Doze firewall); if the process was killed instead, reconcile reports honestly and a fresh session attaches |
+
+Device pass (Samsung SM-G970F `R39M209Q3TM`, Android 12/API 31, arm64,
+2026-09-17, debug build):
+
+| Case | Result |
+| --- | --- |
+| TSS-001 | PASS — `always_finish_activities=1` + HOME destroyed the Activity (EGL surface and input channel gone, same pid); zero SSH teardown in logcat; reopen produced **zero** new KEX/auth/channel-open; the live `root@localhost:~#` prompt answered typed input |
+| TSS-002 | PASS — `exit` in the shell → `SSH_MSG_CHANNEL_EOF`/`CLOSE`; notification gained `[1] "Reconnect"` with text `Terminal disconnected — tap Reconnect`; in-app banner showed `The terminal disconnected. Linux is still running.` |
+| TSS-003 | PASS — `ACTION_TERMINAL_RECONNECT` reached `onStartCommand`; a fresh `pty-req`/`CHANNEL_OPEN_CONFIRMATION` opened a new shell on the same runtime; notification returned to `Terminal: connected` with only `Stop` |
+| TSS-004 | PARTIAL — after process death the service cannot be started from background at all (`app is in background uid null`), so the PendingIntent path is unreachable post-death on this device (the notification dies with the process); the intent delivery itself and the running-session reconnect were verified live, and the `lastStatus == null → stopForeground + stopSelf` guard remains defensive |
+| TSS-005 | PASS — `ACTION_STOP` → `STOPPING` → `STOPPED`; SSH client session closed with the runtime; notification removed; process exited |
+| TSS-006 | PASS — 60 s background: zero runtime state transitions, `keepalive@sshd.apache.org` sent exactly every 30 s, session stayed connected; reopen republished the same `RUNNING` with zero new handshake. In an earlier 45 s window the guest workload was killed non-deterministically while the service process survived — pre-existing OEM behavior, and relaunch honestly started a fresh session rather than faking continuity |
+
+## Guest log cases (ADR-0034)
+
+The session console is persisted to `/var/log/lw/boot.log` in the rootfs;
+per-service `systemctl` journals stay under `/var/log/journal/` and
+`/root/.config/log/journal/`; the Logs launcher surface lists them through
+`GuestLogCatalog` and follows one file live through `GuestLogTail` in the
+terminal WebView. JVM-locked by `SessionLogWriterTest`, `GuestLogTrimTest`,
+`GuestLogCatalogTest`, `GuestLogTailTest`, and the monitor sink cases; the
+device cases below are open.
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| LOG-001 | Runtime running → open Logs | Catalog shows `boot.log` under "This boot" plus one item per service journal; no files outside the active rootfs are listed |
+| LOG-002 | Pick `boot.log` | Viewer shows timestamped setup/supervisor/sshd lines; new output appears live without leaving the surface |
+| LOG-003 | Restart the session, open "Previous boot" | `boot.log.1` holds the prior session's console; the fresh `boot.log` starts with the new session |
+| LOG-004 | Pick a service journal, generate output (`systemctl status`/service activity) | New journal lines stream into the viewer within the poll interval |
+| LOG-005 | Grow a journal file past the bound during a session | Sweeper trims it in place to the newest bounded tail; the guest service keeps writing to the same file; no growth past ~2× bound |
+| LOG-006 | A symlink planted under a scanned log directory | The entry never appears in the catalog; nothing outside the rootfs is readable |
+| LOG-007 | Switch between log items | Previous file's content is fully cleared (`RESET`); tail from the old file never bleeds into the new view |
+| LOG-008 | Leave Logs / stop the runtime | Tail thread stops; no further writes reach the viewer; log files remain on disk for next session |
+
+Device pass (Samsung SM-G970F `R39M209Q3TM`, Android 12/API 31, arm64,
+2026-09-17, debug build):
+
+| Case | Result |
+| --- | --- |
+| LOG-001 | PASS — Logs tile sits after System in the launcher; catalog shows Boot (`This boot`, `Previous boot`) then System items (compose supervisor + `compose` tag, both service journals, user journal) |
+| LOG-002 | PASS — `boot.log` renders in the xterm surface with timestamped sshd `-e`/`systemctl`/service lines; scrolled to the tail |
+| LOG-003 | PASS — every journal `.log` rotated to `.log.1` at session start; `boot.log.1` retained the prior session's file |
+| LOG-004 | PASS — a line appended to the open journal file appeared in the live viewer within ~1.5 s (poll interval 300 ms + render) |
+| LOG-005 | PASS — journal grown to 2.5 MB was tail-trimmed in place by the sweeper to the newest bounded tail; **same inode** before and after, so the open `O_APPEND` guest writer keeps working |
+| LOG-006 | PASS — a symlink planted in `/var/log/journal/` pointing at host `shared_prefs` never appeared in the catalog |
+| LOG-007 | PASS — switching from `boot.log` to a service journal cleared the prior content fully (terminal `RESET`) |
+| LOG-008 | PASS — `guest-log-tail` thread visible under `/proc/<pid>/task` while viewing; gone immediately after `← All logs` |
+
+Note: `boot.log` initially appeared empty on the first installed session
+because `SessionLogWriter` buffered without flushing until close; fixed to
+flush per append before this pass. The empty rotated `boot.log.1` above is
+the honest artifact of that pre-fix session.
+
 ## Guest awareness README cases
 
 | ID | Case | Expected result |

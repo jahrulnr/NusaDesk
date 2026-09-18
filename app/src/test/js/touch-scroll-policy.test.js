@@ -221,12 +221,25 @@ check(
   { scroll: false, scrollTop: 100, preventDefault: false, cancel: false }
 );
 
-// 12. scrollBy uses xterm's public scrollLines API and preserves fractional
-//     row movement across frames.
+// 12. Touch scrolling uses xterm's pixel scroll position instead of the public
+//     line-based API. A sub-row movement must remain visible and must not be
+//     rounded away or sent through scrollLines().
 const viewport = { clientHeight: 100, scrollHeight: 1100, scrollTop: 1000 };
 const xtermRoot = { classList: { contains: () => false } };
 const listeners = {};
+const removedListeners = [];
+const canceledFrames = [];
 const animationFrames = [];
+const pixelMoves = [];
+const pixelState = { scrollTop: 1000 };
+const scrollable = {
+  getScrollPosition: () => ({ scrollTop: pixelState.scrollTop }),
+  getScrollDimensions: () => ({ height: 100, scrollHeight: 2100 }),
+  setScrollPosition: ({ scrollTop }) => {
+    pixelState.scrollTop = scrollTop;
+    pixelMoves.push(scrollTop);
+  },
+};
 const fakeContainer = {
   ownerDocument: {
     getSelection: () => null,
@@ -235,44 +248,107 @@ const fakeContainer = {
         animationFrames.push(callback);
         return animationFrames.length;
       },
+      cancelAnimationFrame: (frame) => canceledFrames.push(frame),
     },
   },
   querySelector: (selector) => selector === ".xterm-viewport" ? viewport : xtermRoot,
   addEventListener: (name, handler) => { listeners[name] = handler; },
+  removeEventListener: (name) => removedListeners.push(name),
 };
 const lineMoves = [];
 const fakeTerminal = {
   rows: 10,
   buffer: { active: { viewportY: 100, length: 1010 } },
+  _core: { _viewport: { _scrollableElement: scrollable } },
   scrollLines: (lines) => lineMoves.push(lines),
 };
 global.document = {
   querySelector: (selector) => selector === ".xterm-viewport" ? viewport : xtermRoot,
 };
-install(fakeContainer, fakeTerminal);
-check("pixel delta scrolls whole xterm rows", scrollBy(-25), true);
-check("scroll uses xterm public API", lineMoves, [-2]);
-check("fractional pixels accumulate to the next row", scrollBy(-5), true);
-check("accumulated movement emits one more row", lineMoves, [-2, -1]);
+const disposeTouchScroll = install(fakeContainer, fakeTerminal);
+check("pixel delta moves the xterm viewport", scrollBy(-25), true);
+check("pixel scroll position is updated directly", pixelState.scrollTop, 975);
+check("pixel scrolling does not call line API", lineMoves, []);
+check("sub-row movement is preserved", scrollBy(0.5), true);
+check("fractional pixel position remains visible", pixelState.scrollTop, 975.5);
 
-// 13. Multiple touchmove events that arrive before the next paint are folded
-//     into one xterm refresh. The platform still receives preventDefault on
-//     each active move, so it cannot pan the page while the update is queued.
+// 13. Touch moves follow the finger in the same frame, then release starts a
+//     bounded native-like fling. There is no extra animation frame of drag
+//     latency and the xterm position changes by pixels, not rows.
 const preventedMoves = [];
-listeners.touchstart({ touches: [{ clientY: 200 }] });
+listeners.touchstart({ touches: [{ clientY: 200 }], timeStamp: 1 });
 listeners.touchmove({
   touches: [{ clientY: 170 }],
+  timeStamp: 17,
   preventDefault: () => preventedMoves.push("first"),
 });
 listeners.touchmove({
   touches: [{ clientY: 140 }],
+  timeStamp: 33,
   preventDefault: () => preventedMoves.push("second"),
 });
-check("touchmove queues one animation frame", animationFrames.length, 1);
-check("queued moves prevent native page panning", preventedMoves, ["first", "second"]);
-check("queued moves do not refresh xterm early", lineMoves, [-2, -1]);
-animationFrames.shift()();
-check("one animation frame combines both deltas", lineMoves, [-2, -1, 6]);
+check("touch moves update xterm immediately", pixelState.scrollTop, 1035.5);
+listeners.touchmove({
+  touches: [{ clientY: 200 }],
+  timeStamp: 49,
+  preventDefault: () => preventedMoves.push("reverse-down"),
+});
+check("active touch can reverse toward older output", pixelState.scrollTop, 975.5);
+listeners.touchmove({
+  touches: [{ clientY: 140 }],
+  timeStamp: 65,
+  preventDefault: () => preventedMoves.push("reverse-up"),
+});
+check("active touch can reverse back toward newer output", pixelState.scrollTop, 1035.5);
+check("active touch moves prevent native page panning", preventedMoves,
+  ["first", "second", "reverse-down", "reverse-up"]);
+check("touch moves do not wait for animation frame", animationFrames.length, 0);
+listeners.touchend({
+  touches: [],
+  changedTouches: [{ clientY: 140 }],
+  timeStamp: 49,
+});
+check("release schedules fling", animationFrames.length, 1);
+const firstFlingFrame = animationFrames.shift();
+firstFlingFrame(65);
+check("fling advances pixel position", pixelState.scrollTop > 1035.5, true);
+check("fling continues while velocity remains", animationFrames.length, 1);
+
+// 14. A second finger cancels the whole gesture until all fingers are up; a
+//     later single-finger sequence can start cleanly again.
+animationFrames.length = 0;
+pixelState.scrollTop = 1000;
+listeners.touchstart({ touches: [{ identifier: 1, clientY: 200 }] });
+listeners.touchmove({
+  touches: [{ identifier: 1, clientY: 170 }, { identifier: 2, clientY: 170 }],
+  preventDefault: () => {},
+});
+listeners.touchend({
+  touches: [{ identifier: 1, clientY: 170 }],
+  changedTouches: [{ identifier: 2, clientY: 170 }],
+});
+listeners.touchmove({
+  touches: [{ identifier: 1, clientY: 130 }],
+  preventDefault: () => {},
+});
+check("multitouch cancellation stays latched", pixelState.scrollTop, 1000);
+listeners.touchend({
+  touches: [],
+  changedTouches: [{ identifier: 1, clientY: 130 }],
+});
+listeners.touchstart({ touches: [{ identifier: 3, clientY: 200 }] });
+listeners.touchmove({
+  touches: [{ identifier: 3, clientY: 170 }],
+  preventDefault: () => {},
+});
+check("new single-finger sequence can scroll", pixelState.scrollTop, 1030);
+listeners.touchcancel({ touches: [], changedTouches: [{ identifier: 3 }] });
+
+disposeTouchScroll();
+check("dispose removes touch listeners", removedListeners, [
+  "touchstart", "touchmove", "touchend", "touchcancel",
+]);
+check("dispose cancels pending fling", canceledFrames.length > 0, true);
 delete global.document;
 
 if (failures > 0) {

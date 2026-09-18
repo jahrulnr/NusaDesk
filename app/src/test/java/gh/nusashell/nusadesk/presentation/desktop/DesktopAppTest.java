@@ -34,20 +34,28 @@ public class DesktopAppTest {
             assertTrue(app.getId(), app.getIconRes() != 0);
             assertTrue(app.getId(), app.getDescriptionRes() != 0);
         }
-        // Two surfaces must not silently share one vector.
+        // Three surfaces must not silently share one vector.
         assertTrue(DesktopApp.TERMINAL.getIconRes() != DesktopApp.SYSTEM.getIconRes());
+        assertTrue(DesktopApp.LOGS.getIconRes() != DesktopApp.SYSTEM.getIconRes());
+        assertTrue(DesktopApp.LOGS.getIconRes() != DesktopApp.TERMINAL.getIconRes());
     }
 
     /**
      * Regression guard for the product rule that the launcher must not fake a
      * built-in desktop, file browser, or app catalogue: the curated list is
-     * exactly the surfaces this build can route to.
+     * exactly the surfaces this build can route to, and Logs sits right after
+     * System as the product's order requires.
      */
     @Test
     public void theCatalogueOnlyHoldsSurfacesTheProductCanOpen() {
-        assertEquals(2, DesktopApp.curated().size());
+        List<DesktopApp> curated = DesktopApp.curated();
+        assertEquals(3, curated.size());
+        assertSame(DesktopApp.TERMINAL, curated.get(0));
+        assertSame(DesktopApp.SYSTEM, curated.get(1));
+        assertSame(DesktopApp.LOGS, curated.get(2));
         assertSame(DesktopDestination.TERMINAL, DesktopApp.TERMINAL.getDestination());
         assertSame(DesktopDestination.SYSTEM, DesktopApp.SYSTEM.getDestination());
+        assertSame(DesktopDestination.LOGS, DesktopApp.LOGS.getDestination());
     }
 
     @Test

@@ -119,6 +119,38 @@ public class GuestSshdStderrMonitorTest {
         assertNull(monitor.awaitBindEvent(10));
     }
 
+    @Test
+    public void theLineSinkReceivesEveryLineFromBothPipes() throws Exception {
+        // The session's boot log hangs off this sink: whatever the supervised
+        // tree prints on either pipe must reach it, not just the stderr lines
+        // the bind parser already drains.
+        PipedOutputStream errOut = new PipedOutputStream();
+        PipedInputStream stderr = new PipedInputStream(errOut, 8192);
+        PipedOutputStream stdOut = new PipedOutputStream();
+        PipedInputStream stdout = new PipedInputStream(stdOut, 8192);
+        List<String> captured = new java.util.concurrent.CopyOnWriteArrayList<>();
+        GuestSshdStderrMonitor monitor = new GuestSshdStderrMonitor(
+                stderr, stdout, null, captured::add);
+        monitor.start();
+
+        errOut.write("systemctl: starting services\n".getBytes(StandardCharsets.UTF_8));
+        stdOut.write("supervisor: manager up\n".getBytes(StandardCharsets.UTF_8));
+        errOut.write("Server listening on 127.0.0.1 port 22022.\n".getBytes(StandardCharsets.UTF_8));
+
+        long deadline = System.currentTimeMillis() + 5_000L;
+        while (captured.size() < 3 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
+        }
+        assertTrue(captured.toString(),
+                captured.contains("systemctl: starting services"));
+        assertTrue(captured.toString(),
+                captured.contains("supervisor: manager up"));
+        assertTrue(captured.toString(),
+                captured.contains("Server listening on 127.0.0.1 port 22022."));
+        errOut.close();
+        stdOut.close();
+    }
+
     private static InputStream emptyStream() {
         return new ByteArrayInputStream(new ByteArrayOutputStream().toByteArray());
     }

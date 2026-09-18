@@ -16,7 +16,13 @@ import android.os.Looper;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
+import gh.nusashell.nusadesk.domain.terminal.TerminalSessionStatus;
+import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesHostKeyTrustStore;
 import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesSessionStateStore;
+import gh.nusashell.nusadesk.infrastructure.ssh.KeystoreVaultCredentialProvider;
+import gh.nusashell.nusadesk.infrastructure.ssh.SshClientBridgeTransportFactory;
+import gh.nusashell.nusadesk.infrastructure.ssh.SshReconnectPolicy;
+import gh.nusashell.nusadesk.infrastructure.ssh.SshSecurityInitializer;
 
 import java.util.UUID;
 
@@ -41,6 +47,13 @@ import java.util.UUID;
  * The {@code RUNNING} notification appears only after the controller accepts a
  * readiness frame and obtains a concrete loopback endpoint.
  *
+ * <p>The service also owns the <em>terminal</em> SSH client session
+ * (ADR-0033): a {@link TerminalSessionController} follows the runtime session
+ * and the same notification carries the terminal state with a Reconnect
+ * action when the shell dropped or failed while Linux stayed up. The terminal
+ * surface in the app is a consumer of that session, so Activity recreation
+ * never closes the shell.</p>
+ *
  * <p>The foreground service type is {@code specialUse} with a documented
  * runtime-host subtype. The subtype rationale and any distribution-channel
  * policy review (for example Google Play's special-use review) still need to be
@@ -55,6 +68,7 @@ public final class RuntimeHostService extends Service {
     private static final int NOTIFICATION_ID = 0x4C57; // "LW"
     private static final int STOP_REQUEST_CODE = 1;
     private static final int CONTENT_REQUEST_CODE = 2;
+    private static final int TERMINAL_RECONNECT_REQUEST_CODE = 3;
 
     /** Intent action to start the runtime session. */
     public static final String ACTION_START =
@@ -69,6 +83,13 @@ public final class RuntimeHostService extends Service {
      */
     public static final String ACTION_ENSURE_RUNNING =
             "gh.nusashell.nusadesk.action.RUNTIME_ENSURE_RUNNING";
+    /**
+     * Intent action to explicitly re-attach the terminal SSH session after its
+     * shell dropped or failed while the runtime stayed up (ADR-0033). A no-op
+     * unless a runtime session is running.
+     */
+    public static final String ACTION_TERMINAL_RECONNECT =
+            "gh.nusashell.nusadesk.action.TERMINAL_RECONNECT";
 
     /** Intent extra: app id of the runtime to start. */
     public static final String EXTRA_APP_ID = "appId";
@@ -79,17 +100,38 @@ public final class RuntimeHostService extends Service {
 
     private NotificationManager notificationManager;
     private RuntimeHostController controller;
+    private TerminalSessionController terminalController;
     private SharedPreferencesSessionStateStore sessionStateStore;
+    /** Last runtime status; the terminal-driven notification refresh re-renders it. */
+    private HostRuntimeStatus lastStatus;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    // Stored once: a capturing method reference creates a fresh object per
+    // evaluation, so register/unregister must share one instance.
+    private final TerminalSessionBus.Listener terminalListener = this::onTerminalStatus;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        // MINA SSHD needs one-time Android init before any SSH client session.
+        // The service may be started by a notification action (Reconnect) in a
+        // process where the Activity never ran, so this must happen here too;
+        // the call is idempotent.
+        SshSecurityInitializer.initialize(this);
         notificationManager = getSystemService(NotificationManager.class);
         createNotificationChannel();
         sessionStateStore = new SharedPreferencesSessionStateStore(this);
         controller = new RuntimeHostController(
                 RuntimeWorkloadRegistry.getInstance(), System::currentTimeMillis);
+        terminalController = new TerminalSessionController(
+                new SshClientBridgeTransportFactory(
+                        new KeystoreVaultCredentialProvider(this),
+                        new SharedPreferencesHostKeyTrustStore(this),
+                        SshReconnectPolicy.DEFAULT,
+                        System::currentTimeMillis),
+                TerminalSessionBus.getInstance()::publish,
+                mainHandler::post);
+        TerminalSessionRegistry.getInstance().register(terminalController);
+        TerminalSessionBus.getInstance().register(terminalListener);
         // A snapshot persisted before the process died is reconciled honestly:
         // states that require a live workload become FAILED so no view can show
         // a false RUNNING for a runtime that no longer exists. This bookkeeping
@@ -132,6 +174,17 @@ public final class RuntimeHostService extends Service {
 
         if (ACTION_STOP.equals(action)) {
             controller.stop(this::onStatus);
+        } else if (ACTION_TERMINAL_RECONNECT.equals(action)) {
+            // Explicit re-attach from the notification after the shell dropped
+            // or failed while Linux stayed up. The controller ignores it when
+            // no runtime session is running (ADR-0033); a stale action from a
+            // restarted process (runtime lost, reconciled FAILED) must not
+            // leave the service foregrounded with nothing to do.
+            terminalController.reconnect();
+            if (lastStatus == null || !lastStatus.isRuntimeRunning()) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopSelf();
+            }
         } else if (ACTION_START.equals(action)) {
             String appId = intent.getStringExtra(EXTRA_APP_ID);
             String appVersion = intent.getStringExtra(EXTRA_APP_VERSION);
@@ -175,12 +228,30 @@ public final class RuntimeHostService extends Service {
      * resurrects a false RUNNING. Carries no secret material.
      */
     private void publishStatus(HostRuntimeStatus status) {
+        lastStatus = status;
+        // The terminal session follows the runtime session: it opens once the
+        // runtime is running and closes the moment it is not (ADR-0033). Feed
+        // it before rendering so the notification reflects the new terminal
+        // state together with the runtime state.
+        terminalController.onRuntimeStatus(status);
         updateNotification(status);
         RuntimeStatusBus.getInstance().publish(status);
         persistSnapshot(status);
         Log.i(TAG, "runtime session state=" + status.getState()
                 + " endpoint=" + endpointText(status)
                 + failureText(status));
+    }
+
+    /**
+     * Terminal session status deliveries (always on the main thread, via the
+     * bus): re-render the notification with the fresh terminal line and
+     * Reconnect action. No runtime status is touched.
+     */
+    private void onTerminalStatus(TerminalSessionStatus status) {
+        HostRuntimeStatus runtime = lastStatus;
+        if (runtime != null) {
+            updateNotification(runtime);
+        }
     }
 
     /** Persist the session snapshot so process death never resurrects a false RUNNING. */
@@ -221,10 +292,11 @@ public final class RuntimeHostService extends Service {
     }
 
     private Notification buildNotification(HostRuntimeStatus status) {
+        TerminalSessionStatus terminal = TerminalSessionBus.getInstance().current();
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle(RuntimeNotificationPolicy.title(status))
-                .setContentText(RuntimeNotificationPolicy.text(status))
+                .setContentText(contentText(status, terminal))
                 .setOngoing(RuntimeNotificationPolicy.isOngoing(status))
                 .setOnlyAlertOnce(true)
                 .setLocalOnly(true);
@@ -240,7 +312,26 @@ public final class RuntimeHostService extends Service {
             builder.addAction(new Notification.Action.Builder(
                     null, "Stop", stopPendingIntent()).build());
         }
+        if (TerminalNotificationPolicy.showsReconnectAction(terminal)) {
+            builder.addAction(new Notification.Action.Builder(
+                    null, "Reconnect", terminalReconnectPendingIntent()).build());
+        }
         return builder.build();
+    }
+
+    /**
+     * Runtime text plus the terminal line while the runtime is running, so the
+     * notification states both halves of the session honestly: Linux up but
+     * its shell dropped is visible at a glance, with the Reconnect action
+     * beneath it.
+     */
+    private static String contentText(HostRuntimeStatus status, TerminalSessionStatus terminal) {
+        String runtimeText = RuntimeNotificationPolicy.text(status);
+        if (!status.isRuntimeRunning()) {
+            return runtimeText;
+        }
+        String terminalLine = TerminalNotificationPolicy.line(terminal);
+        return terminalLine.isEmpty() ? runtimeText : runtimeText + "\n" + terminalLine;
     }
 
     /** Launcher intent for this package, or {@code null} when unresolvable. */
@@ -256,6 +347,13 @@ public final class RuntimeHostService extends Service {
     private PendingIntent stopPendingIntent() {
         Intent intent = new Intent(this, RuntimeHostService.class).setAction(ACTION_STOP);
         return PendingIntent.getService(this, STOP_REQUEST_CODE, intent,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    private PendingIntent terminalReconnectPendingIntent() {
+        Intent intent = new Intent(this, RuntimeHostService.class)
+                .setAction(ACTION_TERMINAL_RECONNECT);
+        return PendingIntent.getService(this, TERMINAL_RECONNECT_REQUEST_CODE, intent,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
@@ -276,6 +374,13 @@ public final class RuntimeHostService extends Service {
             Log.i(TAG, "service destroyed while the runtime was live; stopping it");
             controller.stop(this::publishDestroyedStatus);
         }
+        // The terminal session belongs to this service: release it so no view
+        // can keep a session the host no longer supervises, and drop the
+        // registry handle so a freshly created surface resolves a new session
+        // instead of a stale one.
+        TerminalSessionBus.getInstance().unregister(terminalListener);
+        terminalController.close();
+        TerminalSessionRegistry.getInstance().clear();
         super.onDestroy();
     }
 

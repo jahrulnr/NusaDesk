@@ -70,6 +70,7 @@ Pure Java rules and value objects:
 - runtime lifecycle vocabulary and legal transitions;
 - validated loopback endpoint;
 - session state vocabulary;
+- terminal session state vocabulary (`TerminalSessionState`/`Status`, ADR-0033);
 - the user web-app definition, its id, and the guest port policy that reserves
   `22022` for the terminal;
 - deterministic policies that can be unit-tested without Android.
@@ -83,6 +84,8 @@ Use-case boundaries and ports:
 - runtime state persistence;
 - curated runtime installation and progress/error reporting;
 - runtime readiness/endpoint observation;
+- the terminal session port: input, geometry, explicit reconnect, and the
+  output stream a surface subscribes to (ADR-0033);
 - the web-app registry and store contracts: validation, launcher order, and
   add/update/delete persistence.
 
@@ -106,8 +109,12 @@ daemon workload on the fixed loopback port, the foreground host service with its
 status bus, the Android SSH client bridge with host-key pinning and
 Keystore-backed credentials, the local-only client factory, the bounded web-app
 readiness observer, the loopback WebView boundary, the user-chosen workspace
-bind (ADR-0023), and the guest service bridge wiring `systemctl` plus the
-bounded `udocker compose` payload into the session (ADR-0024, ADR-0025).
+bind (ADR-0023), the guest service bridge wiring `systemctl` plus the
+bounded `udocker compose` payload into the session (ADR-0024, ADR-0025), and
+the guest log layer (ADR-0034): `SessionLogWriter` persists the session
+console to `/var/log/lw/boot.log`, `GuestLogCatalog` lists curated rootfs log
+files, `GuestLogTail` follows them host-side, and `GuestLogTrim` bounds open
+journal files in place.
 
 ### `presentation/`
 
@@ -116,7 +123,7 @@ security decisions.
 
 ```text
 presentation/
-  DesktopDestination.java     HOME · TERMINAL · SYSTEM · ADD_WEB_APP
+  DesktopDestination.java     HOME · TERMINAL · SYSTEM · LOGS · ADD_WEB_APP
   SessionUiState.java         domain session state -> label/badge/detail, no action
   RuntimeStateDescriptor.java install-state copy (pure, unit-tested)
   GuestSshUiState.java        terminal-component state (pure)
@@ -131,7 +138,7 @@ presentation/
     LauncherTileView.java     one tile: icon plate, label, honest status
     AppSurfaceHostView.java   compact task bar + retained surface container
   terminal/
-    TerminalAppView.java      local-only terminal surface (LocalSshSessionFactory)
+    TerminalAppView.java      terminal surface consuming the host-owned session
     TerminalKeyRowView.java   mobile accessory keys
   webapp/
     WebAppFormView.java       add/edit form: name, optional image, guest port
@@ -139,6 +146,8 @@ presentation/
     WebAppSurfaceView.java    probe, then the exact generated origin in a WebView
   system/
     SystemScreenView.java     install/session/technical detail + Android App Info shortcut
+  logs/
+    LogsScreenView.java       guest log list (boot | system) -> live xterm tail
   widget/
     TerminalBridgeView.java   owned-origin xterm host, WebMessagePort only
     InstallerWizardView.java  first-run setup steps
@@ -161,6 +170,11 @@ Rules this layer enforces:
   entry, and the surface says "not running" until the endpoint answers.
 - **No arbitrary target.** The terminal's client config comes only from
   `LocalSshSessionFactory`, which takes the initial PTY size and nothing else.
+- **The session outlives the surface.** The terminal SSH session is owned by
+  `RuntimeHostService` (ADR-0033): `TerminalSessionController` follows the
+  runtime session, and the surface only renders `TerminalSessionBus` state and
+  drives `TerminalSessionPort`. Detaching the view unsubscribes it — it never
+  closes the shell.
 - **Retained surfaces.** A destination stays attached and is switched by
   visibility, which is what keeps a live terminal's WebView and scrollback — and
   a web app's page — alive across a trip back to the launcher. Surfaces are
@@ -204,9 +218,18 @@ implemented and device-verified on Android 10/API 29 arm64.
 ```mermaid
 flowchart TD
     Bridge["Execution bridge<br/>packaged standalone PRoot in jniLibs/<abi>"] --> Guest["Guest SSH server<br/>curated OpenSSH add-on on 127.0.0.1:22022"]
-    Guest --> Terminal["Terminal surface<br/>local xterm.js bundle in owned WebView origin"]
-    Terminal --> Supervision["Supervision<br/>Android foreground service with user-visible Stop"]
+    Guest --> Session["Host-owned terminal session<br/>TerminalSessionController in the foreground service (ADR-0033)"]
+    Session --> Terminal["Terminal surface<br/>local xterm.js bundle in owned WebView origin"]
+    Session --> Notification["Status notification<br/>terminal line + Reconnect action"]
+    Notification --> Supervision["Supervision<br/>Android foreground service with user-visible Stop"]
 ```
+
+The terminal session itself is process/session scoped, not view scoped: the
+service opens it when the runtime reaches `RUNNING`, keeps it across Activity
+recreation, and closes it with the runtime or the service. A shell that drops
+or fails while Linux stays up surfaces as `DROPPED`/`FAILED` on the bus and in
+the notification, and re-attaches only through the explicit Reconnect action
+(banner or notification) — never silently.
 
 ### Guest SSH server is a required build dependency
 

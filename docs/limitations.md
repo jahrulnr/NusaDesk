@@ -35,6 +35,16 @@ This file is the operational truth for what the current base project does **not*
   Every remote-SSH surface (dialog, host profile, add-host form, layouts, and
   strings) was removed in the launcher slice (ADR-0014); no user-reachable path
   can dial a user-entered host.
+- **The terminal session is process/session scoped, not immortal** (ADR-0033).
+  The SSH session is owned by the foreground service rather than the terminal
+  view, so Activity destruction no longer closes it and a dropped shell can be
+  re-attached from the notification. It still ends when the app process dies
+  (OEM kill, force stop, memory pressure), when the runtime stops or fails,
+  when the guest `sshd` stops answering (the 30 s client heartbeat gives up
+  after roughly 5.5 unanswered minutes), or when the user stops Linux. There is
+  no infinite-lifetime guarantee and no silent re-attach: a dropped/failed
+  shell requires the explicit Reconnect action. Scrollback is not restored
+  across surface recreation — the shell continues, the xterm page starts fresh.
 - No QEMU, PTY layer, or desktop guest server is included; the desktop screen remains honestly unavailable until a real guest-owned server exists.
 - No remote signed catalog service exists; the first catalog entry is compile-time pinned.
 - No LAN exposure is supported.
@@ -178,6 +188,21 @@ symlinks while deleting. A force-stop or reboot can prevent immediate cleanup;
 the next explicit app launch retries before starting Linux. Product caches such
 as `/root/.local/share/lw-udocker` are intentionally not cleared by this rule
 (ADR-0027).
+
+### Guest logs are bounded and curated, not a full journal
+
+The session console lands in `/var/log/lw/boot.log` and per-unit output in
+`systemctl3`'s journal files (`/var/log/journal/`, `--user` under
+`/root/.config/log/journal/`). Bounds are enforced in place because services
+hold their log files open with `O_APPEND`: `boot.log` self-trims at ~2 MiB to
+the newest ~1 MiB, and a host-side sweeper tail-trims oversized journal files
+on the same thresholds — so a log line mid-flush can briefly push a file past
+the bound (ADR-0034). The Logs surface is a curated catalog, not a guest file
+browser: it lists only regular, non-symlink files under the active rootfs, so
+a service writing to a custom `file:` path elsewhere never appears. `boot.log`
+captures the supervised tree's console, not a kernel ring buffer — "boot"
+means the product session, like `journalctl -b` under a container. Only one
+previous boot generation is retained; there is no deeper history.
 
 ### Guest awareness README
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Compact visual button: the touch target stays full size while the painted
+     surface is inset so it does not touch the surrounding header rule. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="4dp"
+    android:drawable="@drawable/button_secondary" />

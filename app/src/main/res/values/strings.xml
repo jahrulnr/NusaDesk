@@ -57,6 +57,8 @@
     <string name="app_terminal_desc">Terminal. A full Linux shell.</string>
     <string name="app_system">System</string>
     <string name="app_system_desc">System. Install state, session details, and how it works.</string>
+    <string name="app_logs">Logs</string>
+    <string name="app_logs_desc">Logs. Boot and service output from Linux.</string>
     <string name="app_locked">Locked</string>
     <string name="app_tile_open_desc">%1$s Double tap to open.</string>
     <string name="app_tile_locked_desc">%1$s Finish Linux setup to open it.</string>
@@ -92,6 +94,21 @@
     <string name="terminal_failed_unknown">unknown reason</string>
     <string name="terminal_dropped_banner">The terminal disconnected. Linux is still running.</string>
     <string name="terminal_reconnect">Reconnect terminal</string>
+
+    <!-- Logs app surface: the guest's own log files, split the way a real -->
+    <!-- Linux box keeps them — the boot/session stream separately from each -->
+    <!-- service's own log. Picking an item tails that file live in the same -->
+    <!-- terminal surface the shell uses. -->
+    <string name="logs_title">Linux logs</string>
+    <string name="logs_body">Boot and service files from the Linux session.</string>
+    <string name="logs_section_boot">Boot</string>
+    <string name="logs_section_system">System</string>
+    <string name="logs_reading">Reading logs…</string>
+    <string name="logs_waiting">Waiting for output…</string>
+    <string name="logs_empty_title">No logs yet</string>
+    <string name="logs_empty_body">Log files appear here once Linux has run and services have written output.</string>
+    <string name="logs_back_desc">Close log viewer</string>
+    <string name="logs_item_desc">%1$s. %2$s. Double tap to open the live log.</string>
 
     <!-- Terminal accessory keys (mobile). The row sends the same escape
          sequences a hardware keyboard would; nothing here owns a session. -->
@@ -166,9 +183,8 @@
     <string name="webapp_state_crashed">The page stopped responding.</string>
 
     <!-- Linux system screen (install state, session details, contract) -->
-    <string name="system_eyebrow">LINUX SYSTEM</string>
     <string name="system_title">Linux system</string>
-    <string name="system_body">A verified, curated Ubuntu Base rootfs stored in app-private storage. The Android host owns the session lifecycle, starts it from an app launch, and keeps its state honest.</string>
+    <string name="system_body">Runtime, session, storage, permissions, and diagnostics.</string>
     <string name="system_state_label">System state</string>
     <string name="system_session_label">Session</string>
     <string name="system_service_label">Terminal component</string>
@@ -183,8 +199,6 @@
     <string name="system_detail_endpoint_value">%1$s:%2$d</string>
     <string name="system_detail_app">Runtime profile</string>
     <string name="system_detail_version">Version</string>
-    <string name="system_how_title">How NusaDesk works</string>
-    <string name="system_how_body">Android host → verified system → Android-owned session → loopback endpoint → app surface. Linux starts when you open the app and keeps running in the background; the notification\'s Stop action stops it, and opening the app starts it again. A running process is not the same as a ready session, and loopback is reachability, not authentication.</string>
     <string name="action_read_contract">How it works</string>
 
     <!-- Workspace folder: a user-picked folder bound into the guest at ~/nusadesk.
@@ -208,7 +222,7 @@
          this app. NusaDesk never prompts for them on this screen; the card only
          shortcuts to the Settings page that owns them. -->
     <string name="system_permissions_label">App permissions</string>
-    <string name="system_permissions_detail">Camera, microphone, location, contacts, SMS and other Android permissions for this app are managed in this device\'s own settings. Open the app info page to review or change them.</string>
+    <string name="system_permissions_detail">Android manages this app’s permissions in App info.</string>
     <string name="system_permissions_action">Open app settings</string>
     <string name="system_permissions_unavailable">The Android app settings screen is not available right now.</string>
 
@@ -244,9 +258,6 @@
     <string name="action_begin_install">Start setup</string>
     <string name="action_retry_install">Try again</string>
     <string name="action_installing">Installing…</string>
-
-    <!-- Dialog -->
-    <string name="dialog_close">Close</string>
 
     <!-- Accessibility / content descriptions -->
     <string name="status_content_description">Status: %1$s. %2$s</string>
