@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.1] - 2026-09-18
 
+### Added
+
 - Add Logs surface documentation to README explaining boot.log persistence and live systemctl journal tails with size bounds (ADR-0034)
 - Implement read-only terminal mode with disabled native text selection to preserve touch-scroll gestures for log scrollback
 - Add terminal.reset() and terminal.fontSize() APIs for switching log sources and adjusting cell 
