@@ -311,7 +311,7 @@ domain.
 ## Reproduce
 
 ```bash
-cd /media/jahrulnr/storage/workspace/LinuxWrapperAndroidBase
+# From the repository root of your clone:
 ./gradlew test lintDebug assembleDebug        # all BUILD SUCCESSFUL
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 # Bridge extraction (app domain) — use the current applicationId

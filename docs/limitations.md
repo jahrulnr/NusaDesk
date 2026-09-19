@@ -238,6 +238,15 @@ share the device loopback namespace.
 The protocol is intentionally small and dependency-free:
 
 - `bridge.info` reports the transport and allowlisted capability set.
+- The guest also carries a bounded Termux command compatibility layer
+  (ADR-0036): `termux-battery-status`, `termux-location`, `termux-sensor`,
+  `termux-contact-list`, `termux-sms-list`, `termux-telephony-deviceinfo`, and
+  `termux-telephony-cellinfo` translate Termux flags into the fixed methods
+  above and print the Termux JSON shape. The Termux:API app cannot be used by
+  this product (it is signature/UID-locked to Termux), so these are the only
+  Termux-compatible surface, and commands whose capability the bridge does not
+  answer are deliberately absent (documented in the guest's
+  `docs/termux-compat.md`).
 - `battery.status` reads Android's permission-free `BatteryManager` state.
 - `location.get` performs a foreground-only one-shot `LocationManager` request.
   It never opens a permission Activity and returns explicit
@@ -290,7 +299,7 @@ clients, encoders, camera, microphone, and listener on stop.
 
 Physical passes (2026-09-16 to 2026-09-17):
 
-- Samsung S10e SM-G970F `R39M209Q3TM` (Android 12/API 31, arm64, 4 KB
+- Samsung S10e SM-G970F (Android 12/API 31, arm64, 4 KB
   pages): from the live guest, the pinned Python probe read the session env
   file, connected to the host loopback port, received `battery.status` with
   `ok=true`, `available=true`, `capacity_percent=84`, `status=not-charging`,
@@ -381,14 +390,14 @@ Current capability status:
 alongside `MANAGE_EXTERNAL_STORAGE`, so it would be installer noise.
 
 The earlier device spike established the transport premise on the SM-G970F
-(API 31, app UID `u0_a280`):
+(API 31, running as the app's own UID):
 
 | Probe | Result |
 | --- | --- |
 | Guest → `adb`-reverse listener on `127.0.0.1:17890` | `HTTP_BODY=BRIDGE_SPIKE_OK` |
 | Guest → app-UID listener on `127.0.0.1:17891` | `GUEST_OK=APP_UID_LISTENER_OK` |
 | Device shell → `127.0.0.1:17892` | `SCOPE_OK` |
-| Device shell → LAN IP `192.168.18.202:17892` | `Connection refused` |
+| Device shell → the device's LAN IP (port 17892) | `Connection refused` |
 
 The production slice keeps that proven loopback/TCP choice. A Unix-domain
 socket remains a future optimization/spike, not a prerequisite for the
@@ -396,6 +405,17 @@ working bridge; a UDS does not remove the need for the token. Raw Android
 Binder, direct `/dev` hardware access, GPU/NPU paths, and kernel/SELinux
 changes remain limitations that require a different form or root-level
 support.
+
+### Guest GPU/NPU acceleration is device-class specific
+
+There is no general guest GPU path. The community Mesa stack is SoC-specific:
+Turnip covers Adreno GPUs only, and Mali devices (including the S10e used for
+this project's device evidence) expose no usable driver to a glibc guest, so
+guest rendering and inference stay on the CPU there. NPU acceleration has no
+guest path: the platform NN API is deprecated and vendor runtimes are
+host-side only. CPU inference with small models through the capability bridge
+is feasible and was verified on the S10e — see
+`docs/research/guest-local-llm-spike.md`.
 
 ### Resolver doctor is bounded and allowlisted
 
@@ -493,7 +513,7 @@ The future APK will likely need a small native execution bridge even though the 
 
 ### License and distribution
 
-PRoot is GPL-2.0-or-later. Packaging and distributing it requires GPLv2+ source/notice obligations, and the combined-work implications need legal review before distribution. Invoking PRoot as a separate executable is intended to keep the clearest practical GPL boundary, but **no GPL-cleanliness claim is made**. Dropbear (permissive/MIT-style) and OpenSSH (BSD) are includable in the curated rootfs, but their license/notice/attribution obligations apply. The app's own license is not yet selected.
+PRoot is GPL-2.0-or-later. Packaging and distributing it requires GPLv2+ source/notice obligations, and the combined-work implications need legal review before distribution. Invoking PRoot as a separate executable is intended to keep the clearest practical GPL boundary, but **no GPL-cleanliness claim is made**. Dropbear (permissive/MIT-style) and OpenSSH (BSD) are includable in the curated rootfs, but their license/notice/attribution obligations apply. The app's own code is MIT-licensed (root `LICENSE`).
 
 ### Google Play
 

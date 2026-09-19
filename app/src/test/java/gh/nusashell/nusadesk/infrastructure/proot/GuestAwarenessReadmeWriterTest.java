@@ -41,7 +41,8 @@ public class GuestAwarenessReadmeWriterTest {
         assertTrue(text.contains("(docs/media.md)"));
         assertTrue(text.contains("(docs/battery-sensors-location.md)"));
         assertTrue(text.contains("(docs/messaging-telephony.md)"));
-        assertTrue(text.split("\\n", -1).length < 32);
+        assertTrue(text.contains("(docs/termux-compat.md)"));
+        assertTrue(text.split("\\n", -1).length < 34);
     }
 
     @Test

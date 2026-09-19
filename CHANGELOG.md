@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-19
+
+### Added
+
+- Add a bounded Termux command compatibility layer in the guest: `termux-battery-status`, `termux-location`, `termux-sensor`, `termux-contact-list`, `termux-sms-list`, `termux-telephony-deviceinfo`, and `termux-telephony-cellinfo` are generated into `/usr/local/bin` and answered by the Android capability bridge with Termux JSON output, exit codes, and documented row caps (ADR-0036)
+- Add `docs/research/guest-local-llm-spike.md`, a device-recorded spike that ran llama.cpp CPU inference (small GGUF models, OpenAI-compatible `llama-server`) inside the guest on the S10e, with measured prompt/generation throughput, the required `libgomp` dependency, and the 4-thread configuration finding
+- Document guest GPU/NPU reach in `docs/limitations.md`: the Mesa Turnip path is Adreno-only, Mali devices such as the S10e have no usable guest GPU driver, and NPU acceleration has no guest path
+
 ## [0.2.1] - 2026-09-18
 
 ### Added

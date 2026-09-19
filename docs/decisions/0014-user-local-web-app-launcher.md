@@ -3,7 +3,7 @@
 ## Status
 
 Accepted and implemented in `presentation/`, `res/`, and the presentation tests.
-UX-verified on the x86_64 UI emulator (`emulator-5554`, API 35). Runtime
+UX-verified on the x86_64 UI emulator (API 35). Runtime
 behaviour (guest SSH, a live shell, background continuation) is unchanged and
 remains exactly as strong as the last arm64 device run; see
 `docs/test-plan.md`.

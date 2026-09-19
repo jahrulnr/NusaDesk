@@ -21,7 +21,7 @@ payload/wiring/launcher suites (`GuestAddonPayloadProfileTest`,
 `GuestServiceBridgeTest`, `ProotLauncherTest`), and lint.
 
 **Device-verified end to end on the Samsung S10e** (SM-G970F,
-`R39M209Q3TM`, Android 12/API 31, arm64, 4 KB pages, 2026-09-16): the wired
+Android 12/API 31, arm64, 4 KB pages, 2026-09-16): the wired
 overlay executed `udocker compose up -d` through the real supervised
 service, an uncached registry image pull, and `unless-stopped` across a
 host force-stop/relaunch. The verified matrix, the same-version
@@ -283,7 +283,7 @@ containers so the next `up` recreates them.
   device LAN IP. udocker/PRoot strips `host_ip` and offers no
   loopback-only enforcement, so the MVP now rejects every `ports`
   declaration instead of admitting an explicit-loopback one.
-- **Device PASS (done, 2026-09-16, S10e SM-G970F `R39M209Q3TM`, Android
+- **Device PASS (done, 2026-09-16, S10e SM-G970F, Android
   12/API 31, arm64, 4 KB pages):** the APK carrying the `.tgz`
   asset-packaging fix and the wrapper fallback fix installed; the wired
   overlay verified on disk — the 14-file manifest, the compose paths, the

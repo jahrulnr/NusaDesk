@@ -175,7 +175,7 @@ payload/wiring/launcher suites.
 | CMP-009 | Re-`up` after a changed image | `--pull=reuse` reuses the named container; a `down` is required to recreate |
 | CMP-010 | `down` cleanup | `udocker rm` per service is best-effort after all pid files are dead, then project state is removed; a container udocker cannot remove is left for manual `udocker rm` |
 
-Device pass (2026-09-16, Samsung S10e SM-G970F `R39M209Q3TM`, Android
+Device pass (2026-09-16, Samsung S10e SM-G970F, Android
 12/API 31, arm64, 4 KB pages; guest endpoint `127.0.0.1:22022`):
 
 | Case | Observed result |
@@ -280,7 +280,7 @@ lifecycle claims below need the device pass.
 | TSS-005 | Runtime `Stop` from the notification | Terminal session closes with the runtime; terminal state `NOT_STARTED`; no orphan SSH client |
 | TSS-006 | App backgrounded long then reopened, process alive | Session survives (30 s heartbeat, loopback exempt from Doze firewall); if the process was killed instead, reconcile reports honestly and a fresh session attaches |
 
-Device pass (Samsung SM-G970F `R39M209Q3TM`, Android 12/API 31, arm64,
+Device pass (Samsung SM-G970F, Android 12/API 31, arm64,
 2026-09-17, debug build):
 
 | Case | Result |
@@ -313,7 +313,7 @@ device cases below are open.
 | LOG-007 | Switch between log items | Previous file's content is fully cleared (`RESET`); tail from the old file never bleeds into the new view |
 | LOG-008 | Leave Logs / stop the runtime | Tail thread stops; no further writes reach the viewer; log files remain on disk for next session |
 
-Device pass (Samsung SM-G970F `R39M209Q3TM`, Android 12/API 31, arm64,
+Device pass (Samsung SM-G970F, Android 12/API 31, arm64,
 2026-09-17, debug build):
 
 | Case | Result |
@@ -416,7 +416,7 @@ ACB-011, and ACB-018 are covered on the physical devices documented below.
 
 Physical ACB-008 and ACB-011 passes (2026-09-16), plus ACB-018 (2026-09-17):
 
-- Samsung S10e SM-G970F `R39M209Q3TM` (Android 12/API 31, arm64, 4 KB
+- Samsung S10e SM-G970F (Android 12/API 31, arm64, 4 KB
   pages): a Python probe executed inside the live guest read
   `/run/nusadesk/android-bridge.env`, called `battery.status` over the session
   loopback port, and received `ok=true`, `available=true`,
@@ -556,7 +556,7 @@ death reporting, and recovery after failure. No other API level, 16 KB-page
 device, or OEM is covered.
 
 **Launcher and web apps (this slice).** Verified on the x86_64 UI emulator
-(API 35, AVD `LinuxWrapperUiApi35`, `emulator-5554`): the launcher in the
+(API 35, AVD `LinuxWrapperUiApi35`): the launcher in the
 not-installed, installed, and stopped/failed states; the readiness pill; the
 setup steps; the dashed `Add app` tile; the add form (empty, name-error,
 reserved-port error); search and its count; saving a web app and seeing its tile;
@@ -565,8 +565,8 @@ confirmation and the resulting empty store; the web-app surface's unreachable
 state and its options menu; the terminal's waiting and failure prompts with the
 disabled accessory row; the system screen; phone landscape; a tablet-class
 configuration (`wm size 1600x2560`, `wm density 320` → `sw800dp`); and both
-themes. Screenshots are kept outside the repository under
-`/tmp/linux-wrapper-android-sdk/qa-screenshots/launcher-webapp/`.
+themes. Screenshots are kept outside the repository, in a local temp
+directory that is never committed.
 
 **Method note (emulator only).** The emulator cannot run the arm64 PRoot bridge,
 so the installed and installed-but-component-missing launcher states were first
@@ -591,7 +591,7 @@ visually inspected on two physical arm64 phones:
 No permission was granted and no runtime permission prompt was added during this
 UI pass; the settings shortcut was verified as navigation only.
 
-### Favicon fallback run (2026-09-14, emulator-5554, API 35)
+### Favicon fallback run (2026-09-14, x86_64 UI emulator, API 35)
 
 One pass of the WA-017…WA-021 cases against `app-debug.apk` on the x86_64 UI
 emulator, with a loopback fixture the app could actually reach:
@@ -609,10 +609,10 @@ evidence for what the app asked for and how often.
 | WA-020 | Fixture down at launch (monogram), fixture started, app opened, Back to the launcher | Tile shows the favicon without a restart; log shows the probe `GET /`, the retry `GET /favicon.ico`, and the WebView's own `GET /` |
 | WA-021 | Nine characters typed into the launcher search field (nine re-renders) | Request count unchanged at one |
 
-Screenshots are kept outside the repository under `/tmp/lw-favicon-qa/`
-(`13-evidence-montage.png` for WA-019, `21-priority-montage.png` for the
-user-icon/favicon/monogram order, `16-retry-step4-launcher-favicon.png` for
-WA-020). The fixture app was removed and the pushed image deleted afterwards, so
+Screenshots are kept outside the repository, in a local temp directory that
+is never committed (`13-evidence-montage.png` for WA-019,
+`21-priority-montage.png` for the user-icon/favicon/monogram order,
+`16-retry-step4-launcher-favicon.png` for WA-020). The fixture app was removed and the pushed image deleted afterwards, so
 the emulator's web-app store is empty again.
 
 **Not covered by this pass.** The reachability retry is triggered by the app's own

@@ -161,7 +161,7 @@ method, typed error mapping), `GuestAwarenessCliTest` (the generated Python CLI
 round-trips against a fake loopback listener, including the calendar commands
 and their exact `params`), and `GuestAwarenessGeneratedDocsTest`.
 
-Physical pass (Samsung S10e `R39M209Q3TM`, Android 12/API 31, 2026-09-17) with
+Physical pass (Samsung S10e, Android 12/API 31, 2026-09-17) with
 both calendar grants applied and the generated CLI inside the live guest:
 
 - `calendar list` → `count 0` (a valid empty read);

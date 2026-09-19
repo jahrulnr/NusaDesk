@@ -3,7 +3,7 @@
 ## Status
 
 Accepted and implemented in `infrastructure/webapp/`, `presentation/`, and their
-tests. UX-verified on the x86_64 UI emulator (`emulator-5554`, API 35) against a
+tests. UX-verified on the x86_64 UI emulator (API 35) against a
 loopback fixture server; see `docs/test-plan.md`.
 
 ## Context

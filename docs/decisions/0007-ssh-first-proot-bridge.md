@@ -163,7 +163,7 @@ level/OEM has been tested.
   VM/interpreter exception is not assumed. Initial distribution is via
   sideload/F-Droid or another controlled channel; a Play submission needs a
   separate policy review.
-- The app's own license is **not yet selected**.
+- The app's own code is **MIT-licensed** (root `LICENSE`).
 
 ## Alternatives considered
 

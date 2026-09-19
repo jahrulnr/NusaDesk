@@ -153,7 +153,7 @@ attach/detach, size reuse across sessions), `TerminalSessionStatusTest`, and
 `TerminalNotificationPolicyTest` (the exact notification line and action
 visibility per state, null-safe).
 
-Device pass (Samsung SM-G970F `R39M209Q3TM`, Android 12/API 31, arm64,
+Device pass (Samsung SM-G970F, Android 12/API 31, arm64,
 2026-09-17 — details in `docs/test-plan.md`):
 
 - TSS-001 PASS: `always_finish_activities` destroyed the Activity on HOME; the

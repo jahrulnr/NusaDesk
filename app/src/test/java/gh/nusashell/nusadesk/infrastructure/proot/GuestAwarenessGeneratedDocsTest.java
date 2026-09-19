@@ -20,8 +20,11 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(readme.contains("(docs/battery-sensors-location.md)"));
         assertTrue(readme.contains("(docs/messaging-telephony.md)"));
         assertTrue(readme.contains("(docs/calendar.md)"));
+        assertTrue(readme.contains("(docs/termux-compat.md)"));
         assertTrue(readme.contains("App version: 0.1.0"));
-        assertTrue(lineCount(readme) < 32);
+        // One line per topic doc plus the managed footer; keep the README a
+        // single compact screen.
+        assertTrue(lineCount(readme) < 34);
     }
 
     @Test
@@ -32,6 +35,7 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(index.contains("(battery-sensors-location.md)"));
         assertTrue(index.contains("(messaging-telephony.md)"));
         assertTrue(index.contains("(calendar.md)"));
+        assertTrue(index.contains("(termux-compat.md)"));
         assertTrue(index.contains("/usr/local/bin/nusadesk-android"));
         assertTrue(index.contains("nusadesk-android calendar list"));
         assertTrue(index.contains("nusadesk-android calendar add --title"));

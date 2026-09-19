@@ -40,10 +40,13 @@ jobs:
           fi
 
           tag="v$version"
+          # The published asset carries no build-type suffix: it is the
+          # user-facing sideload download, built from the debug APK that
+          # `make check` assembles.
           {
             echo "version=$version"
             echo "tag=$tag"
-            echo "release_asset=NusaDesk-$tag-debug.apk"
+            echo "release_asset=NusaDesk-$tag.apk"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check release tag

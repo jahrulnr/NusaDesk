@@ -104,8 +104,9 @@ Rejected alternatives:
   from 12 `groups: cannot find name for group ID` lines to none, with `groups`
   and `id` resolving every ID (`aid_inet`, `aid_sdcard_rw`, …).
 - Product path on the device (Android 10/API 29, arm64, Samsung SM-G935F,
-  app uid `u0_a279`, APK built from this change): the app process really
-  carries `Groups: 3003 9997 20279 50279`; after the app's own session start
+  running as the app's own uid, APK built from this change): the app process really
+  carries four supplementary groups — `aid_inet`, `aid_everybody`, and the
+  install's per-uid AIDs; after the app's own session start
   (`GuestSshdWorkload: guest OpenSSH sshd ready on 127.0.0.1:60920`) the guest
   `/etc/group` contained exactly those four entries —
   `aid_inet:x:3003:`, `aid_everybody:x:9997:`, `aid_20279:x:20279:`,

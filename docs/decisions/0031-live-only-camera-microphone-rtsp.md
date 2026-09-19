@@ -197,7 +197,7 @@ the client cap without opening a UDP range.
   allowlist, env validation, authenticated JSONL round trips, and no generic
   method/shell path.
 - A positive physical pass succeeded on Samsung S10e SM-G970F
-  `R39M209Q3TM` (Android 12/API 31, arm64, 4 KB pages, 2026-09-17): with
+  (Android 12/API 31, arm64, 4 KB pages, 2026-09-17): with
   test-only CAMERA and RECORD_AUDIO grants and the Activity visible, the actual
   guest CLI returned `running` with H.264/AAC 1280x720 metadata and a loopback
   RTSP URL. Through an `adb forward` used only for the host-side consumer,

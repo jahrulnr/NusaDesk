@@ -117,6 +117,13 @@ runtime requirements.
   `media status`, `media stop`), and bounded calendar access (`calendar list`,
   `calendar add`, `calendar update`, `calendar delete`). There is no generic
   `call <method>` passthrough (ADR-0031, ADR-0032).
+- A bounded set of Termux command names (`termux-battery-status`,
+  `termux-location`, `termux-sensor`, `termux-contact-list`, `termux-sms-list`,
+  `termux-telephony-deviceinfo`, `termux-telephony-cellinfo`) is installed in
+  `/usr/local/bin` and answered by the same bridge, so scripts written for the
+  Termux:API clients keep working. The Termux:API *app* cannot serve this
+  product — it only accepts callers sharing the Termux signing key and UID —
+  and no Termux app is required (ADR-0036).
 - Live media is the camera and/or microphone streamed as H.264/AAC over RTSP on
   loopback while the guest session and the visible media notification are
   active. No capture file is ever written — save one yourself from the stream if
@@ -158,7 +165,8 @@ documentation set:
 - [Architecture decisions](docs/decisions/) — the reasoning behind major
   product and runtime choices.
 - [Research notes](docs/research-findings.md) — source material and technical
-  findings behind the foundation.
+  findings behind the foundation; spike records live under
+  [docs/research](docs/research/).
 - [Contributor and agent guidance](AGENTS.md) — repository rules and safety
   constraints.
 - [Security policy](SECURITY.md) — vulnerability reporting, security scope, and
@@ -177,6 +185,7 @@ treating the current build as a production release.
 
 ## License and distribution
 
-The application license and final distribution model are still under review.
-Third-party runtime components carry their own license and notice obligations;
-see the [technical documentation](docs/) before redistribution.
+NusaDesk's own code is MIT-licensed — see [LICENSE](LICENSE). The final
+distribution model is still under review. Third-party runtime components carry
+their own license and notice obligations; see the
+[technical documentation](docs/) before redistribution.

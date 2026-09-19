@@ -90,9 +90,10 @@ bridge itself.
 ## Build environment
 
 - Host: x86_64 Linux, OpenJDK 17, `git`, `curl`, `make`, `mawk` (no `gawk`).
-- NDK r28c (`28.2.13676358`) installed via `sdkmanager` into
-  `/tmp/linux-wrapper-android-sdk`. Toolchain clang 19,
-  `aarch64-linux-android29-clang` (API 29 = `minSdk`, Android 10 floor).
+- NDK r28c (`28.2.13676358`) installed via `sdkmanager` under the
+  build script's `SDK_ROOT` (default `/tmp/linux-wrapper-android-sdk`).
+  Toolchain clang 19, `aarch64-linux-android29-clang` (API 29 = `minSdk`,
+  Android 10 floor).
 - No `qemu-user` available (no passwordless `sudo`), so talloc's `waf`
   cross-configure (which needs `--cross-execute`/`--cross-answers`) could not
   be used; see "Talloc build" below.
@@ -265,9 +266,10 @@ proof only.
 ## How to reproduce
 
 ```bash
-# Prerequisite: Android cmdline-tools installed at /tmp/linux-wrapper-android-sdk
-# (the script installs the NDK itself via sdkmanager).
-cd /media/jahrulnr/storage/workspace/LinuxWrapperAndroidBase
+# From the repository root of your clone.
+# Prerequisite: Android cmdline-tools with sdkmanager. The script reads them
+# from SDK_ROOT (default /tmp/linux-wrapper-android-sdk; override with
+# SDK_ROOT=<dir>) and installs the NDK itself via sdkmanager.
 scripts/build-proot-arm64.sh            # build + verify + install into jniLibs
 scripts/build-proot-arm64.sh --repro-check  # also prove bit-identical rebuilds
 ```

@@ -12,7 +12,7 @@ the global supervisor unit).
 
 Verified by unit tests (`GuestServiceBridgeTest`, `ProotLauncherTest`,
 `GuestAddonPayloadProfileTest`), the full unit suite, lint, and a physical
-device run on the Samsung S10e (Android 12, serial `R39M209Q3TM`) recorded at
+device run on the Samsung S10e (Android 12) recorded at
 the end of this document.
 
 ## Context
@@ -168,7 +168,7 @@ wants directory it brings up (`default.target` for user units).
   deterministic. The strict-bind path needs a fresh physical-device proof over
   a real apt-installed replacement.
 
-## Device evidence (Samsung S10e, `R39M209Q3TM`, 2026-09-16)
+## Device evidence (Samsung S10e, 2026-09-16)
 
 Production process tree after session start (single tracer):
 
@@ -208,7 +208,7 @@ Production process tree after session start (single tracer):
   targeted follow-up because neither connected rootfs currently carries that
   replacement.
 
-## Device evidence — systemd user units (Samsung S10e, `R39M209Q3TM`, 2026-09-17)
+## Device evidence — systemd user units (Samsung S10e, 2026-09-17)
 
 The pass started from the user's own report: after a force-close and relaunch,
 a registered web app never answered, and its unit was a `systemctl --user` unit
