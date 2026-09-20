@@ -57,7 +57,8 @@ public class AndroidCapabilityRequestHandlerTest {
                         + "location.stream.poll,location.stream.stop,"
                         + "media.start,media.camera.start,media.microphone.start,"
                         + "media.status,media.stop,"
-                        + "calendar.list,calendar.insert,calendar.update,calendar.delete",
+                        + "calendar.list,calendar.insert,calendar.update,calendar.delete"
+                        + ",usb.list,usb.open",
                 info.getFields().get("capabilities"));
 
         AndroidCapabilityProtocol.Response battery = handler.handle(
@@ -536,7 +537,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
                 new FakeLocationStream(), new FakeLiveMediaController(),
-                new FakeCalendarSource(), new FakeCalendarWriter());
+                new FakeCalendarSource(), new FakeCalendarWriter(),
+                new UsbPassThroughSource.Empty());
     }
 
     private static AndroidCapabilityRequestHandler handler(String token,
@@ -550,7 +552,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 () -> LocationSnapshot.unavailable(),
                 contacts, callLog, sms, telephonyInfo,
                 cellInfo, new FakeLocationStream(), new FakeLiveMediaController(),
-                new FakeCalendarSource(), new FakeCalendarWriter());
+                new FakeCalendarSource(), new FakeCalendarWriter(),
+                new UsbPassThroughSource.Empty());
     }
 
     private static AndroidCapabilityRequestHandler handler(String token, ContactsSource contacts) {
@@ -563,7 +566,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
                 new FakeLocationStream(), new FakeLiveMediaController(),
-                new FakeCalendarSource(), new FakeCalendarWriter());
+                new FakeCalendarSource(), new FakeCalendarWriter(),
+                new UsbPassThroughSource.Empty());
     }
 
     private static AndroidCapabilityRequestHandler handler(String token,
@@ -577,7 +581,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
                 stream, new FakeLiveMediaController(),
-                new FakeCalendarSource(), new FakeCalendarWriter());
+                new FakeCalendarSource(), new FakeCalendarWriter(),
+                new UsbPassThroughSource.Empty());
     }
 
     private static AndroidCapabilityRequestHandler handler(String token,
@@ -591,7 +596,8 @@ public class AndroidCapabilityRequestHandlerTest {
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
                 new FakeLocationStream(), media,
-                new FakeCalendarSource(), new FakeCalendarWriter());
+                new FakeCalendarSource(), new FakeCalendarWriter(),
+                new UsbPassThroughSource.Empty());
     }
 
     private static AndroidCapabilityRequestHandler calendarHandler(
@@ -605,7 +611,7 @@ public class AndroidCapabilityRequestHandlerTest {
                 () -> TelephonyDeviceInfo.unavailable(),
                 () -> TelephonyCellInfo.unavailable(),
                 new FakeLocationStream(), new FakeLiveMediaController(),
-                source, writer);
+                source, writer, new UsbPassThroughSource.Empty());
     }
 
     @Test

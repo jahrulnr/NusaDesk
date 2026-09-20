@@ -406,6 +406,32 @@ Binder, direct `/dev` hardware access, GPU/NPU paths, and kernel/SELinux
 changes remain limitations that require a different form or root-level
 support.
 
+### USB pass-through delivers a descriptor, not a device bus (ADR-0041)
+
+The guest has no `/dev/bus/usb` and never gets one through this product:
+Android does not expose usbfs nodes to apps, so `usb.open` can only deliver
+an already-consented device descriptor. What that means in practice:
+
+- Every open shows the platform's own per-device consent dialog, so a
+  headless or background trigger still needs the user to answer it; a denied
+  or ignored dialog is a typed error (`usb-permission-denied`,
+  `usb-permission-timeout`), and no grant is remembered beyond the
+  platform's own permission.
+- The app cannot force a port into host mode, provide VBUS, or make the
+  phone act as a USB device: host mode, OTG power, and gadget/UDC behavior
+  stay platform/OEM territory.
+- Interface claims, URB submission, and protocol logic belong to the guest
+  once the descriptor arrives — the host adds no transfer API. A guest-side
+  adb client therefore needs a USB-fd-capable transport (the termux-adb
+  pattern); `nusadesk-usb exec` only hands it `NUSADESK_USB_FD`.
+- Descriptor lifetime follows the file descriptors: the guest's copy stays
+  usable while any reference is open, and the app-side connection is
+  released when the bridge session closes. Unplug, revoke, or process death
+  invalidates the device file itself.
+- `usb.list`/`usb.open` cover enumeration and delivery only: no device-class
+  support matrix, no automatic re-attach on hotplug, and no persistence
+  beyond what the platform dialog already grants.
+
 ### Guest GPU/NPU acceleration is device-class specific
 
 There is no general guest GPU path. The community Mesa stack is SoC-specific:

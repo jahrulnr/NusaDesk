@@ -43,7 +43,7 @@ import gh.nusashell.nusadesk.infrastructure.proot.ProotBindMount;
  * never LAN-bound and exposes no arbitrary command or Android class dispatch:
  * every method is a fixed allowlist string in
  * {@link AndroidCapabilityRequestHandler}, and only the declaring calendar
- * writes may carry one bounded {@code params} object.</p>
+ * writes and {@code usb.open} may carry one bounded {@code params} object.</p>
  *
  * <p>Shipped capabilities: Android BatteryManager projected through
  * {@code battery.status} and, when the fixed app-private projection can be
@@ -71,6 +71,13 @@ import gh.nusashell.nusadesk.infrastructure.proot.ProotBindMount;
  * line per write. No attendee row is ever written and no invitation is sent,
  * so a guest script cannot turn a local automation into mail to other
  * people.</p>
+ *
+ * <p>The USB slice is an explicit pass-through ({@code usb.list} /
+ * {@code usb.open}, ADR-0041): the host enumerates attached devices and opens
+ * a chosen one through the platform's own consent dialog, then delivers the
+ * usbfs descriptor to the guest's abstract unix socket with SCM_RIGHTS. Raw
+ * transfers are the guest's business; every opened connection is owned by the
+ * bridge session and released in {@link #close()}.</p>
  *
  * <p>Every capability source is constructed once per bridge session, owned by
  * the bridge, and closed in both {@link #close()} paths (a running session
@@ -110,6 +117,7 @@ public final class AndroidCapabilityBridge implements AutoCloseable {
     private final LiveMediaController mediaController;
     private final CalendarSource calendarSource;
     private final CalendarWriter calendarWriter;
+    private final AndroidUsbPassThrough usbPassThrough;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final Semaphore connectionSlots = new Semaphore(MAX_CONNECTIONS);
     private final ExecutorService connectionExecutor = Executors.newFixedThreadPool(
@@ -174,6 +182,7 @@ public final class AndroidCapabilityBridge implements AutoCloseable {
         this.mediaController = mediaController;
         this.calendarSource = new AndroidCalendarSource(this.context);
         this.calendarWriter = new AndroidCalendarWriter(this.context);
+        this.usbPassThrough = new AndroidUsbPassThrough(this.context);
     }
 
     /** Start the session bridge; each bridge instance is single-use and never replaces a live token. */
@@ -189,7 +198,7 @@ public final class AndroidCapabilityBridge implements AutoCloseable {
                 nextToken, new AndroidBatteryStatusProvider(context), sensorSource,
                 locationSource, contactsSource, callLogSource, smsSource,
                 telephonyInfoSource, telephonyCellSource, locationStream,
-                mediaController, calendarSource, calendarWriter);
+                mediaController, calendarSource, calendarWriter, usbPassThrough);
         ServerSocket nextServer = new ServerSocket();
         try {
             // Explicit IPv4 loopback: binding wildcard or an IPv6-any address
@@ -478,6 +487,7 @@ public final class AndroidCapabilityBridge implements AutoCloseable {
         locationSource.close();
         locationStream.close();
         mediaController.close();
+        usbPassThrough.close();
     }
 
     private static String randomToken() {

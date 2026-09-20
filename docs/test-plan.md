@@ -824,6 +824,64 @@ Run findings:
    the maintainer-side keystore secrets must be set before the next release,
    and pre-key builds need a one-time reinstall.
 
+## USB pass-through (ADR-0041), device run 2026-09-20
+
+Run on the Samsung S10e (SM-G970F, OneUI, Android 12/API 31, arm64) acting as
+the **USB host** with an S7 Edge attached (`04e8:6860`, ADB interface active),
+plus a USB storage device (`05e3:0751`) and two hubs (`214b:7250`) on the bus.
+The debug build with the USB slice was installed over the existing session
+(`adb install -r`, data kept), the session cold-started (launch the app;
+see the session-start note below), and the guest was driven over the planted
+probe key (playbook `PB-guest-shell-planted-key`).
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| USB-001 | `nusadesk-usb list` from the guest | `04e8:6860  /dev/bus/usb/001/008  SAMSUNG  SAMSUNG_Android`, `05e3:0751  /dev/bus/usb/001/009  USB Storage  USB Storage`, `count: 2`, rc 0 — enumeration without any prompt |
+| USB-002 | `nusadesk-usb probe 04e8:6860` (first open) | System consent dialog: `ActivityTaskManager: START u0 {… cmp=com.android.systemui/.usb.UsbPermissionActivity (has extras)} from uid 1000` at 15:32:23.659, `Displayed … +87ms`; after Allow: `probe ok: idVendor=04e8 idProduct=6860 bcdUSB=0x0200`, rc 0 — the descriptor was read **inside the guest** through `USBDEVFS_CONTROL` after the tap (~58 s wait, under the 75 s guest timeout) |
+| USB-003 | `nusadesk-usb exec 04e8:6860 -- sh -c 'ls -l /proc/self/fd/$NUSADESK_USB_FD'` | `fd=3`, `/proc/self/fd/3 -> /dev/bus/usb/001/008`, rc 0; **no second dialog** — the platform grant persisted while the device stayed attached |
+| USB-004 | `nusadesk-usb probe 1234:5678` (absent device) | Typed `nusadesk-usb: usb-device-not-found`, rc 1, no dialog, no crash |
+| USB-005 | Re-run after the device re-enumerated (node moved 001/008 → 001/011): `list` + `exec … -- python3` reading the descriptor **strings** through the fd | `list` tracks the new node (`04e8:6860 /dev/bus/usb/001/011`); the strings came from the device itself: `manufacturer 'SAMSUNG'`, `product 'SAMSUNG_Android'`, `fd path: /dev/bus/usb/001/011`; no second consent dialog — the platform grant survived re-enumeration |
+| USB-006 | Minimal in-guest adb client over the delivered fd: claim interface 4 → `CNXN` | adbd answered `AUTH arg0=1 len=20` — the adb handshake is live over the OTG fd (after the header/payload framing fix below) |
+| USB-007 | Same client sends `AUTH(RSAPUBLICKEY=3)` with an `adb keygen` keypair | S7 (screen unlocked) showed the "Allow USB debugging?" dialog; after Allow the device answered `CNXN` with `banner='device::ro.product.name=crownltexx;ro.product.model=SM-G935F;…features=cmd,stat_v2,shell_v2'` |
+| USB-008 | `OPEN "shell:getprop ro.product.model"` on the authorized stream | `S7 says its model is: 'SM-G935F'`, rc 0 — a shell command executed **on the S7 from inside the Linux guest over USB**; the whole run repeated once with the same result |
+
+Run findings:
+
+1. **The fd crosses PRoot intact.** USB-003's symlink is a real usbfs node:
+   `SCM_RIGHTS` delivery and the `ioctl` that reads the descriptor both pass
+   through the ptrace shim, which was the open risk this slice had to answer.
+2. **Consent is the only gate and it is per attached device.** The dialog
+   appeared exactly once (USB-002); USB-003's second open (different process,
+   same guest session) opened without a prompt, which matches the platform's
+   grant lifetime rather than any product-side cache.
+3. **Session start after an in-place install.** Launching the app cold
+   (`am force-stop` → `am start`) autostarts the session and the writer
+   installs the new `/usr/local/bin/nusadesk-usb` (observed 15:28, byte
+   identical to the built script). An adb-injected `RUNTIME_ENSURE_RUNNING`
+   while that session was live was followed by
+   `RuntimeHostService: service destroyed while the runtime was live;
+   stopping it` and the runtime stopped; the cold start brought it back. The
+   destroy's origin (the injected start vs. the system) is not pinned down —
+   recorded so a later run does not chase it.
+4. **Remaining:** sustained bulk traffic and a complete guest-side adb client
+   (transport with fd import, the termux-adb pattern) are not yet exercised;
+   another OEM/API level and 16 KB-page devices stay open as usual.
+5. **adb over OTG works, and the framing is the trap.** USB-006…USB-008 prove
+   the full handshake and a shell over the delivered fd. Two protocol rules
+   came out of the failed attempts and a documentation check
+   (`cstyan/adbDocumentation`, AOSP `adb_auth_host.cpp`):
+   - the 24-byte adb header and its payload must travel as **separate USB
+     transfers**; one concatenated write desynchronizes adbd, which then goes
+     silent and only recovers on a replug (retransmission does not help);
+   - for a key the device has never seen, the client sends
+     `AUTH(RSAPUBLICKEY=3)` — that is what raises the on-device dialog, and
+     after Allow the device answers `CNXN` (no signature round needed). If a
+     token follows the public key later, the signature is
+     `RSA_sign(NID_sha1, token)`: PKCS#1 v1.5 over a SHA-1 DigestInfo
+     (`3021300906052b0e03021a05000414`) wrapping the 20-byte token.
+6. **Repeat run:** the second USB-008 run completed with the same result
+   (the dialog may reappear when the key was not marked "always allow").
+
 ## License and distribution note
 
 - PRoot is GPL-2.0-or-later. Packaging/distributing it requires GPLv2+

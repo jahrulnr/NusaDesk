@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add USB pass-through to the capability bridge (ADR-0041): `usb.list`
+  enumerates attached devices and `usb.open` runs the platform's own
+  per-device consent dialog before delivering the usbfs descriptor to the
+  guest's abstract unix socket with SCM_RIGHTS; the guest `nusadesk-usb` CLI
+  adds `list`, `probe` (a GET_DESCRIPTOR read through `USBDEVFS_CONTROL` as
+  the end-to-end proof), and `exec` (runs a command with `NUSADESK_USB_FD`
+  set and the descriptor passed through), so a guest-side adb client can
+  target a device attached to the host's USB port while every transfer stays
+  in the guest
+
 ## [0.4.0] - 2026-09-20
 
 ### Added

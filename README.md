@@ -124,6 +124,14 @@ runtime requirements.
   Termux:API clients keep working. The Termux:API *app* cannot serve this
   product — it only accepts callers sharing the Termux signing key and UID —
   and no Termux app is required (ADR-0036).
+- USB pass-through is host-mediated but guest-owned: `nusadesk-usb list`
+  enumerates attached devices on the host's USB port, and
+  `nusadesk-usb probe <vid>:<pid>` /
+  `nusadesk-usb exec <vid>:<pid> -- <command>` ask the platform's own consent
+  dialog, then hand the device descriptor into the guest over SCM_RIGHTS, so
+  every transfer stays the guest's. The executed command receives the
+  descriptor as `NUSADESK_USB_FD` — enough for a guest-side adb client built
+  on a USB-fd-capable transport (ADR-0041).
 - Live media is the camera and/or microphone streamed as H.264/AAC over RTSP on
   loopback while the guest session and the visible media notification are
   active. No capture file is ever written — save one yourself from the stream if

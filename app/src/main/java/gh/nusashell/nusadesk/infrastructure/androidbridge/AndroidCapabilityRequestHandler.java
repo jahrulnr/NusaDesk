@@ -3,6 +3,7 @@ package gh.nusashell.nusadesk.infrastructure.androidbridge;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,6 +44,13 @@ import java.util.Map;
  * {@code calendar.delete} validate every parameter before a provider call,
  * target only a calendar the user can write, and never write an attendee row
  * or send an invitation. A write logs only its operation and ids.</p>
+ *
+ * <p>The USB slice ({@code usb.list} / {@code usb.open}) is an explicit
+ * pass-through: the host enumerates and opens the device through the
+ * platform's own consent dialog, then hands the usbfs descriptor to the
+ * guest's abstract unix socket with SCM_RIGHTS. Raw transfers stay the
+ * guest's business; the app keeps every connection it opened so the bridge
+ * session can release them all (ADR-0041).</p>
  */
 public final class AndroidCapabilityRequestHandler {
     public static final String METHOD_INFO = "bridge.info";
@@ -67,6 +75,8 @@ public final class AndroidCapabilityRequestHandler {
     public static final String METHOD_MEDIA_MICROPHONE_START = "media.microphone.start";
     public static final String METHOD_MEDIA_STATUS = "media.status";
     public static final String METHOD_MEDIA_STOP = "media.stop";
+    public static final String METHOD_USB_LIST = "usb.list";
+    public static final String METHOD_USB_OPEN = "usb.open";
 
     /**
      * Fixed bounded location stream request: 5 s interval, fine accuracy.
@@ -86,7 +96,8 @@ public final class AndroidCapabilityRequestHandler {
     public static final String ERROR_UNSUPPORTED_PARAMETER = "unsupported-parameter";
     /** Methods that accept a bounded {@code params} object. */
     private static final java.util.Set<String> PARAMETER_METHODS = java.util.Set.of(
-            METHOD_CALENDAR_INSERT, METHOD_CALENDAR_UPDATE, METHOD_CALENDAR_DELETE);
+            METHOD_CALENDAR_INSERT, METHOD_CALENDAR_UPDATE, METHOD_CALENDAR_DELETE,
+            METHOD_USB_OPEN);
 
     /** Stable comma-separated capability list reported by {@code bridge.info}. */
     public static final String CAPABILITIES = METHOD_BATTERY + ","
@@ -99,7 +110,8 @@ public final class AndroidCapabilityRequestHandler {
             + METHOD_MEDIA_CAMERA_START + "," + METHOD_MEDIA_MICROPHONE_START + ","
             + METHOD_MEDIA_STATUS + "," + METHOD_MEDIA_STOP + ","
             + METHOD_CALENDAR_LIST + "," + METHOD_CALENDAR_INSERT + ","
-            + METHOD_CALENDAR_UPDATE + "," + METHOD_CALENDAR_DELETE;
+            + METHOD_CALENDAR_UPDATE + "," + METHOD_CALENDAR_DELETE + ","
+            + METHOD_USB_LIST + "," + METHOD_USB_OPEN;
 
     private final String expectedToken;
     private final BatteryStatusSource batterySource;
@@ -114,6 +126,7 @@ public final class AndroidCapabilityRequestHandler {
     private final LiveMediaController mediaController;
     private final CalendarSource calendarSource;
     private final CalendarWriter calendarWriter;
+    private final UsbPassThroughSource usbSource;
 
     public AndroidCapabilityRequestHandler(String expectedToken,
                                            BatteryStatusSource batterySource,
@@ -127,7 +140,8 @@ public final class AndroidCapabilityRequestHandler {
                                            LocationStreamSession locationStream,
                                            LiveMediaController mediaController,
                                            CalendarSource calendarSource,
-                                           CalendarWriter calendarWriter) {
+                                           CalendarWriter calendarWriter,
+                                           UsbPassThroughSource usbSource) {
         if (expectedToken == null || expectedToken.isEmpty()) {
             throw new IllegalArgumentException("expectedToken must not be blank");
         }
@@ -143,6 +157,7 @@ public final class AndroidCapabilityRequestHandler {
         requireNonNull(mediaController, "mediaController");
         requireNonNull(calendarSource, "calendarSource");
         requireNonNull(calendarWriter, "calendarWriter");
+        requireNonNull(usbSource, "usbSource");
         this.expectedToken = expectedToken;
         this.batterySource = batterySource;
         this.sensorSource = sensorSource;
@@ -156,6 +171,7 @@ public final class AndroidCapabilityRequestHandler {
         this.mediaController = mediaController;
         this.calendarSource = calendarSource;
         this.calendarWriter = calendarWriter;
+        this.usbSource = usbSource;
     }
 
     /** Return a bounded protocol response for the request, never throw to the socket loop. */
@@ -245,6 +261,12 @@ public final class AndroidCapabilityRequestHandler {
         }
         if (METHOD_CALENDAR_DELETE.equals(request.getMethod())) {
             return calendarWrite(request, CalendarWriteRequest.Op.DELETE);
+        }
+        if (METHOD_USB_LIST.equals(request.getMethod())) {
+            return usbList(request);
+        }
+        if (METHOD_USB_OPEN.equals(request.getMethod())) {
+            return usbOpen(request);
         }
         if (MessagingReadPolicy.isSideEffectMethod(request.getMethod())) {
             // Reserved side-effecting methods are never dispatched: the
@@ -789,6 +811,135 @@ public final class AndroidCapabilityRequestHandler {
                 return AndroidCapabilityProtocol.Response.error(
                         request.getId(), "capability-unavailable");
         }
+    }
+
+    /**
+     * List the attached USB devices through the platform's USB manager. The
+     * device array is one pre-encoded JSON string value so the flat response
+     * contract (and its bounds) is preserved.
+     */
+    private AndroidCapabilityProtocol.Response usbList(
+            AndroidCapabilityProtocol.Request request) {
+        List<UsbPassThroughSource.UsbDeviceEntry> devices;
+        try {
+            devices = usbSource.list();
+        } catch (RuntimeException e) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), "capability-unavailable");
+        }
+        if (devices == null) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), "capability-unavailable");
+        }
+        StringBuilder json = new StringBuilder(64);
+        json.append('[');
+        for (int i = 0; i < devices.size(); i++) {
+            UsbPassThroughSource.UsbDeviceEntry entry = devices.get(i);
+            if (i > 0) {
+                json.append(',');
+            }
+            json.append("{\"vendorId\":").append(entry.getVendorId())
+                    .append(",\"productId\":").append(entry.getProductId())
+                    .append(",\"name\":").append(encodeNullable(entry.getName()))
+                    .append(",\"manufacturer\":").append(encodeNullable(entry.getManufacturer()))
+                    .append(",\"product\":").append(encodeNullable(entry.getProduct()))
+                    .append('}');
+        }
+        json.append(']');
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("devices", json.toString());
+        fields.put("count", devices.size());
+        return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
+    }
+
+    /**
+     * Open one USB device with the platform's consent flow and deliver its
+     * descriptor to the guest's abstract socket. Every rejected parameter is
+     * the typed {@code invalid-argument}; every platform outcome maps to its
+     * bounded {@code usb-*} code and no exception crosses the wire.
+     */
+    private AndroidCapabilityProtocol.Response usbOpen(
+            AndroidCapabilityProtocol.Request request) {
+        Map<String, Object> params = request.getParams();
+        Object vendorRaw = params.get("vendorId");
+        Object productRaw = params.get("productId");
+        Object socketRaw = params.get("socket");
+        if (!(vendorRaw instanceof Long) || !(productRaw instanceof Long)
+                || !(socketRaw instanceof String)
+                || !validUsbId((Long) vendorRaw) || !validUsbId((Long) productRaw)
+                || !validSocketName((String) socketRaw)) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), "invalid-argument");
+        }
+        UsbPassThroughSource.OpenResult result;
+        try {
+            result = usbSource.open(((Long) vendorRaw).intValue(),
+                    ((Long) productRaw).intValue(), (String) socketRaw);
+        } catch (RuntimeException e) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), "usb-open-failed");
+        }
+        if (result == null) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), "usb-open-failed");
+        }
+        if (!result.opened()) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), usbErrorCode(result.getState()));
+        }
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("opened", true);
+        fields.put("vendorId", result.getVendorId());
+        fields.put("productId", result.getProductId());
+        return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
+    }
+
+    /** Map one non-OPENED state to its typed guest-visible error code. */
+    private static String usbErrorCode(UsbPassThroughSource.OpenState state) {
+        switch (state) {
+            case DEVICE_NOT_FOUND:
+                return "usb-device-not-found";
+            case PERMISSION_DENIED:
+                return "usb-permission-denied";
+            case PERMISSION_TIMEOUT:
+                return "usb-permission-timeout";
+            case SOCKET_FAILED:
+                return "usb-socket-failed";
+            default:
+                return "usb-open-failed";
+        }
+    }
+
+    /** USB ids are 16-bit; anything else is a rejected parameter. */
+    private static boolean validUsbId(Long value) {
+        return value != null && value >= 0 && value <= 0xFFFF;
+    }
+
+    /**
+     * Bound the guest-supplied abstract socket name: the guest owns the
+     * listener, but a name is still validated so a request can never carry a
+     * path or an unbounded string into the host's socket namespace.
+     */
+    private static boolean validSocketName(String value) {
+        if (value == null || value.isEmpty() || value.length() > 64) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            boolean allowed = c == '-' || c == '_' || c == '.'
+                    || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+                    || c >= '0' && c <= '9';
+            if (!allowed) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Encode one optional string field; absent values stay JSON null. */
+    private static String encodeNullable(String value) {
+        return value == null || value.isEmpty()
+                ? "null" : AndroidCapabilityProtocol.encodeStringValue(value);
     }
 
     private static void requireNonNull(Object value, String name) {

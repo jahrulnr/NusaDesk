@@ -477,6 +477,15 @@ public final class AndroidCapabilityProtocol {
         throw new ParseException("bad hex");
     }
 
+    /**
+     * Package-private string codec for capability payloads that carry one
+     * pre-encoded JSON value (the USB device array): it guarantees the same
+     * escaping as every other response string.
+     */
+    static String encodeStringValue(String value) {
+        return quote(value);
+    }
+
     private static String quote(String value) {
         if (value == null) {
             throw new IllegalArgumentException("cannot encode null string");
