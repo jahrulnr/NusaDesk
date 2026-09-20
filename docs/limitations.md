@@ -467,6 +467,21 @@ an already-consented device descriptor. What that means in practice:
   active on the device but absent from the archive. Device-bound credentials
   are regenerated: the Keystore-wrapped root credential is re-asserted at
   the next session start.
+- A full restore needs the session stopped, and the only stop control is the
+  platform notification's `Stop` action: the file picker's return fires an
+  Activity foreground event that autostarts the session again, so a restore
+  started while that start has already reached `RUNNING` answers
+  `busy · Stop the Linux session before restoring.` The host stopping its own
+  session for the restore is the recorded follow-up.
+- Bind mount points are kept in the archive as entries only: the guest's
+  add-on overlays (`/opt/lw-ssh`, `/opt/lw-services`) and the workspace folder
+  carry mode `000` in the guest and cannot even be listed, and the device's
+  own tool trees (`/system`, `/apex`) belong to the device — a backup never
+  carries them, so a restore into another device cannot smuggle in a foreign
+  Bionic copy. The shared extractor accepts up to 500,000 entries (a real
+  Everything backup measured 53,226) with the extracted-byte cap as the
+  primary bound, and applies directory modes after the payload so read-only
+  directories restore correctly.
 
 - The native Android tooling tier (ADR-0045) is bounded by the app's own uid
   and by the trees the product binds: `/system/bin`, `/system/lib64` and the

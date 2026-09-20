@@ -45,7 +45,15 @@ import java.util.Set;
  * rename only after verification.</p>
  */
 final class PayloadIo {
-    static final int MAX_ARCHIVE_ENTRIES = 20_000;
+    /**
+     * Secondary guard against a header-explosion archive: the extracted-byte
+     * cap is the primary bound, and this only stops an archive that is
+     * essentially all tar headers. Sized for real guest backups, not for the
+     * curated payload alone: an Everything backup of the S10e guest measured
+     * 53,226 entries (2026-09-20), and a guest that installs packages can grow
+     * well past that — the cap must never reject an archive this app produced.
+     */
+    static final int MAX_ARCHIVE_ENTRIES = 500_000;
     /** Serializes rootfs and add-on installs so their staging trees never race. */
     static final Object INSTALL_LOCK = new Object();
 
@@ -167,6 +175,7 @@ final class PayloadIo {
         long extractedBytes = 0;
         int entryCount = 0;
         List<HardLinkSpec> hardLinks = new ArrayList<>();
+        List<DirectoryMode> directoryModes = new ArrayList<>();
         ArchiveEntry archiveEntry;
         byte[] buffer = new byte[32 * 1024];
         while ((archiveEntry = tar.getNextEntry()) != null) {
@@ -177,7 +186,10 @@ final class PayloadIo {
             Path target = resolveSafe(staging, tarEntry.getName());
             if (tarEntry.isDirectory()) {
                 Files.createDirectories(target);
-                applyTarMode(target, tarEntry.getMode());
+                // Applied after the whole payload: a directory that is
+                // read-only in the archive (Go's module cache is 0500) would
+                // otherwise block every entry inside it.
+                directoryModes.add(new DirectoryMode(target, tarEntry.getMode()));
                 continue;
             }
             if (tarEntry.isSymbolicLink()) {
@@ -219,6 +231,14 @@ final class PayloadIo {
                 throw new RuntimeInstallationException(
                         "payload exceeds the extraction size limit after hard links");
             }
+        }
+        // Directory modes last, deepest first: a parent's restrictive mode can
+        // no longer hide the entries that were written inside it, and the
+        // archive's own modes are still what the extracted tree ends up with.
+        directoryModes.sort((first, second) ->
+                second.path.getNameCount() - first.path.getNameCount());
+        for (DirectoryMode directory : directoryModes) {
+            applyTarMode(directory.path, directory.mode);
         }
     }
 
@@ -311,6 +331,17 @@ final class PayloadIo {
         HardLinkSpec(Path target, String linkName, int mode) {
             this.target = target;
             this.linkName = linkName;
+            this.mode = mode;
+        }
+    }
+
+    /** A directory's archive mode, applied once the whole payload is written. */
+    static final class DirectoryMode {
+        final Path path;
+        final int mode;
+
+        DirectoryMode(Path path, int mode) {
+            this.path = path;
             this.mode = mode;
         }
     }

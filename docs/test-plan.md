@@ -824,6 +824,39 @@ Run findings:
    the maintainer-side keystore secrets must be set before the next release,
    and pre-key builds need a one-time reinstall.
 
+## Guest backup & restore round trip (ADR-0044), device run 2026-09-20
+
+Run on the Samsung S10e (SM-G970F, OneUI, Android 12/API 31, arm64) against
+the real GitHub-free local flow: the SAF picker (DocumentsUI) for both legs,
+the guest live at 2.5 GB / 53 k entries. Evidence: `/tmp/qa-saf/`
+(uiautomator dumps, screenshots, archive listings).
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| BAK-001 | Export "Everything" through the picker to Download | 952,053,731 bytes / 53,226 entries; `manifest.json` is the first entry; `rootfs/`, `addons/<id>/`, `state/` trees present; no `proc`, `sys`, `dev`, `run`, `tmp`, `previous`, or staging entries; the mount points `rootfs/root/nusadesk/`, `rootfs/opt/lw-ssh/`, `rootfs/opt/lw-services/` are kept as single entries with no contents |
+| BAK-002 | Reproduction of the lost-selection defect (before the fix) | The picker round trip recreated the Activity; the page answered **"Cancelled — nothing was changed."** after Save and left a 0-byte document in Download — the export never started |
+| BAK-003 | Export after the fix, session live | The export started on the picker result, progress rendered on the page, and the record persisted: `Last backup: Everything · 20/09/26 22.20 · nusadesk-backup-full-20260920-2215.tar.gz` |
+| BAK-004 | Restore of that archive, before the extractor fixes | Rejected twice by our own reader: `unsafe-archive · payload contains too many archive entries` (53,226 > the 20,000 cap), then `io-failure · …/staging/rootfs/root/go/pkg/mod/golang.org/x/sys@v0.47.0` (a 0500 directory whose mode was applied before its contents) |
+| BAK-005 | Full restore after the fixes (session stopped) | `Last restore: succeeded` + **"Done — 53225 files · 2.46 GB"**; the `active` slot was swapped (mtime 22:42) with the old tree parked at `previous`, staging cleaned; the 597 read-only directories survived with mode 0500; the mount points exist again; the session came back from the restored tree (`127.0.0.1:22022` LISTEN) and content spot-checks pass (`etc/os-release` = Ubuntu 24.04.5, `usr/local/bin/android-cli`, `root/.bashrc`) |
+
+Notes:
+
+- **Stopping the session for a full restore** uses the platform surface the
+  product documents: the notification's `Stop` action (there is no in-app
+  stop control, ADR-0013). The picker round trip fires an Activity foreground
+  event on return, which autostarts the session again; when that start had
+  already reached `RUNNING`, the import gate answered `busy · Stop the Linux
+  session before restoring.` — so the reliable order is: stop the session,
+  then pick the file, and let the import win the race (observed both ways in
+  this run). The host stopping the session for its own restore is the obvious
+  follow-up; it needs an ADR-0013 amendment.
+- The export of a live session is a best-effort snapshot (documented): the
+  guest keeps writing while the archive streams.
+- A release-signed APK cannot be installed over a debug-signed QA build, so
+  the "older installed version" states in this plan use QA-only builds with a
+  staged `versionName`; the repository's `VERSION`/`build.gradle` were
+  reverted before any further build.
+
 ## Update-check cadence fix (ADR-0046), device run 2026-09-20
 
 **Reported symptom (S10e, real usage):** the app was installed from the

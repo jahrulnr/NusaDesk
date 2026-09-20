@@ -37,6 +37,7 @@ import gh.nusashell.nusadesk.application.runtime.RuntimeSnapshotReconciler;
 import gh.nusashell.nusadesk.application.runtime.RuntimeStateStore;
 import gh.nusashell.nusadesk.application.webapp.WebAppRegistry;
 import gh.nusashell.nusadesk.application.workspace.WorkspaceStore;
+import gh.nusashell.nusadesk.domain.backup.BackupMode;
 import gh.nusashell.nusadesk.domain.backup.BackupSelection;
 import gh.nusashell.nusadesk.domain.backup.LastBackupRecord;
 import gh.nusashell.nusadesk.domain.backup.LastBackupRun;
@@ -133,6 +134,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends Activity {
     private static final String STATE_DESTINATION = "shell.destination";
     private static final String STATE_WEB_APP = "shell.webApp";
+    /** Persisted System sub-page id (ADR-0043 surfaces). */
+    private static final String STATE_SYSTEM_PAGE = "shell.systemPage";
+    /** Persisted export selection stashed before the create-document picker. */
+    private static final String STATE_BACKUP_MODE = "shell.backupMode";
+    private static final String STATE_BACKUP_ROOTS = "shell.backupRoots";
+    private static final String STATE_BACKUP_NAME = "shell.backupName";
 
     private final ExecutorService installExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
@@ -434,6 +441,17 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(outState);
         outState.putString(STATE_DESTINATION, activeDestination.name());
         outState.putString(STATE_WEB_APP, activeWebAppId);
+        outState.putString(STATE_SYSTEM_PAGE,
+                systemScreen == null ? null : systemScreen.activePageId());
+        // A SAF picker round trip can destroy this Activity while the picker is
+        // in front, so the export selection stashed for the create-document
+        // result has to survive in the instance state.
+        if (pendingBackupSelection != null) {
+            outState.putString(STATE_BACKUP_MODE, pendingBackupSelection.getMode().getWireValue());
+            outState.putStringArrayList(STATE_BACKUP_ROOTS,
+                    new ArrayList<>(pendingBackupSelection.getRoots()));
+            outState.putString(STATE_BACKUP_NAME, pendingBackupName);
+        }
     }
 
     /**
@@ -512,6 +530,11 @@ public final class MainActivity extends Activity {
         if (savedInstanceState == null) {
             return;
         }
+        // Restored before the destination branches: the export selection is
+        // needed by the create-document result no matter which surface was
+        // open, because the picker may have outlived this Activity.
+        pendingBackupSelection = restoreBackupSelection(savedInstanceState);
+        pendingBackupName = savedInstanceState.getString(STATE_BACKUP_NAME);
         String webAppId = savedInstanceState.getString(STATE_WEB_APP);
         if (webAppId != null && definitionFor(webAppId) != null) {
             activeWebAppId = webAppId;
@@ -525,6 +548,41 @@ public final class MainActivity extends Activity {
             activeDestination = DesktopDestination.valueOf(destination);
         } catch (IllegalArgumentException ignored) {
             activeDestination = DesktopDestination.HOME;
+        }
+        if (activeDestination == DesktopDestination.SYSTEM) {
+            systemScreen.restorePage(savedInstanceState.getString(STATE_SYSTEM_PAGE));
+        }
+    }
+
+    /**
+     * Rebuilds the export selection that was stashed before the SAF
+     * create-document picker opened. The platform destroys and recreates this
+     * Activity on some devices while the picker is in front, so the selection
+     * has to come back from the instance state — without it the result handler
+     * would answer "cancelled" after the user tapped Save and leave an empty
+     * document behind.
+     *
+     * @return the rebuilt selection, or {@code null} when none was pending or
+     *         the persisted value no longer validates
+     */
+    private static BackupSelection restoreBackupSelection(Bundle state) {
+        BackupMode mode = BackupMode.fromWireValue(state.getString(STATE_BACKUP_MODE, ""));
+        if (mode == null) {
+            return null;
+        }
+        try {
+            switch (mode) {
+                case HOME:
+                    return BackupSelection.home();
+                case CUSTOM:
+                    List<String> roots = state.getStringArrayList(STATE_BACKUP_ROOTS);
+                    return BackupSelection.custom(
+                            roots == null ? Collections.<String>emptyList() : roots);
+                default:
+                    return BackupSelection.full();
+            }
+        } catch (IllegalArgumentException stale) {
+            return null;
         }
     }
 

@@ -6,6 +6,34 @@ Accepted; the implementation lands 2026-09-20 with the **System → Settings →
 Backup & restore** page and the streaming `tar.gz` archive. The archive format
 is versioned (`formatVersion: 1`).
 
+**Device-verified round trip, 2026-09-20 (S10e):** an "Everything" export
+through the SAF picker produced 952 MB / 53,226 entries, and importing it back
+completed a full restore (`Done — 53225 files · 2.46 GB`) with the atomic swap
+and its `previous` slot. Four defects had to be fixed for that round trip to
+work, and each is now pinned by a test:
+
+1. the export lost its stashed selection when the platform recreated the
+   Activity during the create-document picker round trip (the result answered
+   "cancelled" and left an empty document) — the selection and the open System
+   sub-page now survive in the instance state;
+2. the export walk descended into the guest's add-on overlay mount points,
+   which carry mode `000`, and failed with an `io-failure` — a mount point now
+   keeps its entry and is never listed, and the device's own tool trees
+   (`/system`, `/apex`) stay on the device instead of travelling inside a
+   guest backup;
+3. the shared extractor's entry cap (20,000, sized for the curated rootfs
+   payload) rejected the archive this app had just written — the cap is now
+   500,000 with the byte cap still the primary bound;
+4. the extractor applied a directory's mode before writing its contents, so a
+   read-only directory (the guest's Go module cache holds 597 of them) failed
+   the restore — directory modes are applied after the whole payload,
+   deepest-first.
+
+The full restore still requires a stopped session: the notification's `Stop`
+action is the documented way, and the picker's return fires a foreground event
+that autostarts the session again — the host stopping the session for its own
+restore is the recorded follow-up (ADR-0013 amendment).
+
 ## Context
 
 Moving to a new phone, or a clean reinstall (same signing identity), currently

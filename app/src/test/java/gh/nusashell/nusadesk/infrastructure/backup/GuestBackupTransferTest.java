@@ -150,6 +150,42 @@ public class GuestBackupTransferTest {
 
     // ---- Export ----
 
+    /**
+     * The add-on overlay mount points are mode {@code 000} in a real guest, so
+     * the walk must emit their entries and skip the subtree instead of failing
+     * with an {@code io-failure} (their payloads travel as {@code addons/<id>}
+     * trees). Regression for the export that died on {@code opt/lw-ssh}.
+     */
+    @Test
+    public void exportSkipsAnUnreadableOverlayMountPointInsteadOfFailing() throws Exception {
+        setUpTransfer();
+        makeUsableRootfs();
+        Path overlay = rootfs().resolve("opt/lw-ssh");
+        writeFile(overlay.resolve("usr/bin/sshd"), "sshd\n");
+        Files.setPosixFilePermissions(overlay,
+                java.nio.file.attribute.PosixFilePermissions.fromString("---------"));
+        // The device tool trees are mount points too: entries stay, the
+        // device's own files never travel inside a guest backup.
+        writeFile(rootfs().resolve("system/lib64/libc.so"), "device-libc\n");
+        writeFile(rootfs().resolve("apex/com.android.runtime/bin/linker64"), "device-linker\n");
+        try {
+            List<String> names = archiveEntryNames(archiveFrom(filesDir, BackupSelection.full()));
+
+            assertTrue("the mount point keeps its entry", names.contains("rootfs/opt/lw-ssh/"));
+            assertFalse("its contents are never archived",
+                    names.contains("rootfs/opt/lw-ssh/usr/bin/sshd"));
+            assertTrue(names.contains("rootfs/system/"));
+            assertTrue(names.contains("rootfs/apex/"));
+            assertFalse("device files stay on the device",
+                    names.contains("rootfs/system/lib64/libc.so"));
+            assertFalse("device files stay on the device",
+                    names.contains("rootfs/apex/com.android.runtime/bin/linker64"));
+        } finally {
+            Files.setPosixFilePermissions(overlay,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+    }
+
     @Test
     public void fullExportArchivesRuntimeAddonsAndStateWithExclusions()
             throws Exception {

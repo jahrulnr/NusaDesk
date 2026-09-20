@@ -114,6 +114,55 @@ public final class SystemScreenView extends FrameLayout
         hubPane.scrollTo(0, 0);
     }
 
+    /** Persisted sub-page ids (ADR-0043 surfaces). */
+    public static final String PAGE_SETTINGS = "settings";
+    /** Persisted sub-page id for the curated-install page. */
+    public static final String PAGE_INSTALL = "install";
+    /** Persisted sub-page id for the backup &amp; restore page. */
+    public static final String PAGE_BACKUP = "backup";
+    /** Persisted sub-page id for the about page. */
+    public static final String PAGE_ABOUT = "about";
+
+    /**
+     * @return the visible sub-page's id, or {@code null} while the hub is
+     *         shown. The host persists this in its instance state so an
+     *         Activity recreation — a SAF picker round trip on a device that
+     *         destroys the covered Activity, a configuration change — returns
+     *         the user to the page they left instead of the hub.
+     */
+    public String activePageId() {
+        if (activePage == settingsPage) {
+            return PAGE_SETTINGS;
+        }
+        if (activePage == installPage) {
+            return PAGE_INSTALL;
+        }
+        if (activePage == backupPage) {
+            return PAGE_BACKUP;
+        }
+        if (activePage == aboutPage) {
+            return PAGE_ABOUT;
+        }
+        return null;
+    }
+
+    /**
+     * Re-opens a sub-page by its persisted id. A {@code null} or unknown id —
+     * an older state bundle, a page that no longer exists — leaves the hub
+     * visible rather than blanking the screen.
+     */
+    public void restorePage(String pageId) {
+        if (PAGE_SETTINGS.equals(pageId)) {
+            showPage(settingsPage);
+        } else if (PAGE_INSTALL.equals(pageId)) {
+            showPage(installPage);
+        } else if (PAGE_BACKUP.equals(pageId)) {
+            showPage(backupPage);
+        } else if (PAGE_ABOUT.equals(pageId)) {
+            showPage(aboutPage);
+        }
+    }
+
     /** Wires the "How it works" contract disclosure on the About page. */
     public void setOnHowItWorksListener(OnClickListener listener) {
         aboutPage.setOnHowItWorksListener(listener);

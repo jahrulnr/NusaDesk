@@ -26,6 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Make the SAF backup round trip actually complete on a real guest (ADR-0044):
+  a create-document round trip that recreates the Activity — which the platform
+  does while the picker is in front — no longer loses the stashed export
+  selection, so the export starts instead of answering "cancelled" and leaving
+  an empty document behind; the System sub-page survives the same recreation
+- The export walk emits a bind mount point's entry and never lists it: the
+  guest's add-on overlays carry mode 000, which failed every Everything export
+  with an `io-failure`, and the device's own tool trees (`/system`, `/apex`)
+  stay on the device instead of travelling inside a guest backup
+- The restore accepts an archive this app produced: the shared extractor's
+  entry cap was sized for the curated rootfs payload (20,000) while a real
+  guest backup carries 53,226 entries, and directory modes are applied after
+  the payload instead of before it, so read-only directories (the guest's Go
+  module cache holds 597 of them) no longer fail the restore
 - Fix the update check's cadence (ADR-0046): the 24 hour floor that let a
   single attempt silence the check for a whole day is now a 30 minute floor
   applied to every outcome, and a changed installed version — a sideloaded or

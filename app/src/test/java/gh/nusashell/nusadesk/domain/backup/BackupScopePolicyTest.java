@@ -83,6 +83,49 @@ public class BackupScopePolicyTest {
         }
     }
 
+    /**
+     * The add-on overlay mount points carry mode {@code 000} in the guest, so
+     * an export that descends into them fails with an io-failure; their
+     * entries stay (the mount point survives a restore) and their payloads
+     * travel as the separate {@code addons/<id>} trees.
+     */
+    @Test
+    public void exclusionsCoverAddonOverlayContentsButKeepTheirMountPoints() {
+        for (String excluded : Arrays.asList(
+                "opt/lw-ssh/usr", "opt/lw-ssh/usr/bin/sshd", "opt/lw-services/usr/bin/python3",
+                "opt/lw-services/lw-proc")) {
+            assertTrue(excluded + " must be excluded",
+                    BackupScopePolicy.isExcludedFromArchive(excluded));
+        }
+        for (String kept : Arrays.asList(
+                "opt", "opt/lw-ssh", "opt/lw-services", "opt/go/bin/go",
+                "opt/nusadesk", "usr/share/lw-services/EUPL-LICENSE.md")) {
+            assertFalse(kept + " must be archived",
+                    BackupScopePolicy.isExcludedFromArchive(kept));
+        }
+    }
+
+    /**
+     * The walk needs a second predicate: an excluded *path* is not archived at
+     * all, while a mount point keeps its entry and skips its subtree — the
+     * only safe option for a directory the process cannot list.
+     */
+    @Test
+    public void mountPointsKeepTheirEntryWithoutBeingDescendedInto() {
+        for (String mountPoint : Arrays.asList(
+                "root/nusadesk", "opt/lw-ssh", "opt/lw-services",
+                "system", "apex", "linkerconfig")) {
+            assertTrue(mountPoint + " is a mount point",
+                    BackupScopePolicy.isMountPointWithoutContents(mountPoint));
+        }
+        for (String ordinary : Arrays.asList(
+                "opt", "opt/go", "opt/lw-ssh/usr", "root", "etc", "system/bin",
+                "apex/com.android.runtime", "", null)) {
+            assertFalse(String.valueOf(ordinary) + " is not a mount point",
+                    BackupScopePolicy.isMountPointWithoutContents(ordinary));
+        }
+    }
+
     @Test
     public void manifestRootsMustMatchTheirMode() {
         // FULL carries no selected roots.

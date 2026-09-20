@@ -1,5 +1,7 @@
 package gh.nusashell.nusadesk.domain.backup;
 
+import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -12,11 +14,14 @@ import java.util.Set;
  *
  * <p>Owns three facts of the backup format: the fixed {@link #HOME} root set,
  * the CUSTOM allowlist of top-level guest directories, and the export-side
- * exclusions that apply to every mode. Excluded paths are the workspace bind
- * target inside the guest ({@code root/nusadesk} — the directory entry itself
- * is kept so the mount point survives a restore, but nothing under it is ever
- * archived) and the virtual top-level directories {@code proc}, {@code sys},
- * {@code dev}, {@code run} and {@code tmp} with everything below them.</p>
+ * exclusions that apply to every mode. Excluded paths are the bind mount
+ * targets inside the guest — the workspace folder ({@code root/nusadesk}) and
+ * the add-on overlays ({@code opt/lw-ssh}, {@code opt/lw-services}) — where the
+ * directory entry itself is kept so the mount point survives a restore but
+ * nothing under it is ever archived (the overlay payloads travel as
+ * {@code addons/<id>} trees), plus the virtual top-level directories
+ * {@code proc}, {@code sys}, {@code dev}, {@code run} and {@code tmp} with
+ * everything below them.</p>
  *
  * <p>All paths handled here are rootfs-relative, slash-separated and carry no
  * leading slash ({@code "usr/local"}); the allowlist literals in
@@ -31,6 +36,27 @@ public final class BackupScopePolicy {
 
     /** Rootfs-relative workspace bind target whose contents are never archived. */
     public static final String WORKSPACE_RELATIVE_PATH = "root/nusadesk";
+
+    /**
+     * Rootfs-relative add-on overlay mount points whose contents are never
+     * archived. The guest-side provisioning creates them with mode {@code 000}
+     * (unreadable even for the app that owns them), and their payloads are the
+     * separately archived {@code addons/<id>} trees, so descending into them
+     * can only fail an export or duplicate data.
+     */
+    private static final Set<String> OVERLAY_MOUNT_POINTS = Collections.unmodifiableSet(
+            new LinkedHashSet<>(Arrays.asList(
+                    relativeOf(CuratedRuntimeCatalog.SSH_OVERLAY_GUEST_DIR),
+                    relativeOf(CuratedRuntimeCatalog.SERVICES_OVERLAY_GUEST_DIR))));
+
+    /**
+     * Rootfs-relative device trees the session binds in (ADR-0045). They belong
+     * to the device, not to the guest: a backup keeps their mount-point entries
+     * so a restore reproduces the layout, but never the device's own files —
+     * those would be a foreign, device-specific copy inside someone's rootfs.
+     */
+    private static final Set<String> TOOL_TREE_MOUNT_POINTS = Collections.unmodifiableSet(
+            new LinkedHashSet<>(Arrays.asList("system", "apex", "linkerconfig")));
 
     /** Fixed root set for {@link BackupMode#HOME}, guest-absolute spellings. */
     private static final List<String> HOME_ROOTS = Collections.unmodifiableList(
@@ -55,9 +81,10 @@ public final class BackupScopePolicy {
 
     /**
      * True when a rootfs-relative path must not be archived: it is, or sits
-     * under, a virtual top-level directory, or it sits under the workspace
-     * bind target. The workspace mount-point directory itself returns false
-     * so its entry is still emitted and the mount point survives a restore.
+     * under, a virtual top-level directory, or it sits under a bind mount
+     * target (the workspace folder or an add-on overlay). The mount-point
+     * directories themselves return false so their entries are still emitted
+     * and the mount points survive a restore.
      */
     public static boolean isExcludedFromArchive(String rootfsRelativePath) {
         if (rootfsRelativePath == null || rootfsRelativePath.isEmpty()) {
@@ -72,7 +99,33 @@ public final class BackupScopePolicy {
         if (EXCLUDED_TOP_LEVEL.contains(first)) {
             return true;
         }
-        return normalized.startsWith(WORKSPACE_RELATIVE_PATH + "/");
+        if (normalized.startsWith(WORKSPACE_RELATIVE_PATH + "/")) {
+            return true;
+        }
+        for (String mountPoint : OVERLAY_MOUNT_POINTS) {
+            if (normalized.startsWith(mountPoint + "/")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True for a bind mount target inside the guest whose directory entry is
+     * archived but whose contents never are. The walk emits the entry so the
+     * mount point survives a restore, then skips the subtree — it cannot even
+     * be listed: the guest-side provisioning creates these directories with
+     * mode {@code 000} (the workspace folder and the add-on overlays alike),
+     * so descending into one fails the export with an {@code io-failure}.
+     */
+    public static boolean isMountPointWithoutContents(String rootfsRelativePath) {
+        if (rootfsRelativePath == null || rootfsRelativePath.isEmpty()) {
+            return false;
+        }
+        String normalized = normalizeRelative(rootfsRelativePath);
+        return normalized.equals(WORKSPACE_RELATIVE_PATH)
+                || OVERLAY_MOUNT_POINTS.contains(normalized)
+                || TOOL_TREE_MOUNT_POINTS.contains(normalized);
     }
 
     /**

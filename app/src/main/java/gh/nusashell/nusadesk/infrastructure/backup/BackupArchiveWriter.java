@@ -14,12 +14,10 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.file.FileVisitResult;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.List;
 import java.util.Set;
@@ -209,59 +207,44 @@ public final class BackupArchiveWriter {
     }
 
     /**
-     * Depth-first walk of {@code tree.source} feeding {@code sink}. Applies
-     * the shared exclusions for rootfs trees, emits the workspace mount-point
-     * directory without its contents, stores symlinks as links, and skips
-     * non-regular non-directory files (fifos, sockets, device nodes — runtime
-     * ephemera that must never be restored).
+     * Depth-first walk of {@code tree.source} feeding {@code sink}: a
+     * directory's entry is emitted first, and only then does the walk decide
+     * whether to descend. An excluded path is skipped whole; a bind mount
+     * point (the workspace folder, the add-on overlays) keeps its entry and is
+     * never listed at all, because listing one can fail outright — the guest
+     * provisioning creates those directories with mode {@code 000}. Symlinks
+     * are stored as links, and non-regular non-directory files (fifos,
+     * sockets, device nodes) are skipped: runtime ephemera that must never be
+     * restored. Any other read failure still fails the export honestly.
      */
-    private void walk(final Tree tree, final Sink sink) throws IOException {
-        Files.walkFileTree(tree.source, new SimpleFileVisitor<Path>() {
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs)
-                    throws IOException {
-                String rel = relativize(tree.source, dir);
-                String guestRel = tree.guestRelative(rel);
-                if (guestRel != null && BackupScopePolicy.isExcludedFromArchive(guestRel)) {
-                    return FileVisitResult.SKIP_SUBTREE;
-                }
-                sink.directory(archiveName(tree, rel), dir);
-                if (BackupScopePolicy.WORKSPACE_RELATIVE_PATH.equals(guestRel)) {
-                    return FileVisitResult.SKIP_SUBTREE;
-                }
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
-                    throws IOException {
-                String rel = relativize(tree.source, file);
-                String guestRel = tree.guestRelative(rel);
-                if (guestRel != null && BackupScopePolicy.isExcludedFromArchive(guestRel)) {
-                    return FileVisitResult.CONTINUE;
-                }
-                String name = archiveName(tree, rel);
-                if (attrs.isSymbolicLink()) {
-                    sink.symlink(name, file);
-                } else if (attrs.isRegularFile()) {
-                    sink.file(name, file, attrs.size());
-                }
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult visitFileFailed(Path file, IOException exception)
-                    throws IOException {
-                // A file that cannot be read fails the backup honestly instead
-                // of silently producing an archive that misses user data.
-                throw exception;
-            }
-        });
+    private void walk(Tree tree, Sink sink) throws IOException {
+        walkDirectory(tree, tree.source, "", sink);
     }
 
-    private static String relativize(Path base, Path path) {
-        Path relative = base.relativize(path);
-        return relative.toString().replace('\\', '/');
+    private void walkDirectory(Tree tree, Path dir, String rel, Sink sink) throws IOException {
+        sink.directory(archiveName(tree, rel), dir);
+        String guestRel = tree.guestRelative(rel);
+        if (guestRel != null && BackupScopePolicy.isMountPointWithoutContents(guestRel)) {
+            return;
+        }
+        try (DirectoryStream<Path> children = Files.newDirectoryStream(dir)) {
+            for (Path child : children) {
+                String name = child.getFileName().toString();
+                String childRel = rel.isEmpty() ? name : rel + "/" + name;
+                String childGuest = tree.guestRelative(childRel);
+                if (childGuest != null && BackupScopePolicy.isExcludedFromArchive(childGuest)) {
+                    continue;
+                }
+                String archiveName = archiveName(tree, childRel);
+                if (Files.isSymbolicLink(child)) {
+                    sink.symlink(archiveName, child);
+                } else if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) {
+                    walkDirectory(tree, child, childRel, sink);
+                } else if (Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)) {
+                    sink.file(archiveName, child, Files.size(child));
+                }
+            }
+        }
     }
 
     private static String archiveName(Tree tree, String rel) {
