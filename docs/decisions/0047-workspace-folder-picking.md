@@ -84,5 +84,9 @@ A third-party path-based picker was evaluated and rejected:
   roots are already constrained, so those columns would be noise.
 - An empty folder can be chosen (the write probe still runs); a folder that
   disappears between listing and confirmation is reported, not bound.
-- The system document picker stays for the SAF copy actions, which remain the
-  only way to reach a folder the app cannot bind.
+- The system document picker is no longer part of the workspace path: the
+  in-app browser returns a host path directly, so no SAF grant is involved in
+  binding. A SAF copy action — exporting the workspace to a folder the app
+  cannot bind — was considered for Android 10 and deliberately not built: that
+  workspace lives in the app's media tree, which a file manager and MTP already
+  reach, so the picker alone closes the "hard to back up" gap.
