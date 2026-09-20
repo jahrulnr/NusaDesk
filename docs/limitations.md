@@ -468,6 +468,26 @@ an already-consented device descriptor. What that means in practice:
   are regenerated: the Keystore-wrapped root credential is re-asserted at
   the next session start.
 
+- The native Android tooling tier (ADR-0045) is bounded by the app's own uid
+  and by the trees the product binds: `/system/bin`, `/system/lib64` and the
+  Bionic runtime tree `/apex` (on Android 11+ `/system/bin/linker64` is only
+  a symlink into `/apex`, so that bind is what makes any Bionic exec resolve
+  at all). `/linkerconfig` is unreadable, so the linker runs without its
+  namespace map (the `failed to find generated linker configuration` warning
+  on every Bionic exec is unavoidable, and libraries living only in an APEX —
+  e.g. `libicu` — do not resolve by name; `android-cli` gives its children an
+  Android `PATH`/`LD_LIBRARY_PATH` prefix as a partial bridge), `ls
+  /system/bin` is denied while `exec` of its entries works, and the verbs the
+  platform reserves for another uid (`screencap`, `input`, `pm`, `am`,
+  `dumpsys`) remain the user's own higher-tier decision, not a product gate.
+  `screencap` can report success and still write a 0-byte file as an app uid,
+  so a capture counts as evidence only when the file has content.
+  `android-cli su` runs the device's own `/system/bin/su`: absent on a stock
+  device (typed exit 5 with a hint), and on a rooted one the user's own root
+  door with one prompt per grant — where a genuine root child inside the
+  traced session is an unusual PRoot state, and `adb root` over the
+  documented shell tier stays the cleaner path.
+
 ### Guest GPU/NPU acceleration is device-class specific
 
 There is no general guest GPU path. The community Mesa stack is SoC-specific:

@@ -150,6 +150,18 @@ runtime requirements.
   The archive is a plain streaming `tar.gz` you pick through the system file
   dialog — it may contain secrets (host keys, your files), so keep it
   somewhere you trust.
+- `android-cli` gives the session the phone's own tooling, natively
+  (ADR-0045): the device's `/system/bin`, `/system/lib64` and the Bionic
+  runtime tree `/apex` are bound into the guest, and `android-cli sh`,
+  `android-cli getprop`, `android-cli toolbox <applet>`,
+  `android-cli toybox <applet>`, `android-cli su` (the device's own
+  superuser — absent on a stock device, the user's own root door on a rooted
+  one), and `android-cli exec <path>` run them under a collision-free
+  namespace — never on `PATH`, so Ubuntu's `sh`/`ls`/`ps` stay intact. Every
+  call reports its tier (`tier=app source=native`); verbs the platform
+  reserves for another uid (screencap, input, pm, am, dumpsys) fail with the
+  platform's own message, and `android-cli doctor` shows what exists on this
+  device.
 - Live media is the camera and/or microphone streamed as H.264/AAC over RTSP on
   loopback while the guest session and the visible media notification are
   active. No capture file is ever written — save one yourself from the stream if

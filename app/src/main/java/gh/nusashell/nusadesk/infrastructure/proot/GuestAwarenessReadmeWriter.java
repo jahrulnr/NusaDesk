@@ -42,6 +42,12 @@ import java.util.Set;
  *       ({@link GuestUsbDaemonWriter}, {@link GuestUsbShimWriter}): the
  *       wrapper makes the stock guest {@code adb} see devices attached to the
  *       host's USB port through the daemon and the LD_PRELOAD libusb shim;</li>
+ *   <li>{@code /usr/local/bin/android-cli} — the native Android tool
+ *       dispatcher ({@link GuestAndroidCliWriter}, ADR-0045): {@code sh},
+ *       {@code getprop}, {@code toolbox} and {@code toybox} applets,
+ *       {@code su}, and a scoped {@code exec} over the device binaries the
+ *       host binds under {@code /system}, reporting its tier on every
+ *       call;</li>
  *   <li>the {@code termux-*} command clients declared by
  *       {@link GuestTermuxCompatWriter} in the same bin directory, each also
  *       an executable Python 3 script over the same bridge.</li>
@@ -138,6 +144,9 @@ public final class GuestAwarenessReadmeWriter {
         updated |= ensureFile(shimDir.resolve(GuestUsbShimWriter.SHIM_FILE_NAME),
                 GuestUsbShimWriter.shimSource(version)
                         .getBytes(StandardCharsets.UTF_8), README_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestAndroidCliWriter.CLI_FILE_NAME),
+                GuestAndroidCliWriter.scriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
         updated |= ensureTermuxCompat(bin, docs, version);
         return updated ? Result.UPDATED : Result.UNCHANGED;
     }

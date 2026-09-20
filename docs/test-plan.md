@@ -938,6 +938,40 @@ the existing MainActivity renderers still update them — state ownership did
 not move with the layout. `SystemScreenView.navigateBack()` is the Back
 contract MainActivity consults for the System destination.
 
+## Native Android tooling in the guest (`android-cli`, ADR-0045), device run 2026-09-20
+
+Run on the S10e (SM-G970F, API 31) with the debug build; the session binds
+`/system/bin`, `/system/lib64` and `/apex`, and the writer installs
+`/usr/local/bin/android-cli`.
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| AND-001 | `android-cli doctor` | `sh`/`toolbox`/`toybox` present and exec-ok, `getprop` present, `device su: absent`, `tier: app source=native` |
+| AND-002 | `android-cli getprop ro.product.model` / `ro.build.version.sdk` | `SM-G970F` / `31` — the device's own toolbox, natively, as the app uid |
+| AND-003 | `android-cli toybox echo …` and `android-cli sh -c 'id'` | `native-toybox-ok`; `uid=0(root) …` (the PRoot fake-root mapping) — the device's mksh runs inside the session |
+| AND-004 | `android-cli exec /system/bin/input keyevent 0` | the shell script now resolves its `cmd`/`app_process` because children get Android's `PATH`; the injection itself is the platform's call |
+| AND-005 | `android-cli exec /system/bin/screencap -p …` | exits 0 but writes a 0-byte file (display state / app-uid capture limit) — recorded as open |
+
+Run findings:
+
+1. **Android 11+ needs the APEX bind.** `/system/bin/linker64` is only a
+   symlink into `/apex/com.android.runtime`; without binding `/apex` every
+   Bionic binary fails with "required file not found". The curated rootfs
+   also carries physical Bionic copies from provisioning, which the
+   `/system/bin` bind shadows — the apex bind is what makes the tooling exec.
+2. **`/linkerconfig` is unreadable by the app domain** (SELinux), so the
+   linker runs without its namespace map: the warning
+   `failed to find generated linker configuration` appears on every Bionic
+   exec (cosmetic), and libraries that live only in an APEX (e.g. `libicu`
+   for `libharfbuzz_ng`) do not resolve by name. `android-cli` compensates
+   for its children with an Android `PATH` + `LD_LIBRARY_PATH` prefix; the
+   session's own paths are never touched.
+3. **The app cannot list `/system/bin`** (`ls` is denied) while `stat` and
+   `exec` of its entries work: the tooling is reachable, the listing is not.
+4. **`su` is absent** on this (non-rooted) device and the CLI answers that as
+   a typed result; the root tier stays the user's own door on a rooted
+   device, one Magisk prompt per grant.
+
 ## License and distribution note
 
 - PRoot is GPL-2.0-or-later. Packaging/distributing it requires GPLv2+

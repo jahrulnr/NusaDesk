@@ -63,13 +63,17 @@ import java.util.Optional;
  * and Bionic libraries under {@link #ANDROID_SYSTEM_ROOT} bound file-by-file
  * at their identical guest paths — the packaged bridge is an Android PIE and
  * cannot exec inside a glibc guest without its host linker and libraries.
- * Every host source and guest target is a constant: never caller input, never
- * a user path, and never a {@code /system} directory-wide bind. A bind is
- * conditional on its host source being a regular file, so a missing optional
- * file is skipped rather than failing the launch. Guest content always wins:
- * when the rootfs already carries a file, directory, or symlink at a target,
- * the product bind is skipped instead of shadowing it (the same rule
- * {@link GuestServiceBridge} wiring uses), and the target's parent
+ * Every host source and guest target is a constant: never caller input and
+ * never a user path. The inner-runtime binds are files; the session also
+ * binds the device's tool trees ({@code /system/bin}, {@code /system/lib64})
+ * as directories so the guest can run the platform's own binaries natively
+ * (ADR-0045) — deliberately directory-wide there, because the platform's own
+ * uid and permission checks are the boundary, and the host partition is
+ * read-only. A bind is conditional on its host source existing, so a missing
+ * optional path is skipped rather than failing the launch. Guest content
+ * always wins: when the rootfs already carries a file, directory, or symlink
+ * at a target, the product bind is skipped instead of shadowing it (the same
+ * rule {@link GuestServiceBridge} wiring uses), and the target's parent
  * directories are created under the active rootfs only when the bind is
  * actually added — never through a symlink or over non-directory content, so
  * no write can escape the rootfs. The outer {@code PROOT_LOADER} env is
@@ -141,6 +145,13 @@ public final class ProotLauncher {
             Collections.unmodifiableList(Arrays.asList(
                     "bin/linker64", "lib64/libc.so", "lib64/libdl.so", "lib64/libm.so"));
 
+    /**
+     * Android tool trees bound into the guest at their identical paths so the
+     * session can run the device's own binaries natively (ADR-0045): the
+     * Android shell ({@code /system/bin/sh}), toolbox ({@code getprop}), and
+     * toybox applets. The host partition is read-only, so the bind is
+     * read-only in effect; guest content still wins over every bind.
+     */
     private final Context context;
     private final Path androidSystemRoot;
     private final ProotCommandFactory commandFactory;
@@ -298,7 +309,14 @@ public final class ProotLauncher {
         // targets only — see the class Javadoc for the contract. Each bind is
         // skipped when its host source is absent or the guest already carries
         // content at the target, so this never fails a normal guest launch.
-        binds.addAll(innerRuntimeBinds(prootBinary, prootLoader, activeRootfs));
+        // The device's own tool trees (ADR-0045): the session can run
+        // /system/bin/sh, getprop, and toybox natively. Fixed host paths and
+        // fixed guest targets, and guest content still wins. These come
+        // first so a bound tool tree also covers the linker/Bionic files
+        // inside it and the inner-runtime file binds can be skipped.
+        List<ProotBindMount> toolBinds = androidToolBinds(activeRootfs);
+        binds.addAll(toolBinds);
+        binds.addAll(innerRuntimeBinds(prootBinary, prootLoader, activeRootfs, toolBinds));
         // Every activated add-on overlay is bound at its catalog-declared guest
         // dir for every guest launch (daemon, service manager, guest setup,
         // deb decoding): the guest always sees the installed add-ons without a
@@ -469,6 +487,107 @@ public final class ProotLauncher {
     }
 
     /**
+     * The device's own tool trees bound into the session at identical guest
+     * paths (ADR-0045). A directory bind is deliberate here: the product
+     * exposes the platform's tooling as a whole and lets the platform's own
+     * uid and permission checks decide what each tool may do. The host
+     * partition is read-only, and the guest-content-wins rule still applies
+     * to every bind.
+     */
+    private List<ProotBindMount> androidToolBinds(Path activeRootfs) {
+        List<ProotBindMount> binds = new ArrayList<>();
+        if (!systemTreeIsProductOwned(activeRootfs)) {
+            return binds;
+        }
+        Path systemParent = androidSystemRoot.getParent() == null
+                ? Paths.get("/") : androidSystemRoot.getParent();
+        addToolTreeBind(binds, activeRootfs,
+                androidSystemRoot.resolve("bin"), ANDROID_SYSTEM_ROOT + "/bin");
+        addToolTreeBind(binds, activeRootfs,
+                androidSystemRoot.resolve("lib64"), ANDROID_SYSTEM_ROOT + "/lib64");
+        // On Android 11+ the Bionic linker, libc, and several ABI libraries
+        // live in APEXes and /system/bin/linker64 is only a symlink into the
+        // runtime APEX; the linker configuration in /linkerconfig tells the
+        // linker which namespaces (and therefore which APEX lib dirs) to
+        // search. Both are bound whole so the device's tooling, not a curated
+        // subset of it, is what the guest sees.
+        addToolTreeBind(binds, activeRootfs,
+                systemParent.resolve("apex"), "/apex");
+        addToolTreeBind(binds, activeRootfs,
+                systemParent.resolve("linkerconfig"), "/linkerconfig");
+        return binds;
+    }
+
+    /**
+     * Add one tool-tree bind when the host tree is a directory, the target is
+     * not a symlink, and the mount point can be created. Guest content still
+     * wins: a target that cannot be prepared is skipped, never shadowed.
+     */
+    private void addToolTreeBind(List<ProotBindMount> binds, Path activeRootfs,
+                                 Path host, String guestTarget) {
+        if (!Files.isDirectory(host)) {
+            return;
+        }
+        Path target = activeRootfs.resolve(guestTarget.substring(1));
+        if (Files.isSymbolicLink(target)) {
+            return;
+        }
+        if (!createGuestParentDirs(activeRootfs, target.getParent())) {
+            return;
+        }
+        try {
+            // The mount point itself must exist for PRoot to attach the
+            // binding, exactly like the file binds' parent directories.
+            Files.createDirectories(target);
+        } catch (IOException | RuntimeException e) {
+            return;
+        }
+        binds.add(ProotBindMount.of(host.toString(), guestTarget));
+    }
+
+    /**
+     * The {@code /system} tree inside the guest is product-owned: the rootfs
+     * never legitimately carries it, and the only files that may already be
+     * there are the Bionic artifacts the curated provisioning and the earlier
+     * file binds placed ({@link #INNER_ANDROID_SYSTEM_FILES}). Any other
+     * entry, a symlink, or a file where the tree should be counts as guest
+     * content and disables the tool-tree binds for that session — fail closed.
+     */
+    private static boolean systemTreeIsProductOwned(Path activeRootfs) {
+        Path system = activeRootfs.resolve("system");
+        if (Files.isSymbolicLink(system)) {
+            return false;
+        }
+        if (!Files.exists(system)) {
+            return true;
+        }
+        if (!Files.isDirectory(system)) {
+            return false;
+        }
+        try (java.util.stream.Stream<Path> walk = Files.walk(system)) {
+            for (Path path : (Iterable<Path>) walk::iterator) {
+                if (path.equals(system)) {
+                    continue;
+                }
+                if (Files.isSymbolicLink(path)) {
+                    return false;
+                }
+                if (Files.isDirectory(path)) {
+                    continue;
+                }
+                String name = system.relativize(path).toString()
+                        .replace(File.separatorChar, '/');
+                if (!INNER_ANDROID_SYSTEM_FILES.contains(name)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
      * The fixed inner-runtime bind set for the nested udocker PRoot (see the
      * class Javadoc): the packaged bridge pair bound at
      * {@link #INNER_PROOT_GUEST_PATH}/{@link #INNER_PROOT_LOADER_GUEST_PATH},
@@ -478,16 +597,31 @@ public final class ProotLauncher {
      * skips that one bind.
      */
     private List<ProotBindMount> innerRuntimeBinds(
-            Path prootBinary, Path prootLoader, Path activeRootfs) {
+            Path prootBinary, Path prootLoader, Path activeRootfs,
+            List<ProotBindMount> toolBinds) {
         List<ProotBindMount> binds = new ArrayList<>();
         addFixedInnerBind(binds, activeRootfs, prootBinary, INNER_PROOT_GUEST_PATH);
         addFixedInnerBind(binds, activeRootfs, prootLoader, INNER_PROOT_LOADER_GUEST_PATH);
         for (String relative : INNER_ANDROID_SYSTEM_FILES) {
+            String guestTarget = ANDROID_SYSTEM_ROOT + "/" + relative;
+            if (coveredByToolBind(toolBinds, guestTarget)) {
+                continue;
+            }
             addFixedInnerBind(binds, activeRootfs,
-                    androidSystemRoot.resolve(relative),
-                    ANDROID_SYSTEM_ROOT + "/" + relative);
+                    androidSystemRoot.resolve(relative), guestTarget);
         }
         return binds;
+    }
+
+    /** True when one of the bound tool trees already provides the guest path. */
+    private static boolean coveredByToolBind(List<ProotBindMount> toolBinds,
+                                             String guestTarget) {
+        for (ProotBindMount bind : toolBinds) {
+            if (guestTarget.startsWith(bind.getGuestPath() + "/")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

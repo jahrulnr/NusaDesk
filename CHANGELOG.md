@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add `android-cli` to the guest (ADR-0045): the session binds the device's
+  own tool trees — `/system/bin`, `/system/lib64` and the Bionic runtime tree
+  `/apex`, without which no Bionic exec resolves its linker on Android 11+ —
+  and the dispatcher exposes them under a collision-free namespace — `sh`
+  (the device's mksh), `getprop` (toolbox), `toolbox <applet>`,
+  `toybox <applet>`, `su` (the device's own superuser, typed as absent when
+  the device has none), and `exec <path>` for anything else the platform lets
+  an app uid run — with `tier=app source=native` reported on every call
+  (quiet with `-q`), child exit codes propagated exactly, the platform's own
+  denial text surfaced verbatim (screencap, input, pm, am, dumpsys belong to
+  a higher tier, and the optional shell tier through the device's own adbd is
+  documented rather than hidden), and a `doctor` that lists what actually
+  exists. `/system/bin` never joins the guest PATH, so no Ubuntu tool is
+  shadowed and every entry stays reachable by absolute path.
+
 ## [0.5.0] - 2026-09-20
 
 ### Added

@@ -209,9 +209,11 @@ public class ProotLauncherTest {
     }
 
     @Test
-    public void buildSpecBindsAndroidLinkerAndBionicFromSystemRoot() throws Exception {
-        // Stage a fake /system tree through the package-private seam; the
-        // guest targets are the identical absolute paths.
+    public void buildSpecBindsAndroidToolTreesAndCoveredBionic() throws Exception {
+        // Stage a fake /system tree through the package-private seam: the
+        // device's tool directories are bound at their identical guest paths
+        // (ADR-0045), and the linker/Bionic files inside them are covered by
+        // those binds instead of being bound twice.
         Path systemRoot = filesDir.resolve("faked-system");
         writeIfAbsent(systemRoot.resolve("bin/linker64"), "");
         writeIfAbsent(systemRoot.resolve("lib64/libc.so"), "");
@@ -225,10 +227,12 @@ public class ProotLauncherTest {
                 Collections.<String, String>emptyMap());
 
         List<ProotBindMount> binds = spec.getBindMounts();
-        assertTrue(containsBind(binds, systemRoot.resolve("bin/linker64"), "/system/bin/linker64"));
-        assertTrue(containsBind(binds, systemRoot.resolve("lib64/libc.so"), "/system/lib64/libc.so"));
-        assertTrue(containsBind(binds, systemRoot.resolve("lib64/libdl.so"), "/system/lib64/libdl.so"));
-        assertTrue(containsBind(binds, systemRoot.resolve("lib64/libm.so"), "/system/lib64/libm.so"));
+        assertTrue(describe(binds), containsBind(binds, systemRoot.resolve("bin"), "/system/bin"));
+        assertTrue(describe(binds), containsBind(binds, systemRoot.resolve("lib64"), "/system/lib64"));
+        assertFalse(describe(binds), containsBind(binds, systemRoot.resolve("bin/linker64"),
+                "/system/bin/linker64"));
+        assertFalse(describe(binds), containsBind(binds, systemRoot.resolve("lib64/libc.so"),
+                "/system/lib64/libc.so"));
         assertTrue(Files.isDirectory(rootfs.resolve("system/bin")));
         assertTrue(Files.isDirectory(rootfs.resolve("system/lib64")));
     }
@@ -247,10 +251,55 @@ public class ProotLauncherTest {
                 Collections.<String, String>emptyMap());
 
         List<ProotBindMount> binds = spec.getBindMounts();
-        assertTrue(containsBind(binds, systemRoot.resolve("bin/linker64"), "/system/bin/linker64"));
-        assertFalse(containsGuestPath(binds, "/system/lib64/libc.so"));
+        assertTrue(describe(binds), containsBind(binds, systemRoot.resolve("bin"), "/system/bin"));
+        assertFalse(describe(binds), containsGuestPath(binds, "/system/lib64"));
         assertTrue(Files.isDirectory(rootfs.resolve("system/bin")));
         assertFalse(Files.exists(rootfs.resolve("system/lib64")));
+    }
+
+    @Test
+    public void buildSpecBindsToolTreesOverProductSystemArtifacts() throws Exception {
+        // The curated provisioning and the earlier file binds leave Bionic
+        // artifacts under /system; they are product-owned, not guest content,
+        // so the tool-tree binds still apply (ADR-0045).
+        writeIfAbsent(rootfs.resolve("system/bin/linker64"), "");
+        writeIfAbsent(rootfs.resolve("system/lib64/libc.so"), "");
+        Path systemRoot = filesDir.resolve("faked-system");
+        writeIfAbsent(systemRoot.resolve("bin/sh"), "");
+        writeIfAbsent(systemRoot.resolve("lib64/libc.so"), "");
+        // Android 11+ keeps the runtime in the APEX: stage that tree too.
+        Path apexRoot = filesDir.resolve("apex");
+        writeIfAbsent(apexRoot.resolve("com.android.runtime/bin/linker64"), "");
+
+        ProotLaunchSpec spec = new ProotLauncher(context, systemRoot).buildSpec(
+                ProotLauncher.SUPPORTED_APP_ID,
+                ProotLauncher.GUEST_PROBE_ARGV,
+                Collections.<ProotBindMount>emptyList(),
+                Collections.<String, String>emptyMap());
+
+        List<ProotBindMount> binds = spec.getBindMounts();
+        assertTrue(describe(binds), containsBind(binds, systemRoot.resolve("bin"), "/system/bin"));
+        assertTrue(describe(binds), containsBind(binds, systemRoot.resolve("lib64"), "/system/lib64"));
+        assertTrue(describe(binds), containsBind(binds, filesDir.resolve("apex"), "/apex"));
+    }
+
+    @Test
+    public void buildSpecKeepsGuestOwnedSystemTreeUntouched() throws Exception {
+        // A real guest file under /system is content: the tool-tree binds are
+        // skipped for the session instead of shadowing it.
+        writeIfAbsent(rootfs.resolve("system/bin/guest-tool"), "");
+        Path systemRoot = filesDir.resolve("faked-system");
+        writeIfAbsent(systemRoot.resolve("bin/sh"), "");
+
+        ProotLaunchSpec spec = new ProotLauncher(context, systemRoot).buildSpec(
+                ProotLauncher.SUPPORTED_APP_ID,
+                ProotLauncher.GUEST_PROBE_ARGV,
+                Collections.<ProotBindMount>emptyList(),
+                Collections.<String, String>emptyMap());
+
+        List<ProotBindMount> binds = spec.getBindMounts();
+        assertFalse(describe(binds), containsBind(binds, systemRoot.resolve("bin"), "/system/bin"));
+        assertTrue(Files.exists(rootfs.resolve("system/bin/guest-tool")));
     }
 
     @Test
@@ -307,7 +356,7 @@ public class ProotLauncherTest {
         for (String bindArg : Arrays.asList(
                 nativeDir.resolve(ProotPaths.PROOT_BINARY_NAME) + ":/usr/local/bin/proot",
                 nativeDir.resolve(ProotPaths.PROOT_LOADER_BINARY_NAME) + ":/usr/local/bin/proot-loader",
-                systemRoot.resolve("bin/linker64") + ":/system/bin/linker64")) {
+                systemRoot.resolve("bin") + ":/system/bin")) {
             int index = argv.indexOf(bindArg);
             assertTrue("missing -b argument: " + bindArg, index > 0);
             assertTrue("-b precedes " + bindArg,
@@ -332,6 +381,15 @@ public class ProotLauncherTest {
             }
         }
         return false;
+    }
+
+    /** Diagnostic view of a bind list: host->guest pairs. */
+    private static String describe(List<ProotBindMount> binds) {
+        StringBuilder out = new StringBuilder("binds: ");
+        for (ProotBindMount bind : binds) {
+            out.append(bind.getHostPath()).append("->").append(bind.getGuestPath()).append("; ");
+        }
+        return out.toString();
     }
 
     private static boolean containsGuestPath(List<ProotBindMount> binds, String guestPath) {
