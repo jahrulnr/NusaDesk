@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-20
+
 ### Added
 
 - Add guest backup and restore (ADR-0044): the System → Settings → Backup &
