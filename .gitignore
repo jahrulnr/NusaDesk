@@ -1,5 +1,6 @@
 # Gradle
 .gradle/
+.secret/
 
 # Android build outputs
 build/

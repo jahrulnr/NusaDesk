@@ -1,4 +1,4 @@
-name: NusaDesk debug release
+name: NusaDesk release
 
 on:
   push:
@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release-debug:
-    name: Tag VERSION and publish debug APK
+  publish:
+    name: Tag VERSION and publish the signed release APK
     runs-on: ubuntu-24.04
 
     steps:
@@ -200,7 +200,7 @@ jobs:
           git tag -a "$TAG" -m "NusaDesk $VERSION"
           git push origin "$TAG"
 
-      - name: Publish GitHub release with debug APK
+      - name: Publish GitHub release with the signed APK
         if: steps.release_gate.outputs.should_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
