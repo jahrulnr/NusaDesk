@@ -19,8 +19,11 @@ import gh.nusashell.nusadesk.R;
 
 /**
  * The System screen's app-permissions shortcut stays a real, labelled button
- * whose tap reaches the host. Verified on the same API levels the launch guard
- * covers, because the custom view is inflated through real framework code.
+ * whose tap reaches the host — now on the Settings page of the hub-and-pages
+ * screen (ADR-0043), which also gives the file the back contract to guard: a
+ * sub-page's Back must return to the hub before Back leaves the screen.
+ * Verified on the same API levels the launch guard covers, because the custom
+ * view is inflated through real framework code.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = {29, 30, 31, 33})
@@ -52,6 +55,18 @@ public class SystemScreenPermissionsShortcutTest {
         button.performClick();
 
         assertTrue("the tapped button must reach the wired host listener", reached.get());
+    }
+
+    @Test
+    public void aSubPageBackReturnsToTheHubBeforeLeaving() {
+        SystemScreenView screen = screen();
+
+        assertFalse("Back on the hub is not consumed", screen.navigateBack());
+
+        screen.findViewById(R.id.system_hub_settings_row).performClick();
+
+        assertTrue("Back on a sub-page must return to the hub", screen.navigateBack());
+        assertFalse("a second Back now leaves the screen", screen.navigateBack());
     }
 
     @Test

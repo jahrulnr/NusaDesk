@@ -56,7 +56,7 @@
     <string name="app_terminal">Terminal</string>
     <string name="app_terminal_desc">Terminal. A full Linux shell.</string>
     <string name="app_system">System</string>
-    <string name="app_system_desc">System. Install state, session details, and how it works.</string>
+    <string name="app_system_desc">System. Settings, add-ons, and about NusaDesk.</string>
     <string name="app_logs">Logs</string>
     <string name="app_logs_desc">Logs. Boot and service output from Linux.</string>
     <string name="app_locked">Locked</string>
@@ -182,9 +182,33 @@
     <string name="webapp_state_blocked">The page tried to open an address that is not this app.</string>
     <string name="webapp_state_crashed">The page stopped responding.</string>
 
-    <!-- Linux system screen (install state, session details, contract) -->
+    <!-- Linux system screen: a hub with three grouped pages (ADR-0043) —
+         Settings, One-click install, and About NusaDesk. Each sub-page carries
+         a compact back row, and Back on a sub-page returns to this hub before
+         it leaves the screen. -->
     <string name="system_title">Linux system</string>
-    <string name="system_body">Runtime, session, storage, permissions, and diagnostics.</string>
+    <string name="system_body">Settings, add-ons, and system details.</string>
+    <string name="system_hub_settings_title">Settings</string>
+    <string name="system_hub_settings_desc">Workspace, battery, boot start, and app permissions.</string>
+    <string name="system_hub_install_title">One-click install</string>
+    <string name="system_hub_install_desc">Curated components for the Linux session.</string>
+    <string name="system_hub_about_title">About NusaDesk</string>
+    <string name="system_hub_about_desc">System state, technical details, and links.</string>
+    <string name="system_back_desc">Back</string>
+    <string name="system_settings_title">Settings</string>
+    <string name="system_install_title">One-click install</string>
+    <string name="system_install_body">Curated components for the Linux session. Nothing here is installed from arbitrary sources.</string>
+    <string name="system_install_usb_title">USB / ADB driver</string>
+    <string name="system_install_usb_desc">The Linux adb sees USB devices attached to this device.</string>
+    <string name="system_install_termux_title">Termux command compatibility</string>
+    <string name="system_install_termux_desc">termux-* commands run inside the Linux session.</string>
+    <string name="system_install_state_builtin">Active in every session</string>
+    <string name="system_install_more_title">Installable add-ons</string>
+    <string name="system_install_more_body">Installable add-ons arrive with the provisioning slice. An entry only gains a real Install action once a curated template exists — there is no arbitrary package install.</string>
+    <string name="system_about_title">About NusaDesk</string>
+    <string name="system_github_title">GitHub page</string>
+    <string name="system_github_desc">Source code, releases, and issue tracker.</string>
+    <string name="system_github_unavailable">No browser can open the GitHub page right now.</string>
     <string name="system_state_label">System state</string>
     <string name="system_session_label">Session</string>
     <string name="system_service_label">Terminal component</string>

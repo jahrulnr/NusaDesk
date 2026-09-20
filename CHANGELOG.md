@@ -32,6 +32,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   socket); today that build is made in the guest, with shipping it as a
   verified artifact as follow-up work
 
+### Changed
+
+- Restructure the System screen into an Android-Settings-style hub
+  (ADR-0043): it now opens with three rows — Settings (workspace, battery
+  optimization, boot start, app settings), One-click install (a curated
+  templates list), and About NusaDesk (system state, technical details, the
+  GitHub page, and how it works) — each on its own page with a back row, and
+  the system back action on a sub-page returns to the hub before it leaves
+  the screen. The first template entries state honestly that the USB/adb
+  driver and the Termux compatibility layer ship with every session;
+  installable add-ons (starting with the driver's prebuilt artifacts) arrive
+  with the provisioning slice
+
 ## [0.4.0] - 2026-09-20
 
 ### Added

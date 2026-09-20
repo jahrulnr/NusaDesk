@@ -1,209 +1,156 @@
 package gh.nusashell.nusadesk.presentation.system;
 
 import android.content.Context;
-import android.provider.Settings;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
-import android.widget.Button;
+import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.ScrollView;
-import android.widget.TextView;
 
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
-import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
 import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
 import gh.nusashell.nusadesk.presentation.GuestSshStatusAware;
 import gh.nusashell.nusadesk.presentation.GuestSshUiState;
-import gh.nusashell.nusadesk.presentation.RuntimeStateDescriptor;
 import gh.nusashell.nusadesk.presentation.ScreenView;
 import gh.nusashell.nusadesk.presentation.SessionStatusAware;
-import gh.nusashell.nusadesk.presentation.SessionUiState;
-import gh.nusashell.nusadesk.presentation.widget.StateBadgeView;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
 /**
- * Linux system screen: install state, session and terminal-component status, the
- * technical details that a support conversation needs, and the product contract.
+ * Linux system screen (ADR-0043): a hub with three grouped rows — Settings,
+ * One-click install, and About NusaDesk — each opening its own page, in the
+ * Android-Settings shape. Exactly one pane is visible at a time.
  *
- * <p>It reports state and never offers a session start/stop control: Linux starts
- * from an app launch and is stopped from the platform's own foreground-service
- * notification (ADR-0013). Transport detail that would be noise on a primary
- * surface (the loopback endpoint, the runtime profile and version) lives here
- * instead of on the launcher or an app surface.</p>
+ * <p>Back contract: a sub-page's back row and the system back action both
+ * return to the hub before Back leaves the screen; leaving the surface at
+ * all lands the next open back on the hub. The page renderers keep the
+ * semantics the single System scroll had — state is reported, never owned:
+ * Linux starts from an app launch and is stopped from the platform's own
+ * foreground-service notification (ADR-0013).</p>
  */
-public final class SystemScreenView extends ScrollView
+public final class SystemScreenView extends FrameLayout
         implements ScreenView, SessionStatusAware, GuestSshStatusAware {
 
-    private StateBadgeView stateBadge;
-    private TextView stateSummary;
-    private TextView stateDetail;
-    private TextView sessionValue;
-    private TextView serviceValue;
-    private TextView webAppsValue;
-    private TextView endpointValue;
-    private TextView profileValue;
-    private TextView versionValue;
-    private TextView workspaceValue;
-    private TextView workspaceDetail;
-    private Button workspaceAction;
-    private Button permissionsAction;
-    private TextView batteryValue;
-    private TextView batteryDetail;
-    private Button batteryAction;
-    private TextView bootValue;
-    private TextView bootDetail;
-    private Button bootAction;
+    private ScrollView hubPane;
+    private SystemSettingsPageView settingsPage;
+    private SystemInstallPageView installPage;
+    private SystemAboutPageView aboutPage;
+
+    /** The visible sub-page, or {@code null} while the hub is shown. */
+    private ScrollView activePage;
 
     private final RuntimeStatusBus.Listener statusListener = this::renderSessionStatus;
 
     public SystemScreenView(Context context) {
         super(context);
-        LayoutInflater.from(context).inflate(R.layout.widget_system_screen, this, true);
-        initViews();
+        init();
     }
 
     public SystemScreenView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        LayoutInflater.from(context).inflate(R.layout.widget_system_screen, this, true);
-        initViews();
+        init();
     }
 
-    private void initViews() {
-        stateBadge = findViewById(R.id.system_state_badge);
-        stateSummary = findViewById(R.id.system_state_summary);
-        stateDetail = findViewById(R.id.system_state_detail);
-        sessionValue = findViewById(R.id.system_session_value);
-        serviceValue = findViewById(R.id.system_service_value);
-        webAppsValue = findViewById(R.id.system_webapps_value);
-        endpointValue = findViewById(R.id.system_endpoint_value);
-        profileValue = findViewById(R.id.system_profile_value);
-        versionValue = findViewById(R.id.system_version_value);
-        workspaceValue = findViewById(R.id.system_workspace_value);
-        workspaceDetail = findViewById(R.id.system_workspace_detail);
-        workspaceAction = findViewById(R.id.system_workspace_action);
-        permissionsAction = findViewById(R.id.system_permissions_action);
-        batteryValue = findViewById(R.id.system_battery_value);
-        batteryDetail = findViewById(R.id.system_battery_detail);
-        batteryAction = findViewById(R.id.system_battery_action);
-        bootValue = findViewById(R.id.system_boot_value);
-        bootDetail = findViewById(R.id.system_boot_detail);
-        bootAction = findViewById(R.id.system_boot_action);
-        endpointValue.setText(R.string.system_detail_endpoint_none);
-        workspaceValue.setText(R.string.system_workspace_value_none);
-        workspaceDetail.setText(R.string.system_workspace_detail_none);
-        workspaceAction.setVisibility(GONE);
-        batteryAction.setVisibility(GONE);
-        sessionValue.setText(SessionUiState.unknown().getBadgeRes());
-        serviceValue.setText(R.string.system_service_missing);
-        setWebAppCount(0);
+    private void init() {
+        LayoutInflater.from(getContext()).inflate(R.layout.widget_system_screen, this, true);
+        hubPane = findViewById(R.id.system_hub_pane);
+        settingsPage = findViewById(R.id.system_settings_page);
+        installPage = findViewById(R.id.system_install_page);
+        aboutPage = findViewById(R.id.system_about_page);
+        findViewById(R.id.system_hub_settings_row)
+                .setOnClickListener(view -> showPage(settingsPage));
+        findViewById(R.id.system_hub_install_row)
+                .setOnClickListener(view -> showPage(installPage));
+        findViewById(R.id.system_hub_about_row)
+                .setOnClickListener(view -> showPage(aboutPage));
+        OnClickListener backToHub = view -> showHub();
+        settingsPage.setOnBackListener(backToHub);
+        installPage.setOnBackListener(backToHub);
+        aboutPage.setOnBackListener(backToHub);
     }
 
-    /** Wires the "How it works" contract disclosure. */
+    /**
+     * Steps one level up inside the screen. The host calls this from its Back
+     * handling while this surface is open; on the hub the call is not
+     * consumed so Back can leave the screen.
+     *
+     * @return true when Back moved from a sub-page to the hub.
+     */
+    public boolean navigateBack() {
+        if (activePage == null) {
+            return false;
+        }
+        showHub();
+        return true;
+    }
+
+    private void showPage(ScrollView page) {
+        activePage = page;
+        hubPane.setVisibility(GONE);
+        settingsPage.setVisibility(page == settingsPage ? VISIBLE : GONE);
+        installPage.setVisibility(page == installPage ? VISIBLE : GONE);
+        aboutPage.setVisibility(page == aboutPage ? VISIBLE : GONE);
+        page.scrollTo(0, 0);
+    }
+
+    private void showHub() {
+        activePage = null;
+        hubPane.setVisibility(VISIBLE);
+        settingsPage.setVisibility(GONE);
+        installPage.setVisibility(GONE);
+        aboutPage.setVisibility(GONE);
+        hubPane.scrollTo(0, 0);
+    }
+
+    /** Wires the "How it works" contract disclosure on the About page. */
     public void setOnHowItWorksListener(OnClickListener listener) {
-        findViewById(R.id.system_how_button).setOnClickListener(listener);
+        aboutPage.setOnHowItWorksListener(listener);
     }
 
-    /**
-     * Wires the single workspace action. Which action it is depends on the state
-     * rendered by {@link #renderWorkspace(WorkspaceUiState)} — allow access,
-     * choose a folder, or change it — so the host handles them in one place.
-     */
+    /** Wires the workspace row's single action on the Settings page. */
     public void setOnWorkspaceActionListener(OnClickListener listener) {
-        workspaceAction.setOnClickListener(listener);
+        settingsPage.setOnWorkspaceActionListener(listener);
     }
 
-    /**
-     * Wires the app-permissions shortcut. The button opens this app's Android
-     * App Info page via {@link Settings#ACTION_APPLICATION_DETAILS_SETTINGS},
-     * where the platform manages camera, microphone, location, contacts, SMS and
-     * other permission switches; NusaDesk never requests them itself.
-     */
+    /** Wires the app-permissions shortcut on the Settings page. */
     public void setOnOpenAppSettingsListener(OnClickListener listener) {
-        permissionsAction.setOnClickListener(listener);
+        settingsPage.setOnOpenAppSettingsListener(listener);
     }
 
-    /** Wires the battery card's single action (request exemption). */
+    /** Wires the battery card's single action on the Settings page. */
     public void setOnBatteryActionListener(OnClickListener listener) {
-        batteryAction.setOnClickListener(listener);
+        settingsPage.setOnBatteryActionListener(listener);
     }
 
-    /** Wires the boot card's single action (flip the opt-in, ADR-0037). */
+    /** Wires the boot card's single action on the Settings page. */
     public void setOnBootActionListener(OnClickListener listener) {
-        bootAction.setOnClickListener(listener);
+        settingsPage.setOnBootActionListener(listener);
     }
 
-    /**
-     * Renders the workspace folder state. The screen reports what is possible on
-     * this device; it never offers an action the platform cannot honour, and it
-     * never widens storage access on its own.
-     */
+    /** Renders the workspace folder state on the Settings page. */
     public void renderWorkspace(WorkspaceUiState state) {
-        WorkspaceUiState current = state == null ? WorkspaceUiState.notChosen() : state;
-        int valueRes = current.getValueRes();
-        if (valueRes == 0) {
-            workspaceValue.setText(current.getFolderLabel());
-        } else {
-            workspaceValue.setText(valueRes);
-        }
-        workspaceDetail.setText(current.getDetailArg() == null
-                ? getContext().getString(current.getDetailRes())
-                : getContext().getString(current.getDetailRes(), current.getDetailArg()));
-        if (current.hasAction()) {
-            workspaceAction.setText(current.getActionRes());
-            workspaceAction.setVisibility(VISIBLE);
-        } else {
-            workspaceAction.setVisibility(GONE);
-        }
+        settingsPage.renderWorkspace(state);
     }
 
-    /** States how many user-defined web apps are registered, from the registry truth. */
+    /** States how many user-defined web apps are registered. */
     public void setWebAppCount(int count) {
-        webAppsValue.setText(getContext().getString(
-                count == 1 ? R.string.apps_count_singular : R.string.apps_count_plural,
-                Math.max(0, count)));
+        aboutPage.setWebAppCount(count);
     }
 
-    /**
-     * Renders the battery-optimization card. The host reads the permission-free
-     * PowerManager state and re-reads it on every foreground event; the request
-     * itself is made only from the action tap, so an exempt device needs no
-     * button and the card only says how to revoke.
-     */
+    /** Renders the battery-optimization card on the Settings page. */
     public void renderBattery(boolean exempt) {
-        if (exempt) {
-            batteryValue.setText(R.string.system_battery_value_exempt);
-            batteryDetail.setText(R.string.system_battery_detail_exempt);
-            batteryAction.setVisibility(GONE);
-        } else {
-            batteryValue.setText(R.string.system_battery_value_not_exempt);
-            batteryDetail.setText(R.string.system_battery_detail_not_exempt);
-            batteryAction.setText(R.string.system_battery_action_request);
-            batteryAction.setVisibility(VISIBLE);
-        }
+        settingsPage.renderBattery(exempt);
     }
 
-    /**
-     * Renders the boot-start card. Off is the product default and the receiver
-     * stays inert until the user opts in here; the one action flips the
-     * setting, so its text names what the next tap does.
-     */
+    /** Renders the boot-start card on the Settings page. */
     public void renderBoot(boolean enabled) {
-        bootValue.setText(enabled
-                ? R.string.system_boot_value_enabled
-                : R.string.system_boot_value_disabled);
-        bootDetail.setText(enabled
-                ? R.string.system_boot_detail_enabled
-                : R.string.system_boot_detail_disabled);
-        bootAction.setText(enabled
-                ? R.string.system_boot_action_disable
-                : R.string.system_boot_action_enable);
+        settingsPage.renderBoot(enabled);
     }
 
     /** Shows which curated runtime profile and version this build expects. */
     public void setRuntimeProfile(String appId, String version) {
-        profileValue.setText(appId == null ? "" : appId);
-        versionValue.setText(version == null ? "" : version);
+        aboutPage.setRuntimeProfile(appId, version);
     }
 
     @Override
@@ -219,52 +166,27 @@ public final class SystemScreenView extends ScrollView
     }
 
     @Override
-    public void render(RuntimeSnapshot snapshot) {
-        if (snapshot == null) {
-            return;
+    protected void onVisibilityChanged(View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+        // Any leave — launcher, another surface, another app — lands the next
+        // open back on the hub instead of a stranded sub-page.
+        if (visibility != VISIBLE && activePage != null) {
+            showHub();
         }
-        RuntimeStateDescriptor descriptor = RuntimeStateDescriptor.forState(snapshot.getState());
-        stateBadge.render(snapshot);
-        stateSummary.setText(descriptor.getSummary());
-        String detail = snapshot.getDetail();
-        stateDetail.setText(detail == null || detail.trim().isEmpty()
-                ? descriptor.getDetail()
-                : detail);
+    }
+
+    @Override
+    public void render(RuntimeSnapshot snapshot) {
+        aboutPage.renderState(snapshot);
     }
 
     @Override
     public void renderSessionStatus(HostRuntimeStatus status) {
-        SessionUiState session = status == null
-                ? SessionUiState.unknown()
-                : SessionUiState.from(status.getState(), status.getFailureReason());
-        sessionValue.setText(session.getBadgeRes());
-        SessionSnapshot snapshot = status == null ? null : status.getSnapshot();
-        if (snapshot != null && snapshot.getEndpoint() != null) {
-            endpointValue.setText(getContext().getString(R.string.system_detail_endpoint_value,
-                    snapshot.getEndpoint().getHost(), snapshot.getEndpoint().getPort()));
-        } else {
-            endpointValue.setText(R.string.system_detail_endpoint_none);
-        }
+        aboutPage.renderSessionStatus(status);
     }
 
     @Override
     public void renderGuestSsh(GuestSshUiState state) {
-        GuestSshUiState current = state == null ? GuestSshUiState.missing() : state;
-        switch (current.getKind()) {
-            case INSTALLED:
-                serviceValue.setText(R.string.system_service_installed);
-                break;
-            case INSTALLING:
-                serviceValue.setText(R.string.system_service_installing);
-                break;
-            case FAILED:
-                String reason = current.getDetail();
-                serviceValue.setText(getContext().getString(R.string.system_service_failed,
-                        reason == null || reason.trim().isEmpty() ? "" : reason));
-                break;
-            default:
-                serviceValue.setText(R.string.system_service_missing);
-                break;
-        }
+        aboutPage.renderGuestSsh(state);
     }
 }

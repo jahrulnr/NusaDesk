@@ -1,417 +1,222 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Compact Linux system surface: state first, then the few operational actions
-     and details that help a user understand or troubleshoot the session. -->
+<!-- Linux system surface (ADR-0043): a hub with three grouped rows — Settings,
+     One-click install, and About NusaDesk — each opening its own page. Exactly
+     one pane is visible at a time; SystemScreenView owns the switching and the
+     Back contract. Inflated into the FrameLayout that is SystemScreenView. -->
 <merge xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <LinearLayout
+    <ScrollView
+        android:id="@+id/system_hub_pane"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingStart="@dimen/content_padding"
-        android:paddingTop="12dp"
-        android:paddingEnd="@dimen/content_padding"
-        android:paddingBottom="@dimen/desktop_bottom_padding">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/system_title"
-            android:textColor="@color/ink"
-            android:textSize="20sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/system_body"
-            android:textColor="@color/ink_secondary"
-            android:textSize="13sp" />
+        android:layout_height="match_parent"
+        android:fillViewport="true">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:background="@drawable/card_surface"
             android:orientation="vertical"
-            android:padding="14dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:baselineAligned="false"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/system_state_label"
-                    android:textColor="@color/ink_secondary"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
-
-                <gh.nusashell.nusadesk.presentation.widget.StateBadgeView
-                    android:id="@+id/system_state_badge"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingTop="5dp"
-                    android:paddingEnd="8dp"
-                    android:paddingBottom="5dp"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
+            android:paddingStart="@dimen/content_padding"
+            android:paddingTop="12dp"
+            android:paddingEnd="@dimen/content_padding"
+            android:paddingBottom="@dimen/desktop_bottom_padding">
 
             <TextView
-                android:id="@+id/system_state_summary"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:textColor="@color/ink_secondary"
-                android:textSize="14sp" />
+                android:text="@string/system_title"
+                android:textColor="@color/ink"
+                android:textSize="20sp"
+                android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/system_state_detail"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:textColor="@color/ink_muted"
-                android:textSize="12sp" />
+                android:text="@string/system_body"
+                android:textColor="@color/ink_secondary"
+                android:textSize="13sp" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/card_surface"
                 android:orientation="vertical">
 
                 <LinearLayout
+                    android:id="@+id/system_hub_settings_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
                     android:baselineAligned="false"
-                    android:orientation="horizontal">
-                    <TextView
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:minHeight="@dimen/touch_target"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingTop="12dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp">
+
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="@string/system_session_label"
-                        android:textColor="@color/ink_secondary"
-                        android:textSize="13sp" />
-                    <TextView
-                        android:id="@+id/system_session_value"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/ink"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/system_hub_settings_title"
+                            android:textColor="@color/ink"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/system_hub_settings_desc"
+                            android:textColor="@color/ink_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:rotation="180"
+                        android:src="@drawable/ic_back" />
                 </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginStart="14dp"
+                    android:background="@color/border" />
 
                 <LinearLayout
+                    android:id="@+id/system_hub_install_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:background="?android:attr/selectableItemBackground"
                     android:baselineAligned="false"
-                    android:orientation="horizontal">
-                    <TextView
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:minHeight="@dimen/touch_target"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingTop="12dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp">
+
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="@string/system_service_label"
-                        android:textColor="@color/ink_secondary"
-                        android:textSize="13sp" />
-                    <TextView
-                        android:id="@+id/system_service_value"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/ink"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/system_hub_install_title"
+                            android:textColor="@color/ink"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/system_hub_install_desc"
+                            android:textColor="@color/ink_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:rotation="180"
+                        android:src="@drawable/ic_back" />
                 </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginStart="14dp"
+                    android:background="@color/border" />
 
                 <LinearLayout
+                    android:id="@+id/system_hub_about_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:background="?android:attr/selectableItemBackground"
                     android:baselineAligned="false"
-                    android:orientation="horizontal">
-                    <TextView
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:minHeight="@dimen/touch_target"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingTop="12dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp">
+
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="@string/system_webapps_label"
-                        android:textColor="@color/ink_secondary"
-                        android:textSize="13sp" />
-                    <TextView
-                        android:id="@+id/system_webapps_value"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="@color/ink"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/system_hub_about_title"
+                            android:textColor="@color/ink"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/system_hub_about_desc"
+                            android:textColor="@color/ink_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:rotation="180"
+                        android:src="@drawable/ic_back" />
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>
+    </ScrollView>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/card_surface"
-            android:orientation="vertical"
-            android:padding="14dp">
+    <gh.nusashell.nusadesk.presentation.system.SystemSettingsPageView
+        android:id="@+id/system_settings_page"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
 
-            <TextView
-                style="@style/Widget.LinuxWrapper.Eyebrow"
-                android:text="@string/system_workspace_label" />
+    <gh.nusashell.nusadesk.presentation.system.SystemInstallPageView
+        android:id="@+id/system_install_page"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/system_workspace_value"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
-                android:text="@string/system_workspace_value_none"
-                android:textColor="@color/ink"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/system_workspace_detail"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/system_workspace_detail_none"
-                android:textColor="@color/ink_secondary"
-                android:textSize="12sp" />
-
-            <Button
-                android:id="@+id/system_workspace_action"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_target"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/button_secondary"
-                android:fontFamily="sans"
-                android:minHeight="@dimen/touch_target"
-                android:textAllCaps="false"
-                android:textColor="@color/primary_dark"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/card_surface"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                style="@style/Widget.LinuxWrapper.Eyebrow"
-                android:text="@string/system_battery_label" />
-
-            <TextView
-                android:id="@+id/system_battery_value"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
-                android:text="@string/system_battery_value_not_exempt"
-                android:textColor="@color/ink"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/system_battery_detail"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/system_battery_detail_not_exempt"
-                android:textColor="@color/ink_secondary"
-                android:textSize="12sp" />
-
-            <Button
-                android:id="@+id/system_battery_action"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_target"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/button_secondary"
-                android:fontFamily="sans"
-                android:minHeight="@dimen/touch_target"
-                android:text="@string/system_battery_action_request"
-                android:textAllCaps="false"
-                android:textColor="@color/primary_dark"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/card_surface"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                style="@style/Widget.LinuxWrapper.Eyebrow"
-                android:text="@string/system_boot_label" />
-
-            <TextView
-                android:id="@+id/system_boot_value"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
-                android:text="@string/system_boot_value_disabled"
-                android:textColor="@color/ink"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/system_boot_detail"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/system_boot_detail_disabled"
-                android:textColor="@color/ink_secondary"
-                android:textSize="12sp" />
-
-            <Button
-                android:id="@+id/system_boot_action"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_target"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/button_secondary"
-                android:fontFamily="sans"
-                android:minHeight="@dimen/touch_target"
-                android:text="@string/system_boot_action_enable"
-                android:textAllCaps="false"
-                android:textColor="@color/primary_dark"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/card_surface"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                style="@style/Widget.LinuxWrapper.Eyebrow"
-                android:text="@string/system_permissions_label" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/system_permissions_detail"
-                android:textColor="@color/ink_secondary"
-                android:textSize="12sp" />
-
-            <Button
-                android:id="@+id/system_permissions_action"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/touch_target"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/button_secondary"
-                android:fontFamily="sans"
-                android:minHeight="@dimen/touch_target"
-                android:text="@string/system_permissions_action"
-                android:textAllCaps="false"
-                android:textColor="@color/primary_dark"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/card_surface"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                style="@style/Widget.LinuxWrapper.Eyebrow"
-                android:text="@string/system_details_eyebrow" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:baselineAligned="false"
-                android:orientation="vertical">
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/system_detail_endpoint"
-                    android:textColor="@color/ink_muted"
-                    android:textSize="11sp" />
-                <TextView
-                    android:id="@+id/system_endpoint_value"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/ink"
-                    android:textSize="13sp" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:baselineAligned="false"
-                android:orientation="horizontal">
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/system_detail_app"
-                    android:textColor="@color/ink_muted"
-                    android:textSize="11sp" />
-                <TextView
-                    android:id="@+id/system_profile_value"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/ink"
-                    android:textSize="12sp" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:baselineAligned="false"
-                android:orientation="horizontal">
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/system_detail_version"
-                    android:textColor="@color/ink_muted"
-                    android:textSize="11sp" />
-                <TextView
-                    android:id="@+id/system_version_value"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/ink"
-                    android:textSize="12sp" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/system_how_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/touch_target"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/button_secondary"
-            android:fontFamily="sans"
-            android:minHeight="@dimen/touch_target"
-            android:text="@string/action_read_contract"
-            android:textAllCaps="false"
-            android:textColor="@color/primary_dark"
-            android:textSize="13sp"
-            android:textStyle="bold" />
-    </LinearLayout>
+    <gh.nusashell.nusadesk.presentation.system.SystemAboutPageView
+        android:id="@+id/system_about_page"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
 </merge>

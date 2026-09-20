@@ -919,6 +919,25 @@ Run findings:
    replugged. A clean authorization followed by a normal attach does not
    wedge it; the replug is the documented recovery.
 
+## System hub (ADR-0043), device run 2026-09-20
+
+Run on the S10e (SM-G970F, OneUI, Android 12/API 31) with the debug build,
+driven entirely through uiautomator (no hardcoded coordinates); UI dumps kept
+in `/tmp/qa-system/` (`00-launcher` … `05-hub-final`).
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| SYS-001 | Launcher → System tile | the System screen opens on the hub with its three rows: Settings, One-click install, About NusaDesk |
+| SYS-002 | One-click install page | `USB / ADB driver` and `Termux command compatibility` render with the "Active in every session" state and the no-arbitrary-install explainer |
+| SYS-003 | System back on a sub-page | returns to the hub from both the install page and the About page; only a second Back leaves the screen |
+| SYS-004 | About page | system state, technical details (six values), the GitHub row, and the how-it-works row render |
+
+Run findings: the four settings cards (workspace, battery, boot, app
+permissions) moved verbatim into the Settings page and keep their ids, so
+the existing MainActivity renderers still update them — state ownership did
+not move with the layout. `SystemScreenView.navigateBack()` is the Back
+contract MainActivity consults for the System destination.
+
 ## License and distribution note
 
 - PRoot is GPL-2.0-or-later. Packaging/distributing it requires GPLv2+

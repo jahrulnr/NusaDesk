@@ -389,6 +389,13 @@ public final class MainActivity extends Activity {
             logsScreen.showLogList();
             return true;
         }
+        // Inside a System sub-page, Back steps one level up — to the hub —
+        // before a second Back returns to the launcher, matching the page's
+        // own back row.
+        if (activeDestination == DesktopDestination.SYSTEM
+                && systemScreen != null && systemScreen.navigateBack()) {
+            return true;
+        }
         if (activeDestination == DesktopDestination.HOME && activeWebAppId == null) {
             return false;
         }
