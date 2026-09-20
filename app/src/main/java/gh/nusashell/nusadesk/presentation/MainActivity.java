@@ -1194,6 +1194,14 @@ public final class MainActivity extends Activity {
             desktopHome.renderUpdateBanner(null);
             return;
         }
+        // Persist the asset the channel reported, so the banner's Install action
+        // (and a retry after a restart) can stage the download without another
+        // check. Regression: nothing ever called this, so Install always
+        // answered "the channel did not report the APK over HTTPS" even though
+        // the checker had parsed the asset (observed on the S7 Edge,
+        // 2026-09-21).
+        updatePrefs.recordAsset(
+                result.getDownloadUrl(), result.getDigest(), result.getSizeBytes());
         if (result.getTag().equals(updatePrefs.dismissedTag())) {
             return;
         }
