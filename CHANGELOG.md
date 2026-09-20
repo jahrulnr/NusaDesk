@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-21
+
 ### Added
 
 - Add an in-app workspace folder browser (ADR-0047): the workspace action opens
