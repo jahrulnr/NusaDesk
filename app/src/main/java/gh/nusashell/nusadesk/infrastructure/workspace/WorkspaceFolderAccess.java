@@ -44,9 +44,6 @@ public final class WorkspaceFolderAccess {
     private static final String APP_FOLDER_ID = "app-external-files";
     private static final String APP_FOLDER_NAME = "nusadesk";
 
-    /** Identifier of a workspace whose raw path the built-in picker returned. */
-    private static final String PICKED_PATH_ID = "picked-path";
-
     private final Context context;
 
     public WorkspaceFolderAccess(Context context) {
@@ -210,12 +207,12 @@ public final class WorkspaceFolderAccess {
             return ownRoot == null
                     ? null
                     : WorkspaceFolder.ofHostPath(
-                            PICKED_PATH_ID, ownRoot.getAbsolutePath(), ownRoot.getName());
+                            WorkspaceFolder.PICKED_PATH_ID, ownRoot.getAbsolutePath(), ownRoot.getName());
         }
         File root = Environment.getExternalStorageDirectory();
         return root == null
                 ? null
-                : WorkspaceFolder.ofHostPath(PICKED_PATH_ID, root.getAbsolutePath(), "Storage");
+                : WorkspaceFolder.ofHostPath(WorkspaceFolder.PICKED_PATH_ID, root.getAbsolutePath(), "Storage");
     }
 
     /**
@@ -243,8 +240,28 @@ public final class WorkspaceFolderAccess {
         }
         File folder = new File(path);
         String name = folder.getName();
+        // The app's own media tree is labelled like the app folder state rather
+        // than with the package name it happens to carry.
+        for (File root : appExternalRoots()) {
+            if (root.getAbsolutePath().equals(path)) {
+                name = APP_FOLDER_NAME;
+                break;
+            }
+        }
         return WorkspaceFolder.ofHostPath(
-                PICKED_PATH_ID, path, name.isEmpty() ? path : name);
+                WorkspaceFolder.PICKED_PATH_ID, path, name.isEmpty() ? path : name);
+    }
+
+    /**
+     * Creates the picker root when the platform's own tree does not exist yet
+     * (the app media folder on Android 10 is created on first use). Failures are
+     * ignored: the browser then reports an unusable root instead of pretending.
+     */
+    public void preparePickerRoot() {
+        WorkspaceFolder root = pickerRoot();
+        if (root != null) {
+            WorkspaceDirectory.ensureExists(root.getHostPath());
+        }
     }
 
     /** Whether a path lives inside one of this app's own external directories. */

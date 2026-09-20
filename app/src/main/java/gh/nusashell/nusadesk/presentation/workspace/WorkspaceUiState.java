@@ -105,14 +105,15 @@ public final class WorkspaceUiState {
             case NEEDS_ALL_FILES_ACCESS:
                 return R.string.system_workspace_action_grant;
             case NOT_CHOSEN:
+            case APP_FOLDER:
+                // Android 10 picks a folder inside the app's own media tree: no
+                // shared folder can be bound there, but the tree is bindable and
+                // reachable, and the in-app browser needs no extra grant
+                // (ADR-0047).
                 return R.string.system_workspace_action_choose;
             case CHOSEN:
                 return R.string.system_workspace_action_change;
-            case APP_FOLDER:
             default:
-                // Android 10 has no bindable shared folder and the built-in
-                // picker would need a broader storage grant there, so this state
-                // offers no action rather than one it cannot honour (ADR-0047).
                 return 0;
         }
     }

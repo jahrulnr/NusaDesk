@@ -20,7 +20,7 @@ import org.junit.Test;
 public class WorkspaceUiStateTest {
 
     @Test
-    public void androidTenNamesTheAppFolderItActuallyUsesAndOffersNoPicker() {
+    public void androidTenNamesTheAppFolderItActuallyUsesAndOffersTheInAppPicker() {
         WorkspaceUiState state =
                 WorkspaceUiState.appFolder("/storage/emulated/0/Android/media/pkg/nusadesk");
 
@@ -29,11 +29,10 @@ public class WorkspaceUiStateTest {
         assertEquals(R.string.system_workspace_detail_app_folder, state.getDetailRes());
         assertEquals("the detail names the real folder",
                 "/storage/emulated/0/Android/media/pkg/nusadesk", state.getDetailArg());
-        // The built-in picker needs a broader storage grant on Android 10 than
-        // this feature should hold (ADR-0047), so the state offers no action
-        // instead of one it cannot honour.
-        assertFalse(state.hasAction());
-        assertEquals(0, state.getActionRes());
+        // The in-app browser walks the app's own tree without any extra grant,
+        // so Android 10 can pick a folder after all (ADR-0047).
+        assertEquals(R.string.system_workspace_action_choose, state.getActionRes());
+        assertTrue(state.hasAction());
         assertNull(state.getFolderLabel());
     }
 

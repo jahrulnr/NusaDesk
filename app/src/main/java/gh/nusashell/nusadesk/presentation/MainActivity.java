@@ -91,7 +91,7 @@ import gh.nusashell.nusadesk.presentation.webapp.WebAppFormView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
 import gh.nusashell.nusadesk.presentation.widget.InstallPhaseSnapshot;
-import gh.nusashell.nusadesk.presentation.workspace.WorkspaceFolderPickerDialog;
+import gh.nusashell.nusadesk.presentation.workspace.WorkspaceFolderBrowserDialog;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
 import java.io.File;
@@ -1021,42 +1021,32 @@ public final class MainActivity extends Activity {
      * picker open. Nothing here widens storage access by itself.
      */
     private void onWorkspaceAction() {
-        if (!workspaceAccess.isSupportedPlatform()) {
-            // Android 10: no shared folder can be bound there, and the built-in
-            // picker's own gate wants the platform read permission — a broader
-            // grant than this feature needs, which the storage guard forbids.
-            // The app folder stays the workspace (ADR-0047).
-            return;
-        }
+        workspaceAccess.preparePickerRoot();
         WorkspaceFolder root = workspaceAccess.pickerRoot();
         if (root == null) {
             Toast.makeText(this, R.string.system_workspace_unavailable, Toast.LENGTH_LONG).show();
             return;
         }
-        if (!workspaceAccess.hasAllFilesAccess()) {
+        if (workspaceAccess.isSupportedPlatform() && !workspaceAccess.hasAllFilesAccess()) {
             openAllFilesAccessSettings();
             refreshWorkspace();
             return;
         }
-        showWorkspacePicker(root.getHostPath());
-    }
-
-    /**
-     * Opens the built-in folder picker (ADR-0047) and stores the choice only
-     * after the path validates and passes the write probe; anything else is
-     * reported instead of bound.
-     */
-    private void showWorkspacePicker(String rootPath) {
-        WorkspaceFolderPickerDialog.show(this, rootPath, path -> {
-            WorkspaceFolder picked = workspaceAccess.pickedPathWorkspace(path);
-            if (picked != null && workspaceAccess.isUsable(picked)) {
-                workspaceStore.save(picked);
-            } else {
-                Toast.makeText(this, R.string.system_workspace_unavailable,
-                        Toast.LENGTH_LONG).show();
-            }
-            refreshWorkspace();
-        });
+        // Android 10 has no bindable shared folder, so the browser is rooted in
+        // the app's own media folder; Android 11+ browses shared storage. Either
+        // way the chosen path is validated and probed before it is stored.
+        WorkspaceFolder stored = workspaceStore.load();
+        WorkspaceFolderBrowserDialog.show(this, root.getHostPath(),
+                stored == null ? null : stored.getHostPath(), path -> {
+                    WorkspaceFolder picked = workspaceAccess.pickedPathWorkspace(path);
+                    if (picked != null && workspaceAccess.isUsable(picked)) {
+                        workspaceStore.save(picked);
+                    } else {
+                        Toast.makeText(this, R.string.system_workspace_unavailable,
+                                Toast.LENGTH_LONG).show();
+                    }
+                    refreshWorkspace();
+                });
     }
 
     /**
@@ -1731,8 +1721,15 @@ public final class MainActivity extends Activity {
             return;
         }
         if (!workspaceAccess.isSupportedPlatform()) {
-            // Below API 30 no shared folder can be bound; the workspace is the
-            // app's own external folder, and the card names it.
+            // Below API 30 no shared folder can be bound: a stored pick lives
+            // inside the app's own media tree (ADR-0047), and without one the app
+            // folder itself is the workspace. The card names whichever is in
+            // effect.
+            WorkspaceFolder stored = workspaceStore.load();
+            if (stored != null && workspaceAccess.isUsable(stored)) {
+                systemScreen.renderWorkspace(WorkspaceUiState.chosen(stored.getDisplayName()));
+                return;
+            }
             WorkspaceFolder appFolder = workspaceAccess.appFolderWorkspace();
             systemScreen.renderWorkspace(WorkspaceUiState.appFolder(
                     appFolder == null ? "" : appFolder.getHostPath()));

@@ -238,6 +238,7 @@
     <string name="system_workspace_picker_title">Choose a workspace folder</string>
     <string name="system_workspace_picker_select">Use this folder</string>
     <string name="system_workspace_picker_cancel">Cancel</string>
+    <string name="system_workspace_picker_parent">.. (parent folder)</string>
     <string name="system_workspace_detail_chosen">Appears at ~/nusadesk. Applies the next time Linux starts.</string>
     <string name="system_workspace_action_grant">Allow all-files access</string>
     <string name="system_workspace_action_choose">Choose folder</string>

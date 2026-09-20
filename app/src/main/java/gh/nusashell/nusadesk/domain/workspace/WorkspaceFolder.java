@@ -24,6 +24,13 @@ public final class WorkspaceFolder {
     /** Guest mount point for the workspace; the user sees it as {@code ~/nusadesk}. */
     public static final String GUEST_MOUNT_PATH = "/root/nusadesk";
 
+    /**
+     * Synthetic id of a workspace whose raw path a picker returned instead of a
+     * tree document id (the in-app browser, ADR-0047). Stored and restored like
+     * any other workspace; only the provenance differs.
+     */
+    public static final String PICKED_PATH_ID = "picked-path";
+
     /** Mount point root of the primary shared-storage volume. */
     private static final String PRIMARY_ROOT = "/storage/emulated/0";
 
@@ -90,6 +97,11 @@ public final class WorkspaceFolder {
      * so a hand-edited preference file cannot reintroduce an unusable path.
      */
     public static WorkspaceFolder restore(String treeDocumentId, String hostPath, String displayName) {
+        if (PICKED_PATH_ID.equals(treeDocumentId)) {
+            // A path the in-app browser returned: no tree document id to parse,
+            // so the path itself is what has to be safe.
+            return ofHostPath(treeDocumentId, hostPath, displayName);
+        }
         WorkspaceFolder parsed = fromTreeDocumentId(treeDocumentId);
         if (parsed == null || !parsed.getHostPath().equals(hostPath)) {
             return null;

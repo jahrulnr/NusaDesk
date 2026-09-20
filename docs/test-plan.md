@@ -826,26 +826,28 @@ Run findings:
 
 ## Workspace folder picking (ADR-0047), device run 2026-09-20
 
-Run on the Samsung S10e (SM-G970F, OneUI, Android 12/API 31, arm64) with the
-all-files grant in place (`appops get … MANAGE_EXTERNAL_STORAGE` → `allow`).
-Evidence: `/tmp/qa-workspace/` (uiautomator dumps, screenshots).
+Run on both devices: the S10e (SM-G970F, API 31, all-files grant in place) and
+the S7 Edge (SM-G935F, API 29, release build). Evidence: `/tmp/qa-workspace/`
+(uiautomator dumps, screenshots).
 
 | ID | Case | Observed result |
 | --- | --- | --- |
-| WS-001 | Settings page, stored workspace | The card renders the stored folder (`Documents/nusadesk`), the detail line ("Appears at ~/nusadesk. Applies the next time Linux starts."), and the `Change folder` action |
-| WS-002 | The action opens the built-in picker | The dialog appears with this product's title, the path header `/storage/emulated/0`, the shared-storage listing (Alarms, Android, Audiobooks, DCIM, Documents, Download, …), folder navigation into `Documents`, and `CANCEL` / `USE THIS FOLDER` |
-| WS-003 | Dialog refused to open at all (found and fixed) | The library gates its own `show()` on storage access and, without `DialogProperties.allow_manage_external_storage`, silently fell back to requesting `READ_EXTERNAL_STORAGE` — a permission this app deliberately does not hold — so the button did nothing. With the flag set it accepts the all-files grant, which is what the device holds |
-| WS-004 | Marking a folder and confirming it | **OPEN:** the library's directory selection is a *marked* selection (the row's right-hand checkbox enables the positive button; the button returns the marked path). Verified from the library source; the gesture is not yet confirmed on the device, and the stored path is therefore not yet re-verified end to end |
-| WS-005 | Android 10 picker | **BLOCKED (decision):** below API 30 the library's gate accepts only `READ_EXTERNAL_STORAGE`, which `WorkspaceStorageManifestTest` forbids as a broader grant than the feature needs. The app-owned fallback is unit-tested (`WorkspaceFolderAccessTest`: picker root inside `Android/media/<pkg>`, app-tree paths accepted, shared paths refused) but not device-verified — it needs an API 29 device |
+| WS-001 | Card on API 31 | Renders the stored folder, the detail line ("Appears at ~/nusadesk. Applies the next time Linux starts."), and `Change folder` |
+| WS-002 | The action opens the in-app browser | Title "Choose a workspace folder", the path header `/storage/emulated/0`, the folder list, and `CANCEL` / `USE THIS FOLDER` |
+| WS-003 | Picking a folder on API 31 | The browser starts at the stored folder; `USE THIS FOLDER` stores it (`treeDocumentId=picked-path`, `hostPath=/storage/emulated/0/Documents/nusadesk`) and the card renders the choice |
+| WS-004 | The choice reaches the guest | After a session restart the tracer's argv carries `-b /storage/emulated/0/Documents/nusadesk:/root/nusadesk` |
+| WS-005 | Card on API 29 (S7 Edge) | `App folder` names `/storage/emulated/0/Android/media/<pkg>/nusadesk` and offers `Choose folder` |
+| WS-006 | Picking on API 29 | The browser opens rooted at the app's media tree; `USE THIS FOLDER` on that root stores it and the card switches to `nusadesk`; the choice survived an app reinstall and relaunch (the card still showed it) |
+| WS-007 | Library-based picker (evaluated, rejected) | With `io.github.tutorialsandroid:filepicker:10.1.3` the dialog opened on API 31 once `DialogProperties.allow_manage_external_storage` accepted this app's all-files grant; without that flag the button silently requested `READ_EXTERNAL_STORAGE` and did nothing. Below API 30 that permission is the library's only accepted gate and the workspace storage guard forbids it, so the library was dropped for the in-repo browser |
 
 Notes:
 
-- The stored SAF workspace (`primary:Documents/nusadesk`) still resolves after
-  this change, because usability is now judged on the path (grant + write
-  probe) rather than on the tree document id.
-- The guest bind itself was not re-verified in this run: the picker's stored
-  path is applied at the next session start, and the device's stored workspace
-  did not change during the run.
+- Two defects were found and fixed by this run: a stored `picked-path`
+  workspace read back as "no workspace" (the store's `restore` only understood
+  SAF tree document ids), and the Android 10 card ignored a stored choice
+  entirely, so a picked folder looked unsaved.
+- `run-as` cannot read a release build's preferences, so the S7's stored state
+  was verified through the card itself, which reads the same store.
 
 ## Guest backup & restore round trip (ADR-0044), device run 2026-09-20
 

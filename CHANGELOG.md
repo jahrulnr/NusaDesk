@@ -9,17 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add a built-in workspace folder picker and a reachable Android 10 workspace
-  (ADR-0047): on Android 11+ the workspace action opens a path-based browser
-  (the vetted FilePicker library, pinned, `kotlin-stdlib` excluded) rooted at
-  shared storage — the app already holds all-files access there, so the picked
-  path is bound as-is instead of being translated from a `content://` grant —
-  and every picked path is validated and write-probed before it is stored. On
-  Android 10, where no shared folder can be bound at all, the workspace moves
-  from `Android/data/<pkg>/files/nusadesk` to
-  `Android/media/<pkg>/nusadesk`: still app-owned and bindable, but visible to
-  file managers and over MTP, which is what lets the user copy out the one
-  folder a guest backup excludes
+- Add an in-app workspace folder browser and a reachable Android 10 workspace
+  (ADR-0047): the workspace action opens a path-based browser written in this
+  repository — a path header, the folder list, and Cancel / Use this folder —
+  rooted at shared storage on Android 11+ (the app already holds all-files
+  access there, so the picked path is bound as-is instead of being translated
+  from a `content://` grant) and at the app's own media folder on Android 10,
+  where no shared folder can be bound at all. Every picked path is validated
+  and write-probed before it is stored, and the only broad permission remains
+  the all-files grant. On Android 10 the workspace also moves from
+  `Android/data/<pkg>/files/nusadesk` to `Android/media/<pkg>/nusadesk`:
+  still app-owned and bindable, but visible to file managers and over MTP,
+  which is what lets the user copy out the one folder a guest backup excludes.
+  A third-party picker library was evaluated and rejected (its gate wants a
+  broader storage grant below API 30 and its selection is a marked checkbox
+  rather than the folder in view); the rationale sits next to the dependency
+  block in `app/build.gradle`
 - Add `android-cli` to the guest (ADR-0045): the session binds the device's
   own tool trees — `/system/bin`, `/system/lib64` and the Bionic runtime tree
   `/apex`, without which no Bionic exec resolves its linker on Android 11+ —
@@ -37,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fix the stored workspace on Android 10 and for the in-app picker (ADR-0047):
+  a `picked-path` choice read back as "no workspace" because the store's restore
+  only understood SAF tree document ids, and the Android 10 card ignored a
+  stored choice entirely — so a folder picked in the browser looked like it had
+  never been saved
 - Make the SAF backup round trip actually complete on a real guest (ADR-0044):
   a create-document round trip that recreates the Activity — which the platform
   does while the picker is in front — no longer loses the stashed export

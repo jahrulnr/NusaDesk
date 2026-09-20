@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The in-app workspace folder browser (ADR-0047): the current path, the folder
+    list, and the dialog's own Cancel / Use-this-folder buttons. Deliberately a
+    plain list — the choice is one folder, and the roots are already constrained
+    by WorkspaceFolderAccess, so icons, sizes, and dates would be noise.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="8dp">
+
+    <TextView
+        android:id="@+id/workspace_browser_path"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="8dp"
+        android:textSize="12sp"
+        android:ellipsize="middle"
+        android:singleLine="true" />
+
+    <ListView
+        android:id="@+id/workspace_browser_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:minHeight="240dp" />
+</LinearLayout>

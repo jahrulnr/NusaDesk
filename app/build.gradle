@@ -167,26 +167,20 @@ dependencies {
     // point, no hand-rolled parsing. Version pinned exactly; no ranges.
     implementation 'org.snakeyaml:snakeyaml-engine:3.1.1'
 
-    // Built-in folder picker for the workspace (ADR-0047). A path-based chooser
-    // is the only shape that can feed PRoot: the guest needs a real host path,
-    // and on Android 11+ this app already holds all-files access, so the picker
-    // browses raw paths instead of SAF's content:// trees. Vetted 2026-09-20:
-    // Apache License 2.0 (POM), published on Maven Central (10.1.3, the newest
-    // release), pure Java sources (12 files, no Kotlin), an empty library
-    // manifest (so it injects no permission into this app), minSdk 23 with
-    // compileSdk/targetSdk 37 — the same level this app targets. Its POM
-    // declares kotlin-stdlib transitively even though the artifact contains no
-    // Kotlin code, so it is excluded here; the Android Gradle plugin already
-    // places its own kotlin-stdlib on the runtime classpath regardless of this
-    // library, so the exclusion removes a duplicate, not a requirement.
-    // Alternatives
-    // rejected: hedzr/android-file-chooser (archived 2022, stopped for
-    // Android 10+), spacecowboy/NoNonsense-FilePicker (archived 2022), and
-    // hand-rolling a browser — the library covers the dialog UI while this app
-    // still owns the per-API root, the all-files gate, and the workspace rules.
-    implementation('io.github.tutorialsandroid:filepicker:10.1.3') {
-        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib'
-    }
+    // A built-in folder picker for the workspace is written in this repository
+    // (WorkspaceFolderBrowserDialog + WorkspaceFolderListing) instead of coming
+    // from a library. Evaluated 2026-09-20 and rejected: the maintained
+    // path-based candidate (io.github.tutorialsandroid:filepicker:10.1.3,
+    // Apache-2.0, pure Java, empty manifest, Maven Central) gates its own
+    // show() on storage access and below API 30 accepts only
+    // READ_EXTERNAL_STORAGE — a broader grant than this feature needs, which
+    // WorkspaceStorageManifestTest forbids; on Android 11+ it works but selects
+    // a *marked* folder rather than the folder in view, which is not the
+    // "use this folder" semantics this product wants. hedzr/android-file-chooser
+    // (archived 2022, stopped for Android 10+) and spacecowboy/NoNonsense-
+    // FilePicker (archived 2022) were rejected as unmaintained. The in-repo
+    // browser keeps one implementation for every API level, adds no dependency,
+    // and needs no permission beyond the all-files grant this app already holds.
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.slf4j:slf4j-simple:1.7.36'
