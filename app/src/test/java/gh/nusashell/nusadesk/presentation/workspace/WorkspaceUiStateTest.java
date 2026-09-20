@@ -20,16 +20,19 @@ import org.junit.Test;
 public class WorkspaceUiStateTest {
 
     @Test
-    public void androidTenNamesTheAppFolderItActuallyUsesAndOffersNothing() {
+    public void androidTenNamesTheAppFolderItActuallyUsesAndOffersNoPicker() {
         WorkspaceUiState state =
-                WorkspaceUiState.appFolder("/storage/emulated/0/Android/data/pkg/files/nusadesk");
+                WorkspaceUiState.appFolder("/storage/emulated/0/Android/media/pkg/nusadesk");
 
         assertEquals(WorkspaceUiState.Kind.APP_FOLDER, state.getKind());
         assertEquals(R.string.system_workspace_value_app_folder, state.getValueRes());
         assertEquals(R.string.system_workspace_detail_app_folder, state.getDetailRes());
         assertEquals("the detail names the real folder",
-                "/storage/emulated/0/Android/data/pkg/files/nusadesk", state.getDetailArg());
-        assertFalse("there is no grant to ask for below API 30", state.hasAction());
+                "/storage/emulated/0/Android/media/pkg/nusadesk", state.getDetailArg());
+        // The built-in picker needs a broader storage grant on Android 10 than
+        // this feature should hold (ADR-0047), so the state offers no action
+        // instead of one it cannot honour.
+        assertFalse(state.hasAction());
         assertEquals(0, state.getActionRes());
         assertNull(state.getFolderLabel());
     }

@@ -91,6 +91,7 @@ import gh.nusashell.nusadesk.presentation.webapp.WebAppFormView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
 import gh.nusashell.nusadesk.presentation.widget.InstallPhaseSnapshot;
+import gh.nusashell.nusadesk.presentation.workspace.WorkspaceFolderPickerDialog;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
 import java.io.File;
@@ -1021,6 +1022,15 @@ public final class MainActivity extends Activity {
      */
     private void onWorkspaceAction() {
         if (!workspaceAccess.isSupportedPlatform()) {
+            // Android 10: no shared folder can be bound there, and the built-in
+            // picker's own gate wants the platform read permission — a broader
+            // grant than this feature needs, which the storage guard forbids.
+            // The app folder stays the workspace (ADR-0047).
+            return;
+        }
+        WorkspaceFolder root = workspaceAccess.pickerRoot();
+        if (root == null) {
+            Toast.makeText(this, R.string.system_workspace_unavailable, Toast.LENGTH_LONG).show();
             return;
         }
         if (!workspaceAccess.hasAllFilesAccess()) {
@@ -1028,12 +1038,25 @@ public final class MainActivity extends Activity {
             refreshWorkspace();
             return;
         }
-        try {
-            startActivityForResult(workspaceAccess.folderPickerIntent(),
-                    WorkspaceFolderAccess.REQUEST_PICK_FOLDER);
-        } catch (ActivityNotFoundException noPicker) {
-            Toast.makeText(this, R.string.system_workspace_unavailable, Toast.LENGTH_LONG).show();
-        }
+        showWorkspacePicker(root.getHostPath());
+    }
+
+    /**
+     * Opens the built-in folder picker (ADR-0047) and stores the choice only
+     * after the path validates and passes the write probe; anything else is
+     * reported instead of bound.
+     */
+    private void showWorkspacePicker(String rootPath) {
+        WorkspaceFolderPickerDialog.show(this, rootPath, path -> {
+            WorkspaceFolder picked = workspaceAccess.pickedPathWorkspace(path);
+            if (picked != null && workspaceAccess.isUsable(picked)) {
+                workspaceStore.save(picked);
+            } else {
+                Toast.makeText(this, R.string.system_workspace_unavailable,
+                        Toast.LENGTH_LONG).show();
+            }
+            refreshWorkspace();
+        });
     }
 
     /**

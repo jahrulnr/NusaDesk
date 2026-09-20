@@ -12,6 +12,15 @@ the write probe, the four screen states, and the manifest — and by the
 cross-API-level launch guard running the real Activity on API 29, 30, 31, and 33
 (ADR-0022). Both device runs are recorded at the end of this document.
 
+**Amended by ADR-0047 (picking a folder).** On Android 11+ the workspace is
+chosen in a built-in path browser instead of the system document picker (the
+guest needs a host path, and the app already holds all-files access), and on
+Android 10 the app-owned workspace moved from
+`Android/data/<pkg>/files/nusadesk` to `Android/media/<pkg>/nusadesk` so the
+user can still reach and back it up. The bind contract itself — a real host
+path, validated, write-probed, bound at `/root/nusadesk`, guest content wins —
+is unchanged.
+
 ## Context
 
 Tuan asked for the guest to have a workspace at `~/nusadesk`, backed by a folder

@@ -110,6 +110,9 @@ public final class WorkspaceUiState {
                 return R.string.system_workspace_action_change;
             case APP_FOLDER:
             default:
+                // Android 10 has no bindable shared folder and the built-in
+                // picker would need a broader storage grant there, so this state
+                // offers no action rather than one it cannot honour (ADR-0047).
                 return 0;
         }
     }

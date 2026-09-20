@@ -234,7 +234,10 @@
     <string name="system_workspace_value_app_folder">App folder</string>
     <string name="system_workspace_detail_none">Bind a folder from this device into Linux at ~/nusadesk.</string>
     <string name="system_workspace_detail_permission">A shared folder lives outside app storage, so Android 11+ requires all-files access. Nothing is bound until you allow it.</string>
-    <string name="system_workspace_detail_app_folder">Android 10 cannot bind a shared folder, so Linux uses this app\'s own folder: %1$s. A file manager can still reach it on this Android version.</string>
+    <string name="system_workspace_detail_app_folder">Android 10 cannot bind a shared folder, so Linux uses this app\'s own folder: %1$s — reachable from a file manager and over USB. Pick a folder inside it, or copy files in and out of it yourself.</string>
+    <string name="system_workspace_picker_title">Choose a workspace folder</string>
+    <string name="system_workspace_picker_select">Use this folder</string>
+    <string name="system_workspace_picker_cancel">Cancel</string>
     <string name="system_workspace_detail_chosen">Appears at ~/nusadesk. Applies the next time Linux starts.</string>
     <string name="system_workspace_action_grant">Allow all-files access</string>
     <string name="system_workspace_action_choose">Choose folder</string>

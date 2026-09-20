@@ -824,6 +824,29 @@ Run findings:
    the maintainer-side keystore secrets must be set before the next release,
    and pre-key builds need a one-time reinstall.
 
+## Workspace folder picking (ADR-0047), device run 2026-09-20
+
+Run on the Samsung S10e (SM-G970F, OneUI, Android 12/API 31, arm64) with the
+all-files grant in place (`appops get … MANAGE_EXTERNAL_STORAGE` → `allow`).
+Evidence: `/tmp/qa-workspace/` (uiautomator dumps, screenshots).
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| WS-001 | Settings page, stored workspace | The card renders the stored folder (`Documents/nusadesk`), the detail line ("Appears at ~/nusadesk. Applies the next time Linux starts."), and the `Change folder` action |
+| WS-002 | The action opens the built-in picker | The dialog appears with this product's title, the path header `/storage/emulated/0`, the shared-storage listing (Alarms, Android, Audiobooks, DCIM, Documents, Download, …), folder navigation into `Documents`, and `CANCEL` / `USE THIS FOLDER` |
+| WS-003 | Dialog refused to open at all (found and fixed) | The library gates its own `show()` on storage access and, without `DialogProperties.allow_manage_external_storage`, silently fell back to requesting `READ_EXTERNAL_STORAGE` — a permission this app deliberately does not hold — so the button did nothing. With the flag set it accepts the all-files grant, which is what the device holds |
+| WS-004 | Marking a folder and confirming it | **OPEN:** the library's directory selection is a *marked* selection (the row's right-hand checkbox enables the positive button; the button returns the marked path). Verified from the library source; the gesture is not yet confirmed on the device, and the stored path is therefore not yet re-verified end to end |
+| WS-005 | Android 10 picker | **BLOCKED (decision):** below API 30 the library's gate accepts only `READ_EXTERNAL_STORAGE`, which `WorkspaceStorageManifestTest` forbids as a broader grant than the feature needs. The app-owned fallback is unit-tested (`WorkspaceFolderAccessTest`: picker root inside `Android/media/<pkg>`, app-tree paths accepted, shared paths refused) but not device-verified — it needs an API 29 device |
+
+Notes:
+
+- The stored SAF workspace (`primary:Documents/nusadesk`) still resolves after
+  this change, because usability is now judged on the path (grant + write
+  probe) rather than on the tree document id.
+- The guest bind itself was not re-verified in this run: the picker's stored
+  path is applied at the next session start, and the device's stored workspace
+  did not change during the run.
+
 ## Guest backup & restore round trip (ADR-0044), device run 2026-09-20
 
 Run on the Samsung S10e (SM-G970F, OneUI, Android 12/API 31, arm64) against

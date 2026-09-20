@@ -10,6 +10,8 @@ import android.provider.DocumentsContract;
 import android.provider.Settings;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 import gh.nusashell.nusadesk.domain.workspace.WorkspaceFolder;
 
@@ -41,6 +43,9 @@ public final class WorkspaceFolderAccess {
     /** Identifier and folder name of the app's own external workspace. */
     private static final String APP_FOLDER_ID = "app-external-files";
     private static final String APP_FOLDER_NAME = "nusadesk";
+
+    /** Identifier of a workspace whose raw path the built-in picker returned. */
+    private static final String PICKED_PATH_ID = "picked-path";
 
     private final Context context;
 
@@ -168,35 +173,130 @@ public final class WorkspaceFolderAccess {
 
     /**
      * The workspace on platforms that cannot bind a shared folder: this app's own
-     * external files folder, {@code Android/data/<package>/files/nusadesk}.
+     * external media folder, {@code Android/media/<package>/nusadesk}.
      *
-     * <p>No permission is involved — the directory belongs to the app — and on
-     * Android 10 the platform still lets a file manager browse {@code Android/data},
-     * so this is the only place that gives Android 10 both a real folder the user
-     * can reach and a path PRoot can bind. Android 11+ restricts that directory,
-     * which is exactly why the picked shared folder is used there instead.</p>
+     * <p>No permission is involved — the directory belongs to the app — and it
+     * is the app-owned tree that stays reachable for the user: on Android 10 a
+     * file manager can browse it, and on Android 11+ the media tree is still
+     * visible over MTP and to file managers, unlike {@code Android/data}. That
+     * reachability is the point: the guest backup excludes the workspace bind,
+     * so this folder is what the user copies out themselves.</p>
      */
     public WorkspaceFolder appFolderWorkspace() {
-        File external = context.getExternalFilesDir(null);
-        if (external == null) {
+        File root = primaryAppExternalRoot();
+        if (root == null) {
             return null;
         }
-        File workspace = new File(external, APP_FOLDER_NAME);
+        File workspace = new File(root, APP_FOLDER_NAME);
         return WorkspaceFolder.ofHostPath(
                 APP_FOLDER_ID, workspace.getAbsolutePath(), APP_FOLDER_NAME);
     }
 
     /**
-     * Whether the folder can really be used right now: a picked shared folder
-     * still needs the platform grant, the app's own folder does not, and in both
-     * cases a probe write into the folder must succeed.
+     * The root the built-in folder picker may browse on this platform: the whole
+     * shared volume on Android 11+ (the app holds all-files access there, so raw
+     * paths are real), and this app's own media folder on Android 10, where a
+     * shared folder could never be bound.
+     *
+     * @return the browsable root, or null when the device exposes no storage
+     */
+    public WorkspaceFolder pickerRoot() {
+        if (!isSupportedPlatform()) {
+            // Android 10: only this app's own trees are raw-accessible, and the
+            // media tree is the one a file manager and MTP still show. Rooting at
+            // the tree (not at the workspace folder inside it) lets the user pick
+            // the folder itself or any subfolder of it.
+            File ownRoot = primaryAppExternalRoot();
+            return ownRoot == null
+                    ? null
+                    : WorkspaceFolder.ofHostPath(
+                            PICKED_PATH_ID, ownRoot.getAbsolutePath(), ownRoot.getName());
+        }
+        File root = Environment.getExternalStorageDirectory();
+        return root == null
+                ? null
+                : WorkspaceFolder.ofHostPath(PICKED_PATH_ID, root.getAbsolutePath(), "Storage");
+    }
+
+    /**
+     * Wraps a raw path the built-in picker returned.
+     *
+     * <p>Accepted are absolute paths without traversal segments that either sit
+     * inside this app's own external directories (no grant needed) or, on
+     * Android 11+, inside shared storage (usable only while the all-files grant
+     * is in place — {@link #isUsable} is the second gate). Everything else is
+     * refused rather than bound.</p>
+     *
+     * @return the workspace, or null when the path cannot be bound here
+     */
+    public WorkspaceFolder pickedPathWorkspace(String absolutePath) {
+        if (absolutePath == null || absolutePath.trim().isEmpty()) {
+            return null;
+        }
+        String path = absolutePath.trim();
+        if (!path.startsWith("/") || path.contains("..") || path.indexOf('\0') >= 0) {
+            return null;
+        }
+        if (!isInsideAppExternalStorage(path)
+                && !(isSupportedPlatform() && path.startsWith("/storage/"))) {
+            return null;
+        }
+        File folder = new File(path);
+        String name = folder.getName();
+        return WorkspaceFolder.ofHostPath(
+                PICKED_PATH_ID, path, name.isEmpty() ? path : name);
+    }
+
+    /** Whether a path lives inside one of this app's own external directories. */
+    public boolean isInsideAppExternalStorage(String path) {
+        if (path == null) {
+            return false;
+        }
+        for (File root : appExternalRoots()) {
+            String prefix = root.getAbsolutePath();
+            if (path.equals(prefix) || path.startsWith(prefix + "/")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private File primaryAppExternalRoot() {
+        File[] media = context.getExternalMediaDirs();
+        if (media != null && media.length > 0 && media[0] != null) {
+            return media[0];
+        }
+        return context.getExternalFilesDir(null);
+    }
+
+    private List<File> appExternalRoots() {
+        List<File> roots = new ArrayList<>();
+        File files = context.getExternalFilesDir(null);
+        if (files != null) {
+            roots.add(files);
+        }
+        File[] media = context.getExternalMediaDirs();
+        if (media != null) {
+            for (File directory : media) {
+                if (directory != null) {
+                    roots.add(directory);
+                }
+            }
+        }
+        return roots;
+    }
+
+    /**
+     * Whether the folder can really be used right now: a folder outside this
+     * app's own external directories still needs the platform grant, and in
+     * every case a probe write into the folder must succeed.
      */
     public boolean isUsable(WorkspaceFolder folder) {
         if (folder == null) {
             return false;
         }
-        boolean needsGrant = !APP_FOLDER_ID.equals(folder.getTreeDocumentId());
-        if (needsGrant && (!isSupportedPlatform() || !hasAllFilesAccess())) {
+        if (!isInsideAppExternalStorage(folder.getHostPath())
+                && !(isSupportedPlatform() && hasAllFilesAccess())) {
             return false;
         }
         return WorkspaceDirectory.ensureUsable(folder.getHostPath());

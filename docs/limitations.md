@@ -483,6 +483,19 @@ an already-consented device descriptor. What that means in practice:
   primary bound, and applies directory modes after the payload so read-only
   directories restore correctly.
 
+- The workspace folder is the one guest path a backup deliberately excludes, so
+  the user copies it out themselves. Where it lives depends on the platform
+  (ADR-0047): a folder the user picked on Android 11+, and
+  `Android/media/<pkg>/nusadesk` on Android 10 — app-owned and bindable, but
+  visible to file managers and over MTP, unlike `Android/data`. Android 10 has
+  no folder picker yet: every way to offer one either widens the storage grant
+  the workspace guard forbids or needs a second browser implementation, so the
+  card names the folder it uses and offers no action.
+- The built-in picker's selection is a *marked* selection: the folder is ticked
+  in the row before the positive button returns it, and a picked path is
+  validated (absolute, no traversal, inside shared storage on Android 11+) and
+  write-probed before it replaces the stored workspace.
+
 - The native Android tooling tier (ADR-0045) is bounded by the app's own uid
   and by the trees the product binds: `/system/bin`, `/system/lib64` and the
   Bionic runtime tree `/apex` (on Android 11+ `/system/bin/linker64` is only
