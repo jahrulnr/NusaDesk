@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set and the descriptor passed through), so a guest-side adb client can
   target a device attached to the host's USB port while every transfer stays
   in the guest
+- Add the guest adb driver (ADR-0042): `nusadesk-usbd` owns the session's
+  opened device descriptors and serves them over an abstract socket, a
+  generated `libusb-shim.c` (compiled once by the wrapper and loaded with
+  `LD_PRELOAD`) presents those devices to the stock adb's libusb backend, and
+  `/usr/local/bin/adb` wires it together with `ADB_LIBUSB=1` — so
+  `adb devices`, `adb shell`, `adb push`, and `adb install` work against
+  devices attached to the host's USB port, with a plain-adb fallback whenever
+  the session or the shim is unavailable. Device-verified on the S10e with an
+  S7 Edge attached: `adb devices` lists it (`1-1`, model `SM_G935F`) and
+  `adb shell` runs on it. The driver expects a libusb build with its hotplug
+  monitor failure downgraded (Android denies the kobject-uevent netlink
+  socket); today that build is made in the guest, with shipping it as a
+  verified artifact as follow-up work
 
 ## [0.4.0] - 2026-09-20
 

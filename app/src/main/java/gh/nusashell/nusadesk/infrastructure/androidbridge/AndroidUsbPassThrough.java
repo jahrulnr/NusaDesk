@@ -13,6 +13,7 @@ import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
+import android.hardware.usb.UsbInterface;
 import android.util.Log;
 
 import java.io.FileDescriptor;
@@ -95,7 +96,8 @@ public final class AndroidUsbPassThrough implements UsbPassThroughSource, AutoCl
         }
         for (UsbDevice device : devices.values()) {
             entries.add(new UsbDeviceEntry(device.getVendorId(), device.getProductId(),
-                    device.getDeviceName(), nameOrNull(device, true), nameOrNull(device, false)));
+                    device.getDeviceName(), nameOrNull(device, true), nameOrNull(device, false),
+                    interfacesOf(device)));
         }
         entries.sort(Comparator.comparingInt(UsbDeviceEntry::getVendorId)
                 .thenComparingInt(UsbDeviceEntry::getProductId)
@@ -274,6 +276,31 @@ public final class AndroidUsbPassThrough implements UsbPassThroughSource, AutoCl
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /**
+     * The interface signatures of one device ({@code class/subclass/protocol}
+     * hex pairs, comma joined). The platform reports interface metadata
+     * without a permission grant, so the guest can tell an adb device
+     * ({@code ff4201}) from unrelated hardware before anything is opened.
+     */
+    private static String interfacesOf(UsbDevice device) {
+        StringBuilder interfaces = new StringBuilder();
+        try {
+            for (int index = 0; index < device.getInterfaceCount(); index++) {
+                UsbInterface usbInterface = device.getInterface(index);
+                if (index > 0) {
+                    interfaces.append(',');
+                }
+                interfaces.append(String.format("%02x%02x%02x",
+                        usbInterface.getInterfaceClass(),
+                        usbInterface.getInterfaceSubclass(),
+                        usbInterface.getInterfaceProtocol()));
+            }
+        } catch (RuntimeException e) {
+            return null;
+        }
+        return interfaces.length() == 0 ? null : interfaces.toString();
     }
 
     @Override

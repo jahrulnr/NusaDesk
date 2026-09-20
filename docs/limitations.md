@@ -431,6 +431,24 @@ an already-consented device descriptor. What that means in practice:
 - `usb.list`/`usb.open` cover enumeration and delivery only: no device-class
   support matrix, no automatic re-attach on hotplug, and no persistence
   beyond what the platform dialog already grants.
+- The guest adb driver (ADR-0042) does not remove the platform gates: the
+  host's per-attach USB consent dialog still has to be answered once per
+  attach, the target still shows its debugging authorization unless "always
+  allow" was chosen, and both dialogs need the devices reachable and awake.
+  `adb devices` answers from cached/fabricated descriptors until adb actually
+  opens a device (that is when the real descriptor, serial included, is
+  read); the driver is session-scoped and its descriptors die with the guest
+  session. The first use needs `gcc` in the guest to compile the shim;
+  without it the wrapper degrades to the plain adb.
+- The driver also needs a **libusb whose hotplug monitor failure is
+  non-fatal** (Android denies the kobject-uevent netlink socket; stock libusb
+  then refuses to initialize): today that build is made in the guest with
+  `gcc` + the libusb headers and a one-hunk source patch, installed under
+  `/opt/nusadesk/lib` (ADR-0042 records the recipe). Shipping it as a
+  verified artifact is open work. Also observed on device: a USB session that
+  ends abruptly (host process killed mid-handshake) can leave the ROM's adbd
+  ignoring further CNXN packets until the cable is replugged — the reset is
+  the documented recovery, not a product defect.
 
 ### Guest GPU/NPU acceleration is device-class specific
 

@@ -32,14 +32,21 @@ public interface UsbPassThroughSource {
         private final String name;
         private final String manufacturer;
         private final String product;
+        private final String interfaces;
 
         public UsbDeviceEntry(int vendorId, int productId, String name,
                 String manufacturer, String product) {
+            this(vendorId, productId, name, manufacturer, product, null);
+        }
+
+        public UsbDeviceEntry(int vendorId, int productId, String name,
+                String manufacturer, String product, String interfaces) {
             this.vendorId = vendorId;
             this.productId = productId;
             this.name = name;
             this.manufacturer = manufacturer;
             this.product = product;
+            this.interfaces = interfaces;
         }
 
         public int getVendorId() {
@@ -60,6 +67,16 @@ public interface UsbPassThroughSource {
 
         public String getProduct() {
             return product;
+        }
+
+        /**
+         * Comma-joined {@code class/subclass/protocol} hex pairs, one per
+         * interface, or {@code null} when the platform did not report any.
+         * The guest USB driver filters on the adb interface signature
+         * ({@code ff4201}) so non-adb devices are never opened.
+         */
+        public String getInterfaces() {
+            return interfaces;
         }
     }
 

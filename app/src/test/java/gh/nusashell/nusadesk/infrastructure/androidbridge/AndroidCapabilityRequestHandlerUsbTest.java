@@ -26,7 +26,8 @@ public class AndroidCapabilityRequestHandlerUsbTest {
         FakeUsb usb = new FakeUsb();
         usb.devices = List.of(
                 new UsbPassThroughSource.UsbDeviceEntry(0x04e8, 0x6860,
-                        "/dev/bus/usb/001/002", "samsung", "SAMSUNG_Android"));
+                        "/dev/bus/usb/001/002", "samsung", "SAMSUNG_Android",
+                        "ff4201,060101"));
         AndroidCapabilityRequestHandler handler = usbHandler(usb);
 
         AndroidCapabilityProtocol.Response response = handler.handle(
@@ -35,7 +36,8 @@ public class AndroidCapabilityRequestHandlerUsbTest {
         assertTrue(response.isOk());
         assertEquals("[{\"vendorId\":1256,\"productId\":26720,"
                         + "\"name\":\"/dev/bus/usb/001/002\","
-                        + "\"manufacturer\":\"samsung\",\"product\":\"SAMSUNG_Android\"}]",
+                        + "\"manufacturer\":\"samsung\",\"product\":\"SAMSUNG_Android\","
+                        + "\"interfaces\":\"ff4201,060101\"}]",
                 response.getFields().get("devices"));
         assertEquals(Integer.valueOf(1), response.getFields().get("count"));
     }
@@ -53,7 +55,8 @@ public class AndroidCapabilityRequestHandlerUsbTest {
         assertTrue(response.isOk());
         assertEquals("[{\"vendorId\":1507,\"productId\":1873,"
                         + "\"name\":\"/dev/bus/usb/001/003\","
-                        + "\"manufacturer\":null,\"product\":null}]",
+                        + "\"manufacturer\":null,\"product\":null,"
+                        + "\"interfaces\":null}]",
                 response.getFields().get("devices"));
     }
 

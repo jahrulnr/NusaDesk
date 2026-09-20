@@ -882,6 +882,43 @@ Run findings:
 6. **Repeat run:** the second USB-008 run completed with the same result
    (the dialog may reappear when the key was not marked "always allow").
 
+## Guest adb driver (ADR-0042), device run 2026-09-20
+
+Run on the S10e (USB host) with the S7 Edge attached, debug build carrying the
+driver bundle written at session start (`/usr/local/bin/nusadesk-usbd`,
+`/usr/local/bin/adb`, `/opt/nusadesk/libusb-shim.c`), plus the patched libusb
+at `/opt/nusadesk/lib` (`gcc` and `libusb-1.0-0-dev` installed in the guest
+once; recipe in ADR-0042).
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| USB-101 | `adb devices -l` with the driver active | `device 1-1 product:crownltexx model:SM_G935F device:crownlte` — the stock adb sees the attached phone; enumeration arrives through the shim's virtual hotplug |
+| USB-102 | `adb -s 1-1 shell getprop ro.product.model`, three consecutive runs | `SM-G935F` each time; the transport stays `device` |
+| USB-103 | Authorization | First contact: adb sent its public key and the transport sat `unauthorized`; after that key was authorized once (with "always allow"), later attaches authenticate silently through the signature path — no dialog |
+| USB-104 | Enumeration with an empty descriptor cache | the device still lists and opens; the descriptor is fabricated for enumeration and refreshed from the device at open (real serial `ce0516054597102d05` read through the wrapped handle) |
+
+Run findings:
+
+1. **usbfs claims live on the opened file.** The shim's claim, the app's
+   connection and the daemon's cached fd all referenced one file, so the next
+   attacher's claim failed `EBUSY`. Fix: the daemon opens a fresh fd per
+   `usb.open` (the app replaces its previous connection on every open) and
+   closes its own copy once the descriptor has been handed over.
+2. **A poll bug arrived every virtual device and left it in the same tick**
+   (adb log: `device arrived` + `device left` 1 ms apart), leaving one
+   offline transport per poll. Fix: mark a freshly created vdev as seen so
+   the same poll's LEFT pass cannot sweep it.
+3. **Stock libusb cannot initialize in this environment**: its hotplug
+   monitor needs a `NETLINK_KOBJECT_UEVENT` socket that Android's SELinux
+   denies (errno 13), which libusb 1.0.27 treats as fatal
+   (`LIBUSB_ERROR_OTHER`). The shim supplies hotplug itself, so the run used
+   a libusb build with that failure downgraded to a warning (recipe in
+   ADR-0042).
+4. **adbd wedges after an abrupt host disconnect** (a process exiting
+   mid-handshake): further CNXN packets go unanswered until the cable is
+   replugged. A clean authorization followed by a normal attach does not
+   wedge it; the replug is the documented recovery.
+
 ## License and distribution note
 
 - PRoot is GPL-2.0-or-later. Packaging/distributing it requires GPLv2+

@@ -132,6 +132,16 @@ runtime requirements.
   every transfer stays the guest's. The executed command receives the
   descriptor as `NUSADESK_USB_FD` — enough for a guest-side adb client built
   on a USB-fd-capable transport (ADR-0041).
+- The same pass-through becomes a driver for the stock guest `adb`
+  (ADR-0042): `/usr/local/bin/adb` autostarts `nusadesk-usbd`, compiles and
+  loads a small libusb shim once `gcc` and the libusb headers are present,
+  and runs the real adb with `ADB_LIBUSB=1` — so `adb devices` lists the
+  devices attached to the host's USB port and `adb shell` / `push` /
+  `install` operate on them. Android denies the kobject-uevent netlink socket
+  libusb's hotplug monitor needs, so the driver expects a libusb build with
+  that failure downgraded under `/opt/nusadesk/lib` (recipe in ADR-0042);
+  without a live session (or without the shim) the wrapper falls back to the
+  plain adb.
 - Live media is the camera and/or microphone streamed as H.264/AAC over RTSP on
   loopback while the guest session and the visible media notification are
   active. No capture file is ever written — save one yourself from the stream if

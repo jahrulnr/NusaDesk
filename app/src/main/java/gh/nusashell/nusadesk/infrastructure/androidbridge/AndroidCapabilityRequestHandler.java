@@ -843,6 +843,7 @@ public final class AndroidCapabilityRequestHandler {
                     .append(",\"name\":").append(encodeNullable(entry.getName()))
                     .append(",\"manufacturer\":").append(encodeNullable(entry.getManufacturer()))
                     .append(",\"product\":").append(encodeNullable(entry.getProduct()))
+                    .append(",\"interfaces\":").append(encodeNullable(entry.getInterfaces()))
                     .append('}');
         }
         json.append(']');

@@ -9,9 +9,11 @@ Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
 Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
 Android capability bridge (battery, one-shot sensors, foreground location and
 its bounded stream, read-only contacts/call-log/SMS/telephony, live media in
-three track modes, and the bounded calendar read/write slice). Security behavior
-on other Android versions, OEMs, and 16 KB page-size devices is not yet covered
-by the same evidence.
+three track modes, and the bounded calendar read/write slice), plus the USB
+pass-through slice and the guest adb driver that makes the stock guest `adb`
+operate a device attached to the host's USB port (ADR-0041, ADR-0042).
+Security behavior on other Android versions, OEMs, and 16 KB page-size devices
+is not yet covered by the same evidence.
 
 ## Reporting a vulnerability
 
@@ -79,8 +81,21 @@ The following are deliberate properties of the current design:
   calendar the user can write, and never write an attendee row or send an
   invitation. Writes are audited with one line carrying the operation and ids,
   never the event title, location, or other content (ADR-0032).
-- **Runtime payloads are curated.** The product does not expose arbitrary URLs,
-  arbitrary rootfs images, or arbitrary shell commands as its default API.
+- **USB access is consent-gated and host-mediated.** `usb.list` / `usb.open`
+  are the only USB bridge methods; there is no host-side transfer API. Opening
+  a device always runs the platform's own per-device consent dialog (bounded,
+  with denied and ignored answers as typed results), the guest receives only a
+  duplicated usbfs descriptor over an abstract unix socket, and every claim and
+  transfer stays the guest's — the app keeps no way to move device data on
+  behalf of a script. Device classes are filtered to adb-shaped interfaces
+  (`ff/42/01`) before anything is offered to the guest adb driver, so unrelated
+  hardware is never opened (ADR-0041, ADR-0042).
+- **The guest adb driver cannot bypass platform gates.** It presents devices
+  to the stock guest `adb` through a preloaded shim; the host's consent dialog
+  and the target's debugging authorization remain the user's decisions. The
+  shim's sources live in the guest, and its libusb build only downgrades the
+  hotplug monitor that Android's SELinux denies — no kernel or SELinux change
+  is involved.
 - **Payload integrity is digest-based.** Current catalog entries use reviewed,
   compile-time pinned SHA-256 digests. A signed remote catalog service is not
   implemented yet.
