@@ -28,12 +28,18 @@ import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import gh.nusashell.nusadesk.R;
+import gh.nusashell.nusadesk.application.backup.BackupFailure;
+import gh.nusashell.nusadesk.application.backup.BackupResult;
+import gh.nusashell.nusadesk.application.backup.GuestBackupUseCase;
 import gh.nusashell.nusadesk.application.runtime.RuntimeInstallationException;
 import gh.nusashell.nusadesk.application.runtime.RuntimeInstallationUseCase;
 import gh.nusashell.nusadesk.application.runtime.RuntimeSnapshotReconciler;
 import gh.nusashell.nusadesk.application.runtime.RuntimeStateStore;
 import gh.nusashell.nusadesk.application.webapp.WebAppRegistry;
 import gh.nusashell.nusadesk.application.workspace.WorkspaceStore;
+import gh.nusashell.nusadesk.domain.backup.BackupSelection;
+import gh.nusashell.nusadesk.domain.backup.LastBackupRecord;
+import gh.nusashell.nusadesk.domain.backup.LastBackupRun;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
 import gh.nusashell.nusadesk.domain.runtime.GuestAddonPayloadProfile;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
@@ -43,6 +49,9 @@ import gh.nusashell.nusadesk.domain.update.ApkDigest;
 import gh.nusashell.nusadesk.domain.update.ReleaseVersion;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.workspace.WorkspaceFolder;
+import gh.nusashell.nusadesk.infrastructure.backup.BackupDocumentAccess;
+import gh.nusashell.nusadesk.infrastructure.backup.GuestBackupTransfer;
+import gh.nusashell.nusadesk.infrastructure.backup.LastBackupStore;
 import gh.nusashell.nusadesk.infrastructure.battery.BatteryOptimizationAccess;
 import gh.nusashell.nusadesk.infrastructure.boot.BootAutostartPreferences;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLog;
@@ -73,6 +82,7 @@ import gh.nusashell.nusadesk.presentation.desktop.DesktopApp;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopHomeView;
 import gh.nusashell.nusadesk.presentation.desktop.LauncherEntry;
 import gh.nusashell.nusadesk.presentation.logs.LogsScreenView;
+import gh.nusashell.nusadesk.presentation.system.SystemBackupPageView;
 import gh.nusashell.nusadesk.presentation.system.SystemScreenView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
 import gh.nusashell.nusadesk.presentation.update.UpdateInstallDialog;
@@ -84,6 +94,8 @@ import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -126,6 +138,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService faviconExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService updateExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService backupExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean installInProgress = new AtomicBoolean(false);
     private final Map<DesktopDestination, View> fixedSurfaces =
             new EnumMap<>(DesktopDestination.class);
@@ -156,6 +169,12 @@ public final class MainActivity extends Activity {
     private WebAppFaviconFetcher faviconFetcher;
     private WorkspaceStore workspaceStore;
     private WorkspaceFolderAccess workspaceAccess;
+    private BackupDocumentAccess backupDocumentAccess;
+    private GuestBackupUseCase backupTransfer;
+    private LastBackupStore lastBackupStore;
+    /** Selection stashed between the create-document request and its result. */
+    private BackupSelection pendingBackupSelection;
+    private String pendingBackupName;
     private BatteryOptimizationAccess batteryAccess;
     private BootAutostartPreferences bootPreferences;
     private UpdateCheckPrefs updatePrefs;
@@ -215,6 +234,10 @@ public final class MainActivity extends Activity {
         // platform rules, so the Activity only asks for state and renders it.
         workspaceStore = new SharedPreferencesWorkspaceStore(this);
         workspaceAccess = new WorkspaceFolderAccess(this);
+        backupDocumentAccess = new BackupDocumentAccess(this);
+        lastBackupStore = new LastBackupStore(this);
+        backupTransfer = GuestBackupTransfer.inAppStorage(
+                this, stateStore, installedVersionName());
         batteryAccess = new BatteryOptimizationAccess(this);
         bootPreferences = new BootAutostartPreferences(this);
         updatePrefs = new UpdateCheckPrefs(this);
@@ -226,6 +249,8 @@ public final class MainActivity extends Activity {
         wireLauncher();
         wireAppSurfaceHost();
         wireSystemScreen();
+        systemScreen.renderLastBackup(lastBackupStore.load());
+        systemScreen.renderLastRun(lastBackupStore.loadRun());
 
         loadPersistedState();
         restoreShellState(savedInstanceState);
@@ -355,6 +380,7 @@ public final class MainActivity extends Activity {
         probeExecutor.shutdownNow();
         faviconExecutor.shutdownNow();
         updateExecutor.shutdownNow();
+        backupExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -429,6 +455,14 @@ public final class MainActivity extends Activity {
             refreshBattery();
             return;
         }
+        if (requestCode == BackupDocumentAccess.REQUEST_CREATE_BACKUP) {
+            onBackupExportTargetPicked(resultCode, data);
+            return;
+        }
+        if (requestCode == BackupDocumentAccess.REQUEST_OPEN_BACKUP) {
+            onBackupImportSourcePicked(resultCode, data);
+            return;
+        }
         if (requestCode != WebAppFormView.REQUEST_OPEN_IMAGE) {
             return;
         }
@@ -461,6 +495,17 @@ public final class MainActivity extends Activity {
         systemScreen.setOnOpenAppSettingsListener(view -> openAppSettings());
         systemScreen.setOnBatteryActionListener(view -> onBatteryAction());
         systemScreen.setOnBootActionListener(view -> onBootAction());
+        systemScreen.setBackupListener(new SystemBackupPageView.Listener() {
+            @Override
+            public void onExportRequested(BackupSelection selection) {
+                onBackupExportRequested(selection);
+            }
+
+            @Override
+            public void onImportRequested() {
+                onBackupImportRequested();
+            }
+        });
     }
 
     private void restoreShellState(Bundle savedInstanceState) {
@@ -1420,6 +1465,177 @@ public final class MainActivity extends Activity {
             }
         }
         refreshWorkspace();
+    }
+
+    // ---- Guest backup & restore ----
+
+    /**
+     * The export action: the create-document picker gets the suggested file
+     * name; the selection is stashed until the result arrives. A running
+     * install is reported as {@code busy} instead of racing the installer's
+     * staging trees.
+     */
+    private void onBackupExportRequested(BackupSelection selection) {
+        if (selection == null) {
+            Toast.makeText(this, R.string.system_backup_pick_folder,
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (installInProgress.get()) {
+            renderBackupFailure(BackupFailure.BUSY,
+                    "a setup install is running — retry when it finishes");
+            return;
+        }
+        String name = BackupDocumentAccess.suggestedFileName(
+                selection.getMode(), System.currentTimeMillis());
+        pendingBackupSelection = selection;
+        pendingBackupName = name;
+        try {
+            startActivityForResult(backupDocumentAccess.createDocumentIntent(name),
+                    BackupDocumentAccess.REQUEST_CREATE_BACKUP);
+        } catch (ActivityNotFoundException noPicker) {
+            pendingBackupSelection = null;
+            pendingBackupName = null;
+            renderBackupFailure(BackupFailure.IO_FAILURE,
+                    getString(R.string.system_backup_picker_unavailable));
+        }
+    }
+
+    /**
+     * The import action: the open-document picker hands back the archive to
+     * restore. The engine reads the manifest first, so no mode choice is
+     * needed here — the file says what it is.
+     */
+    private void onBackupImportRequested() {
+        if (installInProgress.get()) {
+            renderBackupFailure(BackupFailure.BUSY,
+                    "a setup install is running — retry when it finishes");
+            return;
+        }
+        try {
+            startActivityForResult(backupDocumentAccess.openDocumentIntent(),
+                    BackupDocumentAccess.REQUEST_OPEN_BACKUP);
+        } catch (ActivityNotFoundException noPicker) {
+            renderBackupFailure(BackupFailure.IO_FAILURE,
+                    getString(R.string.system_backup_picker_unavailable));
+        }
+    }
+
+    /**
+     * The create-document result: streams the archive straight into the picked
+     * document's OutputStream on the backup executor — no temporary copy.
+     */
+    private void onBackupExportTargetPicked(int resultCode, Intent data) {
+        BackupSelection selection = pendingBackupSelection;
+        String suggestedName = pendingBackupName;
+        pendingBackupSelection = null;
+        pendingBackupName = null;
+        Uri uri = data == null ? null : data.getData();
+        if (resultCode != RESULT_OK || uri == null || selection == null) {
+            systemScreen.renderBackupCancelled();
+            return;
+        }
+        String queried = backupDocumentAccess.displayName(uri);
+        String recordName = queried == null ? suggestedName : queried;
+        systemScreen.setBackupBusy(true);
+        backupExecutor.execute(() -> {
+            BackupResult result;
+            try (OutputStream out = backupDocumentAccess.openForWrite(uri)) {
+                result = out == null
+                        ? BackupResult.failed(BackupFailure.IO_FAILURE,
+                                "the picked document could not be opened")
+                        : backupTransfer.exportBackup(selection, out,
+                                progress -> mainHandler.post(
+                                        () -> systemScreen.renderBackupProgress(progress)));
+            } catch (IOException failed) {
+                result = BackupResult.failed(BackupFailure.IO_FAILURE,
+                        failed.getMessage() == null
+                                ? "the storage write failed" : failed.getMessage());
+            }
+            BackupResult terminal = result;
+            mainHandler.post(() -> onBackupExportFinished(terminal, selection, recordName));
+        });
+    }
+
+    /**
+     * The open-document result: streams the picked archive into the restore
+     * pipeline on the backup executor.
+     */
+    private void onBackupImportSourcePicked(int resultCode, Intent data) {
+        Uri uri = data == null ? null : data.getData();
+        if (resultCode != RESULT_OK || uri == null) {
+            systemScreen.renderBackupCancelled();
+            return;
+        }
+        systemScreen.setBackupBusy(true);
+        backupExecutor.execute(() -> {
+            BackupResult result;
+            try (InputStream in = backupDocumentAccess.openForRead(uri)) {
+                result = in == null
+                        ? BackupResult.failed(BackupFailure.IO_FAILURE,
+                                "the picked document could not be opened")
+                        : backupTransfer.importBackup(in,
+                                progress -> mainHandler.post(
+                                        () -> systemScreen.renderBackupProgress(progress)));
+            } catch (IOException failed) {
+                result = BackupResult.failed(BackupFailure.IO_FAILURE,
+                        failed.getMessage() == null
+                                ? "the storage read failed" : failed.getMessage());
+            }
+            BackupResult terminal = result;
+            mainHandler.post(() -> onBackupImportFinished(terminal));
+        });
+    }
+
+    /** Terminal export state: render it and persist the display records. */
+    private void onBackupExportFinished(BackupResult result, BackupSelection selection,
+            String displayName) {
+        systemScreen.renderBackupResult(result);
+        persistBackupRun(LastBackupRun.OPERATION_EXPORT, result);
+        if (!result.isReady()) {
+            return;
+        }
+        LastBackupRecord record = new LastBackupRecord(selection.getMode(),
+                System.currentTimeMillis(), displayName,
+                result.getEntries(), result.getBytes());
+        try {
+            lastBackupStore.save(record);
+        } catch (RuntimeException persistFailed) {
+            // The backup itself succeeded; only the display record is lost.
+        }
+        systemScreen.renderLastBackup(record);
+    }
+
+    /** Terminal import state: a restored runtime is the new install truth. */
+    private void onBackupImportFinished(BackupResult result) {
+        systemScreen.renderBackupResult(result);
+        persistBackupRun(LastBackupRun.OPERATION_RESTORE, result);
+        if (result.isReady()) {
+            loadPersistedState();
+            refreshGuestSshState();
+        }
+    }
+
+    /**
+     * The typed success/failure record, written only now that the operation
+     * has reached its terminal state — a killed transfer leaves the previous
+     * record standing rather than a speculative one.
+     */
+    private void persistBackupRun(String operation, BackupResult result) {
+        LastBackupRun run = new LastBackupRun(operation, result.isReady(),
+                result.getFailure() == null ? "" : result.getFailure().getCode(),
+                System.currentTimeMillis());
+        try {
+            lastBackupStore.saveRun(run);
+        } catch (RuntimeException persistFailed) {
+            // The operation already reached its terminal state; only the
+            // display record is lost.
+        }
+        systemScreen.renderLastRun(run);
+    }
+
+    private void renderBackupFailure(BackupFailure failure, String detail) {
+        systemScreen.renderBackupResult(BackupResult.failed(failure, detail));
     }
 
     /**

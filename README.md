@@ -142,6 +142,14 @@ runtime requirements.
   that failure downgraded under `/opt/nusadesk/lib` (recipe in ADR-0042);
   without a live session (or without the shim) the wrapper falls back to the
   plain adb.
+- Back up the whole guest — or just what you changed — from **System →
+  Settings → Backup & restore** (ADR-0044): a full dump captures the runtime,
+  the guest add-on and the session state and can rebuild a fresh install; a
+  home or custom dump captures `/root` + `/home` or the top-level paths you
+  check (never the pseudo trees) and merges back into an existing session.
+  The archive is a plain streaming `tar.gz` you pick through the system file
+  dialog — it may contain secrets (host keys, your files), so keep it
+  somewhere you trust.
 - Live media is the camera and/or microphone streamed as H.264/AAC over RTSP on
   loopback while the guest session and the visible media notification are
   active. No capture file is ever written — save one yourself from the stream if

@@ -31,10 +31,12 @@ URLs, packages, or user-supplied commands.
 
 ## Decision
 
-1. **System is a hub with three pages.** The rows live in the existing
+1. **System is a hub with four pages.** The rows live in the existing
    single-activity desktop shell; no new activities and no second navigation
    system. Sub-pages carry a back row, and the system back action on a
-   sub-page returns to the hub before it leaves the screen.
+   sub-page returns to the hub before it leaves the screen. The fourth row —
+   Backup & restore (ADR-0044) — is a top-level action, not a setting, so it
+   sits on the hub next to One-click install rather than inside Settings.
 2. **Each page owns one responsibility.** Settings keeps the existing
    control rows (workspace, battery optimization, boot start, app settings);
    About keeps the existing state/session details plus the GitHub link and

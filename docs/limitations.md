@@ -450,6 +450,24 @@ an already-consented device descriptor. What that means in practice:
   ignoring further CNXN packets until the cable is replugged — the reset is
   the documented recovery, not a product defect.
 
+### Guest backup archives are plain, user-owned artifacts (ADR-0044)
+
+- The `tar.gz` an export produces is **not encrypted and not signed**: it is
+  the user's artifact, and it may contain the guest SSH host key, guest
+  files, and everything under `/root`. Keep it somewhere trusted; the UI
+  says so next to the Export action.
+- The workspace folder is never included (copy it yourself), the pseudo
+  trees (`/proc`, `/sys`, `/dev`, `/run`, `/tmp`) and session temp files are
+  excluded, and an export is a best-effort snapshot of a guest that may be
+  running.
+- Home and custom restores merge into an existing session, one top-level
+  path at a time — they replace whole subtrees, not individual files — and
+  need an installed runtime (`runtime-required` otherwise). A full restore
+  brings what the archive contains; it does not delete an add-on that is
+  active on the device but absent from the archive. Device-bound credentials
+  are regenerated: the Keystore-wrapped root credential is re-asserted at
+  the next session start.
+
 ### Guest GPU/NPU acceleration is device-class specific
 
 There is no general guest GPU path. The community Mesa stack is SoC-specific:

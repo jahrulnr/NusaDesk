@@ -317,6 +317,49 @@
     <string name="system_permissions_action">Open app settings</string>
     <string name="system_permissions_unavailable">The Android app settings screen is not available right now.</string>
 
+    <!-- Guest backup & restore (System > Settings > Backup & restore): a plain
+         tar.gz the user picks through SAF. FULL bootstraps a fresh install;
+         HOME/CUSTOM merge selected top-level folders into the installed
+         runtime, replacing each chosen folder wholesale. -->
+    <string name="system_backup_row_title">Backup &amp; restore</string>
+    <string name="system_backup_row_desc">Copy the Linux system to a file, or bring it back.</string>
+    <string name="system_backup_title">Backup &amp; restore</string>
+    <string name="system_backup_body">Save the Linux system to a file you choose, or restore one here.</string>
+    <string name="system_backup_export_label">Create a backup</string>
+    <string name="system_backup_mode_full">Everything</string>
+    <string name="system_backup_mode_full_detail">The whole Linux system, its add-ons, and the session state — the only backup that can set up a fresh install.</string>
+    <string name="system_backup_mode_home">Home folders</string>
+    <string name="system_backup_mode_home_detail">Only /root and /home — your files, on top of the Linux system already installed.</string>
+    <string name="system_backup_mode_custom">Choose folders</string>
+    <string name="system_backup_mode_custom_detail">Pick the Linux folders to include. Restoring replaces each chosen folder wholesale.</string>
+    <string name="system_backup_export_action">Export backup…</string>
+    <string name="system_backup_restore_label">Restore a backup</string>
+    <string name="system_backup_restore_detail">Pick a backup file made by this app. A full backup can set up a fresh install; home and folder backups need Linux installed first and replace the chosen folders wholesale. Stop the Linux session before restoring.</string>
+    <string name="system_backup_import_action">Import backup…</string>
+    <string name="system_backup_status_label">Status</string>
+    <string name="system_backup_last_none">No backup made yet</string>
+    <string name="system_backup_last_value">Last backup: %1$s · %2$s · %3$s</string>
+    <string name="system_backup_run_value">Last %1$s: %2$s · %3$s</string>
+    <string name="system_backup_op_export">export</string>
+    <string name="system_backup_op_restore">restore</string>
+    <string name="system_backup_outcome_ok">succeeded</string>
+    <string name="system_backup_outcome_failed">failed · %1$s</string>
+    <string name="system_backup_cancelled">Cancelled — nothing was changed.</string>
+    <string name="system_backup_working">Working…</string>
+    <plurals name="system_backup_progress">
+        <item quantity="one">%1$s — %2$d file · %3$s</item>
+        <item quantity="other">%1$s — %2$d files · %3$s</item>
+    </plurals>
+    <plurals name="system_backup_done">
+        <item quantity="one">Done — %1$d file · %2$s</item>
+        <item quantity="other">Done — %1$d files · %2$s</item>
+    </plurals>
+    <string name="system_backup_failed">%1$s · %2$s</string>
+    <string name="system_backup_picker_unavailable">No file picker is available right now.</string>
+    <string name="system_backup_pick_folder">Pick at least one folder.</string>
+    <string name="system_backup_help_title">What is inside</string>
+    <string name="system_backup_help_body">Backups are plain .tar.gz files and are not encrypted — keep yours somewhere private. A backup never contains the shared workspace folder (/root/nusadesk) or the guest\'s /proc, /sys, /dev, /run and /tmp. Restoring home or folders replaces each chosen folder wholesale instead of merging file by file. For a fully consistent backup, stop the Linux session first.</string>
+
     <!-- Installer wizard -->
     <string name="wizard_welcome_title">Set up your Linux desktop</string>
     <string name="wizard_welcome_body">A pinned Ubuntu Base 24.04.5 ARM64 system is downloaded over HTTPS, verified against a catalog digest, and stored privately on this device. Nothing is executed during setup.</string>

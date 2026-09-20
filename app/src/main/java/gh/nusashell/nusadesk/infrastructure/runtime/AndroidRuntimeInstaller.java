@@ -18,7 +18,6 @@ import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 
 /**
@@ -152,31 +151,12 @@ public final class AndroidRuntimeInstaller implements RuntimeInstallationUseCase
     }
 
     private void validateRootfs(Path staging) throws RuntimeInstallationException {
-        if (!Files.isRegularFile(staging.resolve("etc/os-release"))) {
-            throw new RuntimeInstallationException("payload is missing etc/os-release");
-        }
-        if (!Files.isRegularFile(staging.resolve("usr/bin/sh"))) {
-            throw new RuntimeInstallationException("payload is missing usr/bin/sh");
-        }
+        RuntimePayloadSupport.validateRootfs(staging);
     }
 
     private void activate(Path staging, Path active, Path previous)
             throws IOException, RuntimeInstallationException {
-        boolean hadActive = Files.exists(active, LinkOption.NOFOLLOW_LINKS);
-        if (hadActive) {
-            // Keep active untouched until the old backup slot is clear and the
-            // rename succeeds. A failed cleanup therefore cannot erase active.
-            PayloadIo.deleteRecursively(previous);
-            PayloadIo.moveAtomically(active, previous);
-        }
-        try {
-            PayloadIo.moveAtomically(staging, active);
-        } catch (IOException exception) {
-            if (hadActive && Files.exists(previous, LinkOption.NOFOLLOW_LINKS)) {
-                PayloadIo.moveAtomically(previous, active);
-            }
-            throw new RuntimeInstallationException("could not activate the verified runtime", exception);
-        }
+        RuntimePayloadSupport.activatePayload(staging, active, previous, "runtime");
     }
 
     private void publish(

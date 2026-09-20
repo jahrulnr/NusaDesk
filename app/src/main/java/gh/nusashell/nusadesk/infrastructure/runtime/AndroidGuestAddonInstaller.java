@@ -21,7 +21,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
@@ -345,20 +344,7 @@ public final class AndroidGuestAddonInstaller implements GuestAddonInstallUseCas
 
     private void activate(Path staging, Path active, Path previous)
             throws IOException, RuntimeInstallationException {
-        boolean hadActive = Files.exists(active, LinkOption.NOFOLLOW_LINKS);
-        if (hadActive) {
-            PayloadIo.deleteRecursively(previous);
-            PayloadIo.moveAtomically(active, previous);
-        }
-        try {
-            PayloadIo.moveAtomically(staging, active);
-        } catch (IOException exception) {
-            if (hadActive && Files.exists(previous, LinkOption.NOFOLLOW_LINKS)) {
-                PayloadIo.moveAtomically(previous, active);
-            }
-            throw new RuntimeInstallationException(
-                    "could not activate the verified add-on payload", exception);
-        }
+        RuntimePayloadSupport.activatePayload(staging, active, previous, "add-on payload");
     }
 
     private void publish(

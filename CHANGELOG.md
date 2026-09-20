@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add guest backup and restore (ADR-0044): the System → Settings → Backup &
+  restore page exports the Ubuntu guest as a plain streaming `tar.gz` —
+  full, home, or a custom set of top-level guest paths picked from an
+  allowlist — through SAF, and imports one back. Full restores bootstrap a
+  clean install with an atomic swap and a rollback slot; home and custom
+  restores merge into an existing runtime, one top-level path at a time
+  (typed `runtime-required` when there is none). Device-bound credentials
+  never travel (the Keystore-wrapped root credential is re-asserted at
+  session start), the workspace folder and the pseudo trees are excluded,
+  and every import validates the manifest, the curated runtime id and the
+  archive paths before touching anything, with bounded failures
+  (`manifest-missing`, `unsupported-format`, `runtime-mismatch`,
+  `unsafe-archive`, `storage-full`, `io-failure`, `busy`)
 - Add USB pass-through to the capability bridge (ADR-0041): `usb.list`
   enumerates attached devices and `usb.open` runs the platform's own
   per-device consent dialog before delivering the usbfs descriptor to the

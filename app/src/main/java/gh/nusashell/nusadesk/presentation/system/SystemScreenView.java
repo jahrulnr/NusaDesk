@@ -8,6 +8,10 @@ import android.widget.FrameLayout;
 import android.widget.ScrollView;
 
 import gh.nusashell.nusadesk.R;
+import gh.nusashell.nusadesk.application.backup.BackupProgress;
+import gh.nusashell.nusadesk.application.backup.BackupResult;
+import gh.nusashell.nusadesk.domain.backup.LastBackupRecord;
+import gh.nusashell.nusadesk.domain.backup.LastBackupRun;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
@@ -36,6 +40,7 @@ public final class SystemScreenView extends FrameLayout
     private SystemSettingsPageView settingsPage;
     private SystemInstallPageView installPage;
     private SystemAboutPageView aboutPage;
+    private SystemBackupPageView backupPage;
 
     /** The visible sub-page, or {@code null} while the hub is shown. */
     private ScrollView activePage;
@@ -58,16 +63,20 @@ public final class SystemScreenView extends FrameLayout
         settingsPage = findViewById(R.id.system_settings_page);
         installPage = findViewById(R.id.system_install_page);
         aboutPage = findViewById(R.id.system_about_page);
+        backupPage = findViewById(R.id.system_backup_page);
         findViewById(R.id.system_hub_settings_row)
                 .setOnClickListener(view -> showPage(settingsPage));
         findViewById(R.id.system_hub_install_row)
                 .setOnClickListener(view -> showPage(installPage));
+        findViewById(R.id.system_hub_backup_row)
+                .setOnClickListener(view -> showPage(backupPage));
         findViewById(R.id.system_hub_about_row)
                 .setOnClickListener(view -> showPage(aboutPage));
         OnClickListener backToHub = view -> showHub();
         settingsPage.setOnBackListener(backToHub);
         installPage.setOnBackListener(backToHub);
         aboutPage.setOnBackListener(backToHub);
+        backupPage.setOnBackListener(backToHub);
     }
 
     /**
@@ -91,6 +100,7 @@ public final class SystemScreenView extends FrameLayout
         settingsPage.setVisibility(page == settingsPage ? VISIBLE : GONE);
         installPage.setVisibility(page == installPage ? VISIBLE : GONE);
         aboutPage.setVisibility(page == aboutPage ? VISIBLE : GONE);
+        backupPage.setVisibility(page == backupPage ? VISIBLE : GONE);
         page.scrollTo(0, 0);
     }
 
@@ -100,6 +110,7 @@ public final class SystemScreenView extends FrameLayout
         settingsPage.setVisibility(GONE);
         installPage.setVisibility(GONE);
         aboutPage.setVisibility(GONE);
+        backupPage.setVisibility(GONE);
         hubPane.scrollTo(0, 0);
     }
 
@@ -126,6 +137,41 @@ public final class SystemScreenView extends FrameLayout
     /** Wires the boot card's single action on the Settings page. */
     public void setOnBootActionListener(OnClickListener listener) {
         settingsPage.setOnBootActionListener(listener);
+    }
+
+    /** Wires the backup page's export/import actions on the Backup page. */
+    public void setBackupListener(SystemBackupPageView.Listener listener) {
+        backupPage.setListener(listener);
+    }
+
+    /** Renders one backup progress tick on the Backup page. */
+    public void renderBackupProgress(BackupProgress progress) {
+        backupPage.renderProgress(progress);
+    }
+
+    /** Renders the terminal READY/FAILED state on the Backup page. */
+    public void renderBackupResult(BackupResult result) {
+        backupPage.renderResult(result);
+    }
+
+    /** Renders the persisted last-backup record on the Backup page. */
+    public void renderLastBackup(LastBackupRecord record) {
+        backupPage.renderLastBackup(record);
+    }
+
+    /** Renders the persisted last-run outcome on the Backup page. */
+    public void renderLastRun(LastBackupRun run) {
+        backupPage.renderLastRun(run);
+    }
+
+    /** Renders the picker-cancelled state on the Backup page. */
+    public void renderBackupCancelled() {
+        backupPage.renderCancelled();
+    }
+
+    /** Disables the backup page's actions while an operation runs. */
+    public void setBackupBusy(boolean busy) {
+        backupPage.setBusy(busy);
     }
 
     /** Renders the workspace folder state on the Settings page. */

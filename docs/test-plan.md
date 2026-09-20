@@ -927,7 +927,7 @@ in `/tmp/qa-system/` (`00-launcher` … `05-hub-final`).
 
 | ID | Case | Observed result |
 | --- | --- | --- |
-| SYS-001 | Launcher → System tile | the System screen opens on the hub with its three rows: Settings, One-click install, About NusaDesk |
+| SYS-001 | Launcher → System tile | the System screen opens on the hub with its rows: Settings, One-click install, Backup & restore, and About NusaDesk |
 | SYS-002 | One-click install page | `USB / ADB driver` and `Termux command compatibility` render with the "Active in every session" state and the no-arbitrary-install explainer |
 | SYS-003 | System back on a sub-page | returns to the hub from both the install page and the About page; only a second Back leaves the screen |
 | SYS-004 | About page | system state, technical details (six values), the GitHub row, and the how-it-works row render |
