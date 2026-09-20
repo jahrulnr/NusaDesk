@@ -4,14 +4,17 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 /**
- * Persisted bookkeeping for the foreground update check (ADR-0038).
+ * Persisted bookkeeping for the foreground update check (ADR-0038; cadence
+ * amended by ADR-0046).
  *
  * <p>Uses its own {@code "update_check"} preferences file — never a shared
  * store — so the throttle cannot be corrupted by or leak into session or
- * workspace state. Three keys: {@code last_check_at} (epoch millis of the
- * last attempt, throttling the network call), {@code last_seen_tag} (the
- * newest tag a check reported, for diagnostics and the banner), and
- * {@code dismissed_tag} (the tag whose banner the user dismissed).</p>
+ * workspace state. Five keys: {@code last_check_at} (epoch millis of the
+ * last attempt, throttling the network call), {@code last_check_version}
+ * (the installed {@code versionName} that attempt ran under),
+ * {@code last_seen_tag} (the newest tag a check reported, for diagnostics
+ * and the banner), {@code dismissed_tag} (the tag whose banner the user
+ * dismissed), and the reported asset triple.</p>
  *
  * <p>Writes use {@code apply()}: losing a throttle timestamp or a dismissal
  * on process death only re-runs a harmless check, so the durability cost of
@@ -19,11 +22,21 @@ import android.content.SharedPreferences;
  */
 public final class UpdateCheckPrefs {
 
-    /** Minimum spacing between two network checks: 24 hours. */
-    public static final long MIN_INTERVAL_MILLIS = 24L * 60 * 60 * 1000;
+    /**
+     * Minimum spacing between two network checks: 30 minutes.
+     *
+     * <p>One floor for every outcome (ADR-0046): a release is discovered
+     * within one floor of the next app open, and an inconclusive attempt —
+     * offline, GitHub's rate limit, a malformed body — is retried after the
+     * same floor instead of muting the feature for a day. The call is one
+     * bounded GET on a fixed endpoint, fired only from a foreground event, so
+     * the tightened floor stays far inside GitHub's unauthenticated budget.</p>
+     */
+    public static final long MIN_INTERVAL_MILLIS = 30L * 60 * 1000;
 
     private static final String PREFERENCES = "update_check";
     private static final String KEY_LAST_CHECK_AT = "last_check_at";
+    private static final String KEY_LAST_CHECK_VERSION = "last_check_version";
     private static final String KEY_LAST_SEEN_TAG = "last_seen_tag";
     private static final String KEY_DISMISSED_TAG = "dismissed_tag";
     private static final String KEY_ASSET_URL = "asset_url";
@@ -42,25 +55,37 @@ public final class UpdateCheckPrefs {
 
     /**
      * True when a check may run: always before the first recorded check,
-     * otherwise only once the last attempt is at least
-     * {@link #MIN_INTERVAL_MILLIS} old. A clock reading before the recorded
-     * timestamp is simply not due.
+     * whenever the installed version differs from the one the last check ran
+     * under — a sideloaded or assisted install is a new question, and a store
+     * written before this key existed counts as different — and otherwise
+     * only once the last attempt is at least {@link #MIN_INTERVAL_MILLIS}
+     * old. A clock reading before the recorded timestamp is simply not due.
+     *
+     * @param installedVersionName the installed app's {@code versionName};
+     *                             {@code null} cannot prove a change, so it
+     *                             falls back to the time floor alone
      */
-    public boolean isDue(long now) {
+    public boolean isDue(long now, String installedVersionName) {
         if (!preferences.contains(KEY_LAST_CHECK_AT)) {
+            return true;
+        }
+        String checkedVersion = preferences.getString(KEY_LAST_CHECK_VERSION, null);
+        if (installedVersionName != null && !installedVersionName.equals(checkedVersion)) {
             return true;
         }
         return now - preferences.getLong(KEY_LAST_CHECK_AT, 0L) >= MIN_INTERVAL_MILLIS;
     }
 
     /**
-     * Records a completed check attempt — whatever its outcome — and the tag
-     * it reported ({@code null} for up-to-date or unavailable results).
+     * Records a completed check attempt — whatever its outcome — the tag it
+     * reported ({@code null} for up-to-date or unavailable results), and the
+     * installed {@code versionName} it ran under.
      */
-    public void recordCheck(long now, String tag) {
+    public void recordCheck(long now, String tag, String installedVersionName) {
         preferences.edit()
                 .putLong(KEY_LAST_CHECK_AT, now)
                 .putString(KEY_LAST_SEEN_TAG, tag)
+                .putString(KEY_LAST_CHECK_VERSION, installedVersionName)
                 .apply();
     }
 

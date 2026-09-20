@@ -1046,8 +1046,10 @@ public final class MainActivity extends Activity {
     // ---- Update check (ADR-0038) ----
 
     /**
-     * The one update-check path: at most once per 24 hours, fired only from a
-     * foreground event, silent on every failure. The banner always renders
+     * The one update-check path: fired only from a foreground event, gated by
+     * the prefs floor (30 minutes) plus an immediate check whenever the
+     * installed version changed since the last attempt (ADR-0038, cadence
+     * amended by ADR-0046), silent on every failure. The banner always renders
      * what the last stored check proved; the throttled network check runs on
      * the update executor and lands on the main thread.
      */
@@ -1056,13 +1058,14 @@ public final class MainActivity extends Activity {
             return;
         }
         renderStoredUpdateBanner();
-        if (!updatePrefs.isDue(System.currentTimeMillis())) {
+        String installedVersion = installedVersionName();
+        if (!updatePrefs.isDue(System.currentTimeMillis(), installedVersion)) {
             return;
         }
         updateExecutor.execute(() -> {
             GitHubReleaseChecker.UpdateCheckResult result =
-                    new GitHubReleaseChecker().check(installedVersionName());
-            updatePrefs.recordCheck(System.currentTimeMillis(), result.getTag());
+                    new GitHubReleaseChecker().check(installedVersion);
+            updatePrefs.recordCheck(System.currentTimeMillis(), result.getTag(), installedVersion);
             mainHandler.post(() -> applyUpdateResult(result));
         });
     }

@@ -824,6 +824,41 @@ Run findings:
    the maintainer-side keystore secrets must be set before the next release,
    and pre-key builds need a one-time reinstall.
 
+## Update-check cadence fix (ADR-0046), device run 2026-09-20
+
+**Reported symptom (S10e, real usage):** the app was installed from the
+GitHub release, a newer release was published hours later, and no banner ever
+appeared — force-stop and relaunch included.
+
+**Root cause (read from device state, not inferred):**
+`shared_prefs/update_check.xml` held `last_check_at = 1789884308024`
+(2026-09-20 13:05:08 WIB) and no other key. v0.4.0 was published 14:14 WIB and
+v0.5.0 at 19:39 WIB, so every open after the release was throttled by
+ADR-0038's 24 hour interval — the next attempt was not due until 2026-09-21
+13:05. The check never ran; nothing was wrong with the banner.
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| UPD-201 | Stale state, old code (reproduction) | With `last_check_at` at 13:05 and the release 6.5 h later, cold starts (force-stop + relaunch at 20:54 and 21:07) left `last_check_at` **unchanged** — no network attempt, no banner |
+| UPD-202 | QA build staged to `versionName 0.4.0` (versionCode 6, fixed code) with the same stale prefs | Cold start re-checked immediately: `last_check_at` rewritten (21:09:57 WIB), `last_check_version=0.4.0`, `last_seen_tag=v0.5.0`, and the launcher banner rendered **"Update available: v0.5.0"** with Install / Dismiss (uiautomator dump + `banner-0.4.0-staged.png`) |
+| UPD-203 | Upgrade to the real build (`0.5.0`, versionCode 7) while `last_check_version=0.4.0` | Immediate re-check on the first foreground (version-change rule): `last_check_version=0.5.0`, `last_check_at` rewritten, `last_seen_tag` cleared by the up-to-date result, banner absent — no false prompt after an install |
+| UPD-204 | Second foreground inside the floor | `last_check_at` unchanged across a relaunch 1.5 min later — the floor still throttles, now for 30 minutes instead of a day |
+
+Notes:
+
+- A release-signed APK cannot be installed over a debug-signed QA build
+  (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`), so the "older installed version"
+  state was produced with a QA-only build whose `versionName` was staged to
+  `0.4.0`; `VERSION`/`app/build.gradle` were reverted before any further
+  build, and the build left on the device is the real `0.5.0` artifact.
+- Evidence directory: `/tmp/qa-updater/`.
+- UPD-002 above recorded the old contract ("the throttle suppressed the
+  second call"). Under ADR-0046 that suppression lasts 30 minutes, and a
+  changed installed version bypasses it entirely.
+- The egress happened to allow the check during this run (the same device had
+  multi-minute 403 windows earlier); a 403 window would now cost one floor of
+  silence instead of a day.
+
 ## USB pass-through (ADR-0041), device run 2026-09-20
 
 Run on the Samsung S10e (SM-G970F, OneUI, Android 12/API 31, arm64) acting as

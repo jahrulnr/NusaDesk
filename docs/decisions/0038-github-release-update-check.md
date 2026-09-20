@@ -8,6 +8,11 @@ notification channel). Unit evidence covers the comparator, checker parsing,
 prefs throttle, and notifier gating; a live-network check on a device is
 recorded in `docs/test-plan.md` when run.
 
+**Amended by ADR-0046 (check cadence).** Decision 1's 24 hour minimum interval
+is lowered to a 30 minute floor applied to every outcome, and an installed
+version that differs from the one the last attempt ran under is due
+immediately. Every other decision below stands unchanged.
+
 ## Context
 
 NusaDesk ships only signed APKs through GitHub releases on

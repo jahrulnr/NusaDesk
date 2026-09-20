@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exists. `/system/bin` never joins the guest PATH, so no Ubuntu tool is
   shadowed and every entry stays reachable by absolute path.
 
+### Fixed
+
+- Fix the update check's cadence (ADR-0046): the 24 hour floor that let a
+  single attempt silence the check for a whole day is now a 30 minute floor
+  applied to every outcome, and a changed installed version — a sideloaded or
+  assisted install — is due immediately instead of inheriting the previous
+  build's throttle. Observed on the S10e: v0.5.0 was published 6.5 hours
+  after the device's last recorded attempt, so the banner could not appear
+  until the next day however often the app was reopened, force-stop
+  included.
+
 ## [0.5.0] - 2026-09-20
 
 ### Added
