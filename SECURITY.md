@@ -3,7 +3,7 @@
 ## Project status
 
 NusaDesk is an Android/Linux workspace. The current
-version is `0.6.2`. Runtime evidence covers the core runtime (Ubuntu Base
+version is `0.6.3`. Runtime evidence covers the core runtime (Ubuntu Base
 install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
 Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
 Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
