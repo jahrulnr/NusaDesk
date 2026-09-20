@@ -91,11 +91,11 @@ runtime requirements.
   rotation; the existing surface only refits to the new dimensions.
 - A workspace folder you choose on the device appears at `~/nusadesk` inside
   Linux, so the same files are editable from Android and from the guest shell.
-  The folder is picked in an in-app browser: on Android 11+ it walks shared
-  storage (the app already holds all-files access there, so the path is bound
-  as-is), and on Android 10 — where no shared folder can be bound — it walks
-  `Android/media/<pkg>`, the app-owned tree that a file manager and USB can
-  still reach (ADR-0047).
+  The folder is picked in an in-app browser over shared storage on every Android
+  version: Android 11+ uses the all-files grant it already holds, and Android 10
+  uses the platform's legacy storage model after one permission prompt (ADR-0047).
+  Until something is picked, Linux uses the app's own media folder,
+  `Android/media/<pkg>/nusadesk`, which needs no permission at all.
 - Guest services are managed with a familiar `systemctl`/`service` surface:
   enabled services start with the Linux session and stop when it stops — for
   system units and for `systemctl --user` units alike (the session runs a

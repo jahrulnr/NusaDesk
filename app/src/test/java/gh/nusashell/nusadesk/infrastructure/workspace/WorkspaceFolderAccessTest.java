@@ -7,6 +7,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.pm.PackageManager;
 import android.os.Environment;
 
 import org.junit.Test;
@@ -21,13 +23,13 @@ import gh.nusashell.nusadesk.domain.workspace.WorkspaceFolder;
 
 /**
  * The workspace access policy across API levels (ADR-0023, ADR-0047): where the
- * built-in picker may browse, which picked paths may become a workspace, and
- * which of them need the all-files grant.
+ * in-app browser may browse, which picked paths may become a workspace, and
+ * which of them need storage access.
  *
- * <p>The point of the split is that Android 10 can never bind a shared folder:
- * there the picker is rooted inside the app's own media folder — bindable and
- * still reachable for the user — while Android 11+ browses the whole shared
- * volume and a picked path is only usable while the grant is in place.</p>
+ * <p>Both API levels now browse shared storage — Android 11+ through the
+ * all-files grant, Android 10 through the platform's legacy model and its two
+ * runtime permissions (measured on the S7 Edge) — while the app's own media
+ * folder stays the default workspace until the user picks something.</p>
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29)
@@ -37,45 +39,78 @@ public class WorkspaceFolderAccessTest {
         return new WorkspaceFolderAccess(RuntimeEnvironment.getApplication());
     }
 
+    /** A context whose legacy storage grants the test decides. */
+    private static Context contextWithLegacyGrants(boolean granted) {
+        return new ContextWrapper(RuntimeEnvironment.getApplication()) {
+            @Override
+            public Context getApplicationContext() {
+                return this;
+            }
+
+            @Override
+            public int checkSelfPermission(String permission) {
+                return granted
+                        ? PackageManager.PERMISSION_GRANTED
+                        : PackageManager.PERMISSION_DENIED;
+            }
+        };
+    }
+
     @Test
-    public void androidTenRootsThePickerInsideTheAppMediaFolder() {
-        WorkspaceFolderAccess access = access();
-        WorkspaceFolder root = access.pickerRoot();
-        WorkspaceFolder appFolder = access.appFolderWorkspace();
+    public void everyPlatformBrowsesSharedStorage() {
+        WorkspaceFolder root = access().pickerRoot();
 
         assertNotNull(root);
+        assertEquals(Environment.getExternalStorageDirectory().getAbsolutePath(),
+                root.getHostPath());
+        assertFalse("shared storage is not the app's own tree",
+                access().isInsideAppExternalStorage(root.getHostPath()));
+    }
+
+    @Test
+    public void theAppMediaFolderStaysTheDefaultWorkspace() {
+        WorkspaceFolderAccess access = access();
+        WorkspaceFolder appFolder = access.appFolderWorkspace();
+
         assertNotNull(appFolder);
-        assertTrue("Android 10 browses only the app's own tree",
-                access.isInsideAppExternalStorage(root.getHostPath()));
-        assertTrue("the app folder lives inside that root",
-                appFolder.getHostPath().startsWith(root.getHostPath() + "/"));
+        assertTrue("the default lives inside the app's own tree",
+                access.isInsideAppExternalStorage(appFolder.getHostPath()));
         assertTrue("the folder is named after the workspace",
                 appFolder.getHostPath().endsWith("/nusadesk"));
     }
 
     @Test
-    public void androidTenRefusesASharedStoragePathItCouldNeverBind() {
-        WorkspaceFolderAccess access = access();
-
-        assertNull("a shared folder is not bindable below API 30",
-                access.pickedPathWorkspace("/storage/emulated/0/Documents/nusadesk"));
-        assertFalse(access.isUsable(
-                WorkspaceFolder.ofHostPath("picked-path", "/storage/emulated/0/Documents/x", "x")));
-    }
-
-    @Test
     public void aPathInsideTheAppTreeNeedsNoGrantAndIsAccepted() {
         WorkspaceFolderAccess access = access();
-        File root = new File(access.pickerRoot().getHostPath());
-        File inside = new File(root, "projects");
+        File inside = new File(access.appFolderWorkspace().getHostPath(), "projects");
 
         WorkspaceFolder picked = access.pickedPathWorkspace(inside.getAbsolutePath());
 
-        assertNotNull(picked);
+        assertNotNull("the app's own tree needs no storage grant", picked);
         assertEquals(inside.getAbsolutePath(), picked.getHostPath());
         assertEquals("projects", picked.getDisplayName());
         assertTrue("the folder is created and probed before it is stored",
                 access.isUsable(picked));
+    }
+
+    @Test
+    public void androidTenNeedsTheLegacyGrantsForASharedPath() {
+        WorkspaceFolderAccess denied = new WorkspaceFolderAccess(contextWithLegacyGrants(false));
+
+        assertFalse("without the legacy grants a shared path cannot be bound",
+                denied.hasLegacyStorageAccess());
+        assertNull(denied.pickedPathWorkspace("/storage/emulated/0/Documents/nusadesk"));
+
+        WorkspaceFolderAccess granted = new WorkspaceFolderAccess(contextWithLegacyGrants(true));
+
+        assertTrue("the legacy grants are the platform's door on API 29 (ADR-0047)",
+                granted.hasLegacyStorageAccess());
+        WorkspaceFolder picked =
+                granted.pickedPathWorkspace("/storage/emulated/0/Documents/nusadesk");
+        assertNotNull("with them a shared folder is accepted, as on Android 11+", picked);
+        assertEquals("/storage/emulated/0/Documents/nusadesk", picked.getHostPath());
+        assertEquals("the app folder is no longer the only choice",
+                "nusadesk", picked.getDisplayName());
     }
 
     @Test
@@ -89,23 +124,21 @@ public class WorkspaceFolderAccessTest {
         assertNull(access.pickedPathWorkspace(null));
     }
 
-    /** Android 11+: the picker browses shared storage, gated by the grant. */
+    /** Android 11+: the same root, but a shared path needs the all-files grant. */
     @Test
     @Config(sdk = 31)
-    public void androidElevenRootsThePickerAtSharedStorage() {
+    public void androidElevenNeedsTheAllFilesGrantForASharedPath() {
         WorkspaceFolderAccess access = access();
-        WorkspaceFolder root = access.pickerRoot();
 
-        assertNotNull(root);
         assertEquals(Environment.getExternalStorageDirectory().getAbsolutePath(),
-                root.getHostPath());
-        assertFalse("shared storage is not the app's own tree",
-                access.isInsideAppExternalStorage(root.getHostPath()));
-
-        WorkspaceFolder picked =
-                access.pickedPathWorkspace("/storage/emulated/0/Documents/nusadesk");
-        assertNotNull("a shared path is accepted on API 30+", picked);
-        assertFalse("but it is only usable with the all-files grant in place",
-                access.isUsable(picked));
+                access.pickerRoot().getHostPath());
+        assertFalse("Robolectric never holds the all-files grant",
+                access.hasAllFilesAccess());
+        assertNull("without the grant a shared path is not accepted",
+                access.pickedPathWorkspace("/storage/emulated/0/Documents/nusadesk"));
+        assertNotNull("the app's own tree still works without any grant",
+                access.pickedPathWorkspace(
+                        new File(access.appFolderWorkspace().getHostPath(), "projects")
+                                .getAbsolutePath()));
     }
 }

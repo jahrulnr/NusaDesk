@@ -485,16 +485,19 @@ an already-consented device descriptor. What that means in practice:
 
 - The workspace folder is the one guest path a backup deliberately excludes, so
   the user copies it out themselves. Where it lives depends on the platform
-  (ADR-0047): a folder the user picked on Android 11+, and
-  `Android/media/<pkg>/nusadesk` (or a subfolder of that tree) on Android 10 —
-  app-owned and bindable, but visible to file managers and over MTP, unlike
-  `Android/data`. The in-app browser picks in both cases; on Android 10 it can
-  only ever walk that app-owned tree, because no shared folder can be bound
-  there.
+  (ADR-0047): any folder the user picks on Android 11+ (all-files access) and on
+  Android 10 (the legacy storage model, after one permission prompt), with
+  `Android/media/<pkg>/nusadesk` as the default until something is picked —
+  app-owned and bindable, and visible to a file managers and MTP. On Android 10
+  the app holds `READ`/`WRITE_EXTERNAL_STORAGE` bounded to API 29 for exactly
+  this: measured on the S7 Edge, without them `/sdcard` reads as
+  `list=null canRead=false`, and with them (plus the legacy flag) the app lists
+  and writes it normally.
 - The in-app browser shows the folder currently open and applies "Use this
   folder" to it: a picked path is validated (absolute, no traversal, inside the
-  app's own trees or shared storage) and write-probed before it replaces the
-  stored workspace, and the guest binds it at the next session start.
+  app's own trees or shared storage with storage access in place) and
+  write-probed before it replaces the stored workspace, and the guest binds it
+  at the next session start.
 
 - The native Android tooling tier (ADR-0045) is bounded by the app's own uid
   and by the trees the product binds: `/system/bin`, `/system/lib64` and the

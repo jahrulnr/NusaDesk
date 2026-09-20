@@ -1,5 +1,6 @@
 package gh.nusashell.nusadesk.presentation;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.PendingIntent;
@@ -141,6 +142,9 @@ public final class MainActivity extends Activity {
     private static final String STATE_BACKUP_MODE = "shell.backupMode";
     private static final String STATE_BACKUP_ROOTS = "shell.backupRoots";
     private static final String STATE_BACKUP_NAME = "shell.backupName";
+
+    /** Request code for the Android 10 legacy storage permissions (ADR-0047). */
+    private static final int REQUEST_LEGACY_STORAGE_PERMISSIONS = 0x5706;
 
     private final ExecutorService installExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
@@ -1027,14 +1031,22 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, R.string.system_workspace_unavailable, Toast.LENGTH_LONG).show();
             return;
         }
-        if (workspaceAccess.isSupportedPlatform() && !workspaceAccess.hasAllFilesAccess()) {
-            openAllFilesAccessSettings();
-            refreshWorkspace();
+        if (workspaceAccess.isSupportedPlatform()) {
+            if (!workspaceAccess.hasAllFilesAccess()) {
+                openAllFilesAccessSettings();
+                refreshWorkspace();
+                return;
+            }
+        } else if (!workspaceAccess.hasLegacyStorageAccess()) {
+            requestPermissions(new String[]{
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    REQUEST_LEGACY_STORAGE_PERMISSIONS);
             return;
         }
-        // Android 10 has no bindable shared folder, so the browser is rooted in
-        // the app's own media folder; Android 11+ browses shared storage. Either
-        // way the chosen path is validated and probed before it is stored.
+        // Android 10 browses shared storage through the legacy model, Android
+        // 11+ through the all-files grant; either way the chosen path is
+        // validated and probed before it is stored.
         WorkspaceFolder stored = workspaceStore.load();
         WorkspaceFolderBrowserDialog.show(this, root.getHostPath(),
                 stored == null ? null : stored.getHostPath(), path -> {
@@ -1047,6 +1059,21 @@ public final class MainActivity extends Activity {
                     }
                     refreshWorkspace();
                 });
+    }
+
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_LEGACY_STORAGE_PERMISSIONS) {
+            return;
+        }
+        if (workspaceAccess.hasLegacyStorageAccess()) {
+            onWorkspaceAction();
+            return;
+        }
+        Toast.makeText(this, R.string.system_workspace_picker_permission,
+                Toast.LENGTH_LONG).show();
     }
 
     /**

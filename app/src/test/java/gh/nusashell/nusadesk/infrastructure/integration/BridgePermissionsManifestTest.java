@@ -59,6 +59,12 @@ public class BridgePermissionsManifestTest {
             "android.permission.RECEIVE_BOOT_COMPLETED",
             // Workspace folder the user picks (ADR-0023).
             "android.permission.MANAGE_EXTERNAL_STORAGE",
+            // The same workspace on Android 10 (ADR-0047): the platform's legacy
+            // storage model is the only door to a shared folder there, and it
+            // needs these two runtime permissions. Both are declared with
+            // maxSdkVersion="29", so Android 11+ never sees them.
+            "android.permission.READ_EXTERNAL_STORAGE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
             // Camera / microphone / location capabilities.
             "android.permission.CAMERA",
             "android.permission.RECORD_AUDIO",
@@ -192,9 +198,21 @@ public class BridgePermissionsManifestTest {
                 1, occurrences(manifest, "<receiver"));
         assertTrue("the one allowed receiver is the opt-in boot trigger",
                 manifest.contains(".infrastructure.boot.BootStartReceiver"));
-        // WRITE_EXTERNAL_STORAGE adds nothing beside all-files access on API
-        // 30+, so it stays out as installer noise.
-        assertFalse(manifest.contains("android.permission.WRITE_EXTERNAL_STORAGE"));
+        // The legacy storage permissions exist for Android 10's workspace only
+        // (ADR-0047) and must stay bounded to that release, so an API 30+ device
+        // never sees them as an alternative to the all-files grant.
+        int write = manifest.indexOf("android.permission.WRITE_EXTERNAL_STORAGE");
+        assertTrue("the Android 10 workspace needs the write permission", write > 0);
+        assertTrue("the write permission must be bounded to API 29",
+                manifest.substring(write, Math.min(manifest.length(), write + 120))
+                        .contains("maxSdkVersion=\"29\""));
+        int read = manifest.indexOf("android.permission.READ_EXTERNAL_STORAGE");
+        assertTrue("the Android 10 workspace needs the read permission", read > 0);
+        assertTrue("the read permission must be bounded to API 29",
+                manifest.substring(read, Math.min(manifest.length(), read + 120))
+                        .contains("maxSdkVersion=\"29\""));
+        assertTrue("Android 10 binds shared folders through the legacy model",
+                manifest.contains("android:requestLegacyExternalStorage=\"true\""));
     }
 
     @Test

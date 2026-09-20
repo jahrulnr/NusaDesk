@@ -68,6 +68,25 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <!--
+        Android 10 (API 29) uses the platform's own legacy storage model for the
+        workspace: requestLegacyExternalStorage restores the pre-scoped model on
+        API 29 devices (Android 11+ ignores it for this targetSdk, so it changes
+        nothing there), and the two runtime permissions are the classic gate for
+        raw shared-storage paths on that release. Measured on the S7 Edge
+        (API 29, 2026-09-21): with the flag alone the app still sees list=null /
+        canRead=false for /sdcard; with the flag and both grants it gets
+        list=171 / canRead=true / canWrite=true and can create a file in
+        /sdcard. Both are bounded to API 29, and nothing here is requested on
+        Android 11+, where the all-files grant above is the door. ADR-0047.
+    -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <!--
         ==========================================================================
         Android capability bridge — permissions declared ahead of implementation
         ==========================================================================
@@ -231,8 +250,9 @@
           would add a background wake-up path beyond the single opt-in boot
           receiver the amended autostart contract allows (ADR-0037). READ_SMS
           above covers on-demand reads only.
-        - WRITE_EXTERNAL_STORAGE: grants nothing extra on API 30+ alongside
-          MANAGE_EXTERNAL_STORAGE, so it would be pure installer noise.
+        - WRITE_EXTERNAL_STORAGE: not needed on API 30+ (all-files access covers
+          it); on API 29 it is declared above with maxSdkVersion="29" because the
+          legacy workspace model needs it (ADR-0047).
     -->
 
     <!--
@@ -262,7 +282,8 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:requestLegacyExternalStorage="true">
         <activity
             android:name=".presentation.MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"

@@ -15,10 +15,13 @@ import org.junit.Test;
  *
  * <p>The workspace is the only reason this app asks for a broad permission, so
  * the manifest state is pinned deliberately: all-files access is present because
- * the guest binds a <em>user-chosen</em> folder (ADR-0023), and the legacy
- * broad-storage permissions are absent because they would be a silent, broader
- * grant than the feature needs — {@code WRITE_EXTERNAL_STORAGE} is ignored on
- * Android 11+ anyway, so declaring it would only mislead a reviewer.</p>
+ * the guest binds a <em>user-chosen</em> folder on Android 11+ (ADR-0023), and
+ * on Android 10 the platform's legacy storage model is the only door to that
+ * same folder — measured on the S7 Edge (API 29, 2026-09-21): with the flag and
+ * both runtime grants the app reads and writes {@code /sdcard} normally, and
+ * with either piece missing it sees {@code list=null canRead=false}. The legacy
+ * permissions therefore exist, and they stay bounded to API 29 (ADR-0047) so an
+ * Android 11+ device never sees them.</p>
  */
 public class WorkspaceStorageManifestTest {
 
@@ -47,13 +50,22 @@ public class WorkspaceStorageManifestTest {
     }
 
     @Test
-    public void declaresNoLegacyBroadStoragePermissions() throws Exception {
+    public void declaresLegacyStorageOnlyBoundedToAndroidTen() throws Exception {
         String manifest = manifest();
 
-        assertFalse("WRITE_EXTERNAL_STORAGE is ignored from API 30 and would only widen the grant",
-                manifest.contains("android.permission.WRITE_EXTERNAL_STORAGE"));
-        assertFalse(manifest.contains("android.permission.READ_EXTERNAL_STORAGE"));
-        assertFalse(manifest.contains("android.permission.MANAGE_MEDIA"));
+        assertTrue("Android 10 binds shared folders through the legacy model (ADR-0047)",
+                manifest.contains("android:requestLegacyExternalStorage=\"true\""));
+        for (String permission : new String[]{
+                "android.permission.READ_EXTERNAL_STORAGE",
+                "android.permission.WRITE_EXTERNAL_STORAGE"}) {
+            int at = manifest.indexOf(permission);
+            assertTrue(permission + " must be declared for the Android 10 workspace", at > 0);
+            assertTrue(permission + " must be bounded to API 29",
+                    manifest.substring(at, Math.min(manifest.length(), at + 120))
+                            .contains("maxSdkVersion=\"29\""));
+        }
+        assertFalse("media permissions stay out",
+                manifest.contains("android.permission.MANAGE_MEDIA"));
         assertFalse(manifest.contains("android.permission.ACCESS_MEDIA_LOCATION"));
     }
 }

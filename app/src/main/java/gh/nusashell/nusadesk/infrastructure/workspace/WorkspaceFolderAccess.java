@@ -1,8 +1,10 @@
 package gh.nusashell.nusadesk.infrastructure.workspace;
 
+import android.Manifest;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -52,12 +54,35 @@ public final class WorkspaceFolderAccess {
 
     /**
      * Whether this platform can expose a shared-storage folder to the guest at
-     * all. All-files access only exists from Android 11 (API 30); on Android 10
-     * the app targets API 37, so scoped storage applies and no broad-storage
-     * opt-out is available.
+     * all through the *all-files* route: only Android 11+ has that grant.
+     * Android 10 reaches shared storage through the platform's legacy model
+     * instead — see {@link #hasLegacyStorageAccess()} (ADR-0047).
      */
     public boolean isSupportedPlatform() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+    }
+
+    /**
+     * Whether raw shared-storage access is in place on Android 10: the manifest
+     * opts into the legacy model ({@code requestLegacyExternalStorage}) and the
+     * two classic runtime permissions are the gate for raw paths there.
+     * Measured on the S7 Edge (API 29): without both, {@code /sdcard} reads as
+     * {@code list=null canRead=false} even for this app; with them it is fully
+     * readable and writable.
+     */
+    public boolean hasLegacyStorageAccess() {
+        if (isSupportedPlatform()) {
+            return false;
+        }
+        return context.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED
+                && context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Whether a path outside this app's own trees may be bound right now. */
+    private boolean isSharedStorageBindable() {
+        return isSupportedPlatform() ? hasAllFilesAccess() : hasLegacyStorageAccess();
     }
 
     /** Whether the user has granted all-files access on this device. */
@@ -198,21 +223,15 @@ public final class WorkspaceFolderAccess {
      * @return the browsable root, or null when the device exposes no storage
      */
     public WorkspaceFolder pickerRoot() {
-        if (!isSupportedPlatform()) {
-            // Android 10: only this app's own trees are raw-accessible, and the
-            // media tree is the one a file manager and MTP still show. Rooting at
-            // the tree (not at the workspace folder inside it) lets the user pick
-            // the folder itself or any subfolder of it.
-            File ownRoot = primaryAppExternalRoot();
-            return ownRoot == null
-                    ? null
-                    : WorkspaceFolder.ofHostPath(
-                            WorkspaceFolder.PICKED_PATH_ID, ownRoot.getAbsolutePath(), ownRoot.getName());
-        }
+        // One root for every API level: on Android 11+ the all-files grant makes
+        // it real, and on Android 10 the legacy model plus the two runtime
+        // permissions do (ADR-0047). The app's own media folder stays the
+        // default workspace, not the browser's limit.
         File root = Environment.getExternalStorageDirectory();
         return root == null
                 ? null
-                : WorkspaceFolder.ofHostPath(WorkspaceFolder.PICKED_PATH_ID, root.getAbsolutePath(), "Storage");
+                : WorkspaceFolder.ofHostPath(
+                        WorkspaceFolder.PICKED_PATH_ID, root.getAbsolutePath(), "Storage");
     }
 
     /**
@@ -234,8 +253,7 @@ public final class WorkspaceFolderAccess {
         if (!path.startsWith("/") || path.contains("..") || path.indexOf('\0') >= 0) {
             return null;
         }
-        if (!isInsideAppExternalStorage(path)
-                && !(isSupportedPlatform() && path.startsWith("/storage/"))) {
+        if (!isInsideAppExternalStorage(path) && !isSharedStorageBindable()) {
             return null;
         }
         File folder = new File(path);
@@ -312,8 +330,7 @@ public final class WorkspaceFolderAccess {
         if (folder == null) {
             return false;
         }
-        if (!isInsideAppExternalStorage(folder.getHostPath())
-                && !(isSupportedPlatform() && hasAllFilesAccess())) {
+        if (!isInsideAppExternalStorage(folder.getHostPath()) && !isSharedStorageBindable()) {
             return false;
         }
         return WorkspaceDirectory.ensureUsable(folder.getHostPath());
