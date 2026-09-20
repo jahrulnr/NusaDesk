@@ -23,16 +23,21 @@ import android.content.SharedPreferences;
 public final class UpdateCheckPrefs {
 
     /**
-     * Minimum spacing between two network checks: 30 minutes.
+     * Minimum spacing between two network checks: 15 minutes.
      *
-     * <p>One floor for every outcome (ADR-0046): a release is discovered
-     * within one floor of the next app open, and an inconclusive attempt —
-     * offline, GitHub's rate limit, a malformed body — is retried after the
-     * same floor instead of muting the feature for a day. The call is one
-     * bounded GET on a fixed endpoint, fired only from a foreground event, so
-     * the tightened floor stays far inside GitHub's unauthenticated budget.</p>
+     * <p>One floor for every outcome (ADR-0046, tightened from 30 minutes on
+     * 2026-09-21): a release is discovered within one floor of the next app
+     * open, and an inconclusive attempt — offline, GitHub's rate limit, a
+     * malformed body — is retried after the same floor instead of muting the
+     * feature for a day. The call is one bounded GET on a fixed endpoint, so a
+     * foreground-only poll at this floor costs at most four requests per hour
+     * per device — comfortably inside GitHub's 60-per-hour unauthenticated
+     * budget even with several devices behind one address (ADR-0038 records
+     * the shared-egress 403 windows). The floor is never the first thing a
+     * launch meets: a fresh process checks once regardless, see
+     * {@link #isDue(long, String, boolean)}.</p>
      */
-    public static final long MIN_INTERVAL_MILLIS = 30L * 60 * 1000;
+    public static final long MIN_INTERVAL_MILLIS = 15L * 60 * 1000;
 
     private static final String PREFERENCES = "update_check";
     private static final String KEY_LAST_CHECK_AT = "last_check_at";
@@ -54,18 +59,31 @@ public final class UpdateCheckPrefs {
     }
 
     /**
-     * True when a check may run: always before the first recorded check,
-     * whenever the installed version differs from the one the last check ran
-     * under — a sideloaded or assisted install is a new question, and a store
-     * written before this key existed counts as different — and otherwise
-     * only once the last attempt is at least {@link #MIN_INTERVAL_MILLIS}
-     * old. A clock reading before the recorded timestamp is simply not due.
+     * True when a check may run.
+     *
+     * <p>A fresh process always asks once, whatever the stored timestamp says:
+     * a reboot, a force-stop and a fresh launch are exactly the moments a user
+     * expects the app to look for a release, and the measured defect was the
+     * opposite — a launch inside the floor answered with the stale banner and
+     * no explanation (ADR-0046 amendment, 2026-09-21).</p>
+     *
+     * <p>Otherwise: always before the first recorded check, whenever the
+     * installed version differs from the one the last check ran under — a
+     * sideloaded or assisted install is a new question, and a store written
+     * before this key existed counts as different — and otherwise only once
+     * the last attempt is at least {@link #MIN_INTERVAL_MILLIS} old. A clock
+     * reading before the recorded timestamp is simply not due.</p>
      *
      * @param installedVersionName the installed app's {@code versionName};
      *                             {@code null} cannot prove a change, so it
      *                             falls back to the time floor alone
+     * @param freshProcess         true only for this process's first
+     *                             foreground event
      */
-    public boolean isDue(long now, String installedVersionName) {
+    public boolean isDue(long now, String installedVersionName, boolean freshProcess) {
+        if (freshProcess) {
+            return true;
+        }
         if (!preferences.contains(KEY_LAST_CHECK_AT)) {
             return true;
         }

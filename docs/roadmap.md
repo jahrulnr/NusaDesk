@@ -273,8 +273,9 @@ lifecycle rows is open work in `docs/test-plan.md` (BOOT-*, BAT-*, UPD-*).
 - [x] Foreground-only update check against GitHub releases: once per 24 hours,
       launcher banner + notification only when already granted, per-tag
       dismissal, browser hand-off, silent failures (ADR-0038). The cadence was
-      later lowered to a 30 minute floor with an immediate check after an
-      installed version change (ADR-0046).
+      later lowered to a 15 minute floor, with an immediate check after an
+      installed version change and one check per fresh launch, plus a
+      foreground poll while the app is open (ADR-0046, amended 2026-09-21).
 - [x] Device verification on the S10e (SM-G970F, OneUI, API 31, 2026-09-20):
       boot delivery + typed skips, `MY_PACKAGE_REPLACED` restores, the
       exemption-dialog cycle, and the update banner/throttle/offline rows

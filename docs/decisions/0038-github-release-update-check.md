@@ -9,9 +9,12 @@ prefs throttle, and notifier gating; a live-network check on a device is
 recorded in `docs/test-plan.md` when run.
 
 **Amended by ADR-0046 (check cadence).** Decision 1's 24 hour minimum interval
-is lowered to a 30 minute floor applied to every outcome, and an installed
-version that differs from the one the last attempt ran under is due
-immediately. Every other decision below stands unchanged.
+is lowered to a 15 minute floor applied to every outcome; an installed version
+that differs from the one the last attempt ran under is due immediately; and a
+fresh process checks once whatever the store says, with a foreground poll
+re-asking while the app stays open — the floor and the fresh-launch rule were
+tightened on 2026-09-21 after two device reports. Every other decision below
+stands unchanged.
 
 ## Context
 

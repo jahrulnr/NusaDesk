@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The update check now asks at every fresh launch and polls while the app is
+  open (ADR-0046 amendment): a device with the official 0.6.1 installed from
+  the GitHub page never showed the 0.6.2 banner — force-stop included —
+  because every launch inside the 30 minute floor was silently skipped and
+  nothing re-asked while the app stayed open (the S7 timeline measured the
+  missed window at 46 seconds). A fresh process — reboot, force-stop, first
+  launch — now checks once whatever the store says, a foreground tick every
+  5 minutes re-asks against a tightened 15 minute floor, and the poll is
+  dropped in `onStop` so a backgrounded app spends no wakeups
+
 ## [0.6.2] - 2026-09-21
 
 ### Fixed

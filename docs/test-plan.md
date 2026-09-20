@@ -917,7 +917,7 @@ ADR-0038's 24 hour interval — the next attempt was not due until 2026-09-21
 | UPD-201 | Stale state, old code (reproduction) | With `last_check_at` at 13:05 and the release 6.5 h later, cold starts (force-stop + relaunch at 20:54 and 21:07) left `last_check_at` **unchanged** — no network attempt, no banner |
 | UPD-202 | QA build staged to `versionName 0.4.0` (versionCode 6, fixed code) with the same stale prefs | Cold start re-checked immediately: `last_check_at` rewritten (21:09:57 WIB), `last_check_version=0.4.0`, `last_seen_tag=v0.5.0`, and the launcher banner rendered **"Update available: v0.5.0"** with Install / Dismiss (uiautomator dump + `banner-0.4.0-staged.png`) |
 | UPD-203 | Upgrade to the real build (`0.5.0`, versionCode 7) while `last_check_version=0.4.0` | Immediate re-check on the first foreground (version-change rule): `last_check_version=0.5.0`, `last_check_at` rewritten, `last_seen_tag` cleared by the up-to-date result, banner absent — no false prompt after an install |
-| UPD-204 | Second foreground inside the floor | `last_check_at` unchanged across a relaunch 1.5 min later — the floor still throttles, now for 30 minutes instead of a day |
+| UPD-204 | Second foreground inside the floor | `last_check_at` unchanged across a relaunch 1.5 min later — the floor still throttles instead of muting the check for a day (30 minutes at the time of this run, 15 after the 2026-09-21 amendment below) |
 
 Notes:
 
@@ -928,11 +928,42 @@ Notes:
   build, and the build left on the device is the real `0.5.0` artifact.
 - Evidence directory: `/tmp/qa-updater/`.
 - UPD-002 above recorded the old contract ("the throttle suppressed the
-  second call"). Under ADR-0046 that suppression lasts 30 minutes, and a
-  changed installed version bypasses it entirely.
+  second call"). Under ADR-0046 that suppression lasts one floor (15 minutes
+  after the 2026-09-21 amendment), and a changed installed version — or a
+  fresh process — bypasses it entirely.
 - The egress happened to allow the check during this run (the same device had
   multi-minute 403 windows earlier); a 403 window would now cost one floor of
   silence instead of a day.
+
+## Update-check cadence amendment (ADR-0046), device run 2026-09-21
+
+**Reported symptom (ROG Phone 2, official 0.6.1 from the GitHub page):** no
+0.6.2 banner ever appeared, force-stop and reopen included. The S7 Edge
+measurement pinned the mechanism: the last attempt sat at `03:44:26`, so the
+floor ended at `04:14:26`, the relaunch that looked happened at `04:13` — 46
+seconds early — and the next launch at `04:17` found the release immediately.
+The cadence worked as decided; what the decision got wrong is that a launch is
+the moment a user expects a look, and the silent floor answered with the
+stored banner. `isDue` gained a `freshProcess` term (a new process always
+asks), the floor moved 30 -> 15 minutes, and a 5 minute foreground tick
+re-asks the cadence question while the app is open (ADR-0046 amendment).
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| UPD-205 | Fresh process with a fresh store: `last_check_at` written seconds earlier and `last_check_version` matching the installed `0.6.2` | The launch rewrote `last_check_at` (13.7 s after the write) — the fresh-process rule asks whatever the store says, exactly what the old rule refused |
+| UPD-206 | Warm foreground inside the floor: HOME, then a reopen 20 s later (`am start` reported "its current task has been brought to the front") | `last_check_at` unchanged — the floor still throttles a warm foreground event |
+| UPD-207 | App left in the foreground with no lifecycle event, screen kept awake | A poll tick fired the check after the floor: `last_check_at` advanced 964 s (16.1 min) after the launch check, with no user interaction |
+
+Notes:
+
+- Verification used the debug build (versionCode 10, `versionName 0.6.2`)
+  because `run-as` can read `shared_prefs/update_check.xml` only on a
+  debuggable build; the screen timeout was raised to 30 minutes for UPD-207
+  and restored afterwards. Evidence: `/tmp/qa-favicon/`.
+- The S7 Edge timeline above is a measured reproduction of the reported
+  "force-stop and reopen shows nothing" case, not an inference from the code.
+- UPD-205 is also the rule that makes the user's own escape hatch work:
+  force-stopping and reopening the app is a fresh process, so it always asks.
 
 ## USB pass-through (ADR-0041), device run 2026-09-20
 

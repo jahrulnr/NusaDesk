@@ -146,6 +146,15 @@ public final class MainActivity extends Activity {
     /** Request code for the Android 10 legacy storage permissions (ADR-0047). */
     private static final int REQUEST_LEGACY_STORAGE_PERMISSIONS = 0x5706;
 
+    /**
+     * How often the foreground poll re-asks the cadence question (ADR-0046
+     * amendment). The network call itself stays gated by
+     * {@link UpdateCheckPrefs#MIN_INTERVAL_MILLIS}; a tick that lands early is
+     * an in-memory no-op, so the effective cadence is that floor plus at most
+     * one tick.
+     */
+    private static final long UPDATE_POLL_TICK_MILLIS = 5L * 60 * 1000;
+
     private final ExecutorService installExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService faviconExecutor = Executors.newSingleThreadExecutor();
@@ -195,6 +204,27 @@ public final class MainActivity extends Activity {
     private String pendingReleaseUrl;
     /** The tag currently rendered in the launcher banner, or null. */
     private String visibleUpdateTag;
+
+    /**
+     * True once this process's first foreground event has asked for a check.
+     * Static on purpose: it describes the process, not the activity, so an
+     * activity recreation cannot force a second check, while a reboot, a
+     * force-stop and a fresh launch each get one check of their own (ADR-0046
+     * amendment).
+     */
+    private static boolean processStartCheckConsumed;
+
+    /** One foreground poll tick: re-asks the cadence question, cheap when early. */
+    private final Runnable updatePoll = new Runnable() {
+        @Override
+        public void run() {
+            if (!activityStarted) {
+                return;
+            }
+            checkForUpdate();
+            mainHandler.postDelayed(this, UPDATE_POLL_TICK_MILLIS);
+        }
+    };
     private UpdateInstallDialog installDialog;
     private BroadcastReceiver installStatusReceiver;
     private String installToken;
@@ -314,6 +344,7 @@ public final class MainActivity extends Activity {
         refreshBattery();
         refreshBoot();
         checkForUpdate();
+        scheduleUpdatePoll();
         // Returning from the unknown-apps Settings page (assisted update,
         // ADR-0039) re-runs the gate: the popup may be waiting for it.
         if (installDialog != null && installDialog.isShowing()
@@ -326,6 +357,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         activityStarted = false;
+        mainHandler.removeCallbacks(updatePoll);
         super.onStop();
     }
 
@@ -1144,12 +1176,15 @@ public final class MainActivity extends Activity {
     // ---- Update check (ADR-0038) ----
 
     /**
-     * The one update-check path: fired only from a foreground event, gated by
-     * the prefs floor (30 minutes) plus an immediate check whenever the
-     * installed version changed since the last attempt (ADR-0038, cadence
-     * amended by ADR-0046), silent on every failure. The banner always renders
-     * what the last stored check proved; the throttled network check runs on
-     * the update executor and lands on the main thread.
+     * The one update-check path, fired from foreground events only: the first
+     * foreground event of a fresh process always asks — a reboot, a force-stop
+     * and a fresh launch are the moments a user expects the app to look —
+     * later ones are gated by the prefs floor (15 minutes) plus an immediate
+     * check whenever the installed version changed since the last attempt, and
+     * a foreground poll keeps re-asking while the app stays open (ADR-0038,
+     * cadence amended by ADR-0046). Silent on every failure. The banner always
+     * renders what the last stored check proved; the network check runs on the
+     * update executor and lands on the main thread.
      */
     private void checkForUpdate() {
         if (updatePrefs == null) {
@@ -1157,7 +1192,9 @@ public final class MainActivity extends Activity {
         }
         renderStoredUpdateBanner();
         String installedVersion = installedVersionName();
-        if (!updatePrefs.isDue(System.currentTimeMillis(), installedVersion)) {
+        boolean freshProcess = !processStartCheckConsumed;
+        processStartCheckConsumed = true;
+        if (!updatePrefs.isDue(System.currentTimeMillis(), installedVersion, freshProcess)) {
             return;
         }
         updateExecutor.execute(() -> {
@@ -1166,6 +1203,17 @@ public final class MainActivity extends Activity {
             updatePrefs.recordCheck(System.currentTimeMillis(), result.getTag(), installedVersion);
             mainHandler.post(() -> applyUpdateResult(result));
         });
+    }
+
+    /**
+     * Keeps the check moving while the app stays open: one tick every
+     * {@link #UPDATE_POLL_TICK_MILLIS}, dropped in {@code onStop} so a
+     * backgrounded app costs no wakeups. Reopening re-arms it, and a foreground
+     * event after the floor checks on its own (ADR-0046 amendment).
+     */
+    private void scheduleUpdatePoll() {
+        mainHandler.removeCallbacks(updatePoll);
+        mainHandler.postDelayed(updatePoll, UPDATE_POLL_TICK_MILLIS);
     }
 
     /**

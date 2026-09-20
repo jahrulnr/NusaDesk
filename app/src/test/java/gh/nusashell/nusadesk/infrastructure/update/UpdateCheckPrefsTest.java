@@ -17,10 +17,10 @@ import static org.junit.Assert.assertTrue;
 /**
  * Throttle and bookkeeping defaults for the update-check store (ADR-0038;
  * cadence amended by ADR-0046): due before the first check, due immediately
- * when the installed version changed since the last attempt, and otherwise
- * due only after the 30 minute floor — for a successful and a failed attempt
- * alike. Tags round-trip with {@code null} defaults and every value lives in
- * the dedicated {@code "update_check"} file.
+ * when the installed version changed since the last attempt or when a fresh
+ * process asks, and otherwise due only after the 15 minute floor — for a
+ * successful and a failed attempt alike. Tags round-trip with {@code null}
+ * defaults and every value lives in the dedicated {@code "update_check"} file.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 29)
@@ -33,7 +33,7 @@ public class UpdateCheckPrefsTest {
     public void freshStoreIsDueWithNoTags() {
         UpdateCheckPrefs prefs = prefs();
 
-        assertTrue("the first check must always be due", prefs.isDue(NOW, VERSION));
+        assertTrue("the first check must always be due", prefs.isDue(NOW, VERSION, false));
         assertNull(prefs.lastSeenTag());
         assertNull(prefs.dismissedTag());
     }
@@ -43,10 +43,36 @@ public class UpdateCheckPrefsTest {
         UpdateCheckPrefs prefs = prefs();
         prefs.recordCheck(NOW, "v0.4.0", VERSION);
 
-        assertFalse(prefs.isDue(NOW, VERSION));
-        assertFalse(prefs.isDue(NOW + UpdateCheckPrefs.MIN_INTERVAL_MILLIS - 1, VERSION));
-        assertTrue(prefs.isDue(NOW + UpdateCheckPrefs.MIN_INTERVAL_MILLIS, VERSION));
+        assertFalse(prefs.isDue(NOW, VERSION, false));
+        assertFalse(prefs.isDue(NOW + UpdateCheckPrefs.MIN_INTERVAL_MILLIS - 1, VERSION, false));
+        assertTrue(prefs.isDue(NOW + UpdateCheckPrefs.MIN_INTERVAL_MILLIS, VERSION, false));
         assertEquals("v0.4.0", prefs.lastSeenTag());
+    }
+
+    /**
+     * The reported defect this rule answers: a launch after a reboot or a
+     * force-stop answered with the stored banner and no check, because the
+     * floor still held — so a fresh process now always asks once (ADR-0046
+     * amendment, 2026-09-21).
+     */
+    @Test
+    public void aFreshProcessIsDueEvenBeforeTheFloorIsOut() {
+        UpdateCheckPrefs prefs = prefs();
+        prefs.recordCheck(NOW, "v0.4.0", VERSION);
+
+        assertTrue("a launch of a new process must ask, whatever the store says",
+                prefs.isDue(NOW + 60_000L, VERSION, true));
+        assertFalse("the same moment without the fresh-process rule stays throttled",
+                prefs.isDue(NOW + 60_000L, VERSION, false));
+    }
+
+    /** The floor stays inside the 5-60 minute window the cadence promises. */
+    @Test
+    public void theFloorStaysInsideTheRequestedWindow() {
+        assertTrue("a release must never wait longer than an hour to be seen",
+                UpdateCheckPrefs.MIN_INTERVAL_MILLIS <= 60L * 60 * 1000);
+        assertTrue("the floor must not turn the check into a per-open scan",
+                UpdateCheckPrefs.MIN_INTERVAL_MILLIS >= 5L * 60 * 1000);
     }
 
     @Test
@@ -54,7 +80,7 @@ public class UpdateCheckPrefsTest {
         UpdateCheckPrefs prefs = prefs();
         prefs.recordCheck(NOW, null, VERSION);
 
-        assertFalse(prefs.isDue(NOW - 1, VERSION));
+        assertFalse(prefs.isDue(NOW - 1, VERSION, false));
         assertNull("a failed check clears the seen tag", prefs.lastSeenTag());
     }
 
@@ -69,9 +95,9 @@ public class UpdateCheckPrefsTest {
         UpdateCheckPrefs prefs = prefs();
         prefs.recordCheck(NOW, null, "0.4.0");
 
-        assertFalse(prefs.isDue(NOW, "0.4.0"));
+        assertFalse(prefs.isDue(NOW, "0.4.0", false));
         assertTrue("an install from outside the app is a new question",
-                prefs.isDue(NOW, "0.5.0"));
+                prefs.isDue(NOW, "0.5.0", false));
     }
 
     /** A store written before the version key existed counts as a change. */
@@ -81,7 +107,7 @@ public class UpdateCheckPrefsTest {
         context.getSharedPreferences("update_check", Context.MODE_PRIVATE)
                 .edit().putLong("last_check_at", NOW).apply();
 
-        assertTrue(new UpdateCheckPrefs(context).isDue(NOW, VERSION));
+        assertTrue(new UpdateCheckPrefs(context).isDue(NOW, VERSION, false));
     }
 
     /**
@@ -94,8 +120,8 @@ public class UpdateCheckPrefsTest {
         UpdateCheckPrefs prefs = prefs();
         prefs.recordCheck(NOW, null, VERSION);
 
-        assertFalse(prefs.isDue(NOW + 60_000L, VERSION));
-        assertTrue(prefs.isDue(NOW + UpdateCheckPrefs.MIN_INTERVAL_MILLIS, VERSION));
+        assertFalse(prefs.isDue(NOW + 60_000L, VERSION, false));
+        assertTrue(prefs.isDue(NOW + UpdateCheckPrefs.MIN_INTERVAL_MILLIS, VERSION, false));
         assertTrue("the floor is measured in minutes, not a day",
                 UpdateCheckPrefs.MIN_INTERVAL_MILLIS <= 60L * 60 * 1000);
     }
@@ -106,8 +132,8 @@ public class UpdateCheckPrefsTest {
         UpdateCheckPrefs prefs = prefs();
         prefs.recordCheck(NOW, null, VERSION);
 
-        assertFalse(prefs.isDue(NOW + 60_000L, null));
-        assertTrue(prefs.isDue(NOW + UpdateCheckPrefs.MIN_INTERVAL_MILLIS, null));
+        assertFalse(prefs.isDue(NOW + 60_000L, null, false));
+        assertTrue(prefs.isDue(NOW + UpdateCheckPrefs.MIN_INTERVAL_MILLIS, null, false));
     }
 
     @Test
