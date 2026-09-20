@@ -6,7 +6,16 @@ NODE ?= node
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 GRADLE_FLAGS ?= --no-daemon
 
-.PHONY: test lint build check devices push install clean
+# Local signing material for release builds (ADR-0040). The directory is
+# gitignored: it holds the release keystore plus the .env with the keystore
+# credentials and the certificate fingerprint. CI uses repository secrets
+# instead; this is the local path.
+SECRET_DIR ?= .secret
+RELEASE_APK ?= app/build/outputs/apk/release/app-release.apk
+SDK_DIR ?= $(shell sed -n 's/^sdk\.dir=//p' local.properties 2>/dev/null)
+APKSIGNER ?= $(shell find "$(SDK_DIR)/build-tools" -name apksigner 2>/dev/null | sort -V | tail -n 1)
+
+.PHONY: test lint build check release devices push install clean
 
 # Run the JVM/unit test suite (which includes the Robolectric cross-API launch
 # guard, ADR-0022) and every pure-JavaScript terminal policy test. The glob is
@@ -28,6 +37,34 @@ build: lint
 
 # Run the complete local quality gate.
 check: test build
+
+# Build and verify the signed release APK from the local signing material in
+# $(SECRET_DIR) (ADR-0040): the keystore plus the .env holding the
+# credentials and the certificate fingerprint. The --no-daemon flag is
+# deliberate here: a running Gradle daemon keeps the environment it was
+# started with, so an exported keystore path would not reach the build.
+release:
+	@set -eu; \
+	if [ ! -f "$(SECRET_DIR)/.env" ] || [ ! -f "$(SECRET_DIR)/keystore.jks" ]; then \
+		echo "Missing $(SECRET_DIR)/.env or $(SECRET_DIR)/keystore.jks; a signed release needs the local signing material (ADR-0040)." >&2; \
+		exit 1; \
+	fi; \
+	if [ -z "$(APKSIGNER)" ]; then \
+		echo "apksigner not found; set APKSIGNER= or point sdk.dir in local.properties at the Android SDK." >&2; \
+		exit 1; \
+	fi; \
+	set -a; . "$(SECRET_DIR)/.env"; set +a; \
+	ANDROID_KEYSTORE_PATH="$(abspath $(SECRET_DIR)/keystore.jks)" \
+		$(GRADLEW) $(GRADLE_FLAGS) assembleRelease; \
+	apk="$(RELEASE_APK)"; \
+	"$(APKSIGNER)" verify --print-certs "$$apk"; \
+	cert="$$("$(APKSIGNER)" verify --print-certs "$$apk" | awk -F': ' '/certificate SHA-256 digest/ {print $$NF; exit}')"; \
+	expected="$$(printf '%s' "$$SHA" | tr -d ':' | tr '[:upper:]' '[:lower:]')"; \
+	if [ "$$cert" != "$$expected" ]; then \
+		echo "Signer fingerprint mismatch: got $$cert expected $$expected (ADR-0040)." >&2; \
+		exit 1; \
+	fi; \
+	echo "Signed release ready: $$apk (fingerprint $$cert)"
 
 # List only adb targets that are online and ready to receive installs.
 devices:
