@@ -419,9 +419,11 @@ public final class RuntimeHostService extends Service {
      * service keeps the guest running with its user-visible notification and
      * Stop action.</p>
      *
-     * <p>Callers must only use this from a user-visible launch. There is
-     * deliberately no boot receiver, job, alarm, or sticky-restart path that
-     * could start Linux without the user opening the app (ADR-0013).</p>
+     * <p>Callers must only use this from a user-visible launch or the user's
+     * own opt-in "Start Linux at boot" trigger (ADR-0037): that receiver is
+     * unexported, defaults OFF, and re-checks the persisted install state
+     * before calling in. Jobs, alarms, and sticky-restart paths remain
+     * deliberately absent (ADR-0013).</p>
      */
     public static void ensureRunning(Context context) {
         Intent intent = new Intent(context, RuntimeHostService.class)

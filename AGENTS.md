@@ -21,7 +21,15 @@ Still out of scope unless a later task explicitly scopes one of these pieces: a 
 ### YAGNI and KISS
 
 - Build only what an accepted requirement needs now.
-- Prefer the JDK/Android SDK and existing project dependencies over new libraries.
+- A well-maintained, vetted dependency is usually the better engineering choice:
+  it simplifies development and reduces avoidable bugs, so do not hand-roll
+  parsing, YAML, crypto, HTTP, compression, or scheduling that a vetted library
+  already covers. The JDK/Android SDK is the first choice only when it covers
+  the need; hand-rolled code is the fallback, not the default.
+- New dependencies follow the existing supply-chain discipline: pin the exact
+  version, confirm the license, prefer an established maintenance record, and
+  record the vetting rationale next to the dependency (see the pinned
+  dependencies in `app/build.gradle`).
 - Do not add a framework, dependency, abstraction, configuration layer, or generic registry “for later”.
 - A contract is justified when it protects a real boundary, enables a test, or is required by the next vertical slice. Otherwise keep the code local and concrete.
 - Prefer one clear implementation over an option matrix. Add an escape hatch only when a real device or target requires it.

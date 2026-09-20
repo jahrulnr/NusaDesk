@@ -41,8 +41,8 @@ jobs:
 
           tag="v$version"
           # The published asset carries no build-type suffix: it is the
-          # user-facing sideload download, built from the debug APK that
-          # `make check` assembles.
+          # user-facing sideload download, built as the signed release APK
+          # (ADR-0040) so successive releases can update each other.
           {
             echo "version=$version"
             echo "tag=$tag"
@@ -131,16 +131,61 @@ jobs:
           restore-keys: |
             robolectric-${{ runner.os }}-
 
-      - name: Run tests, lint, and assemble debug APK
+      - name: Run tests and lint, then assemble the signed release APK
         if: steps.release_gate.outputs.should_release == 'true'
-        run: make check
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
 
-      - name: Rename debug APK for the release asset
+          # Fail closed: a release must never be published unsigned or with a
+          # rotated key (ADR-0040). The keystore lives only in repository
+          # secrets and is decoded into the ephemeral runner.
+          if [[ -z "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
+            echo "ANDROID_KEYSTORE_BASE64 is not set; the pinned release signing key is required (ADR-0040)." >&2
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/nusadesk-release.jks"
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/nusadesk-release.jks"
+
+          make check
+          ./gradlew --no-daemon assembleRelease
+
+      - name: Verify the release signature against the pinned fingerprint
+        if: steps.release_gate.outputs.should_release == 'true'
+        shell: bash
+        env:
+          EXPECTED_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+
+          apk="app/build/outputs/apk/release/app-release.apk"
+          test -f "$apk"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          "$apksigner" verify --print-certs "$apk"
+
+          cert="$("$apksigner" verify --print-certs "$apk" \
+            | awk -F': ' '/certificate SHA-256 digest/ {print $NF; exit}')"
+          if [[ -z "${EXPECTED_CERT_SHA256:-}" ]]; then
+            echo "vars.ANDROID_CERT_SHA256 is not set; refusing to publish without the pinned fingerprint (ADR-0040)." >&2
+            exit 1
+          fi
+          if [[ "$cert" != "$EXPECTED_CERT_SHA256" ]]; then
+            echo "Refusing to publish: signer fingerprint $cert does not match the pinned $EXPECTED_CERT_SHA256." >&2
+            exit 1
+          fi
+          echo "Release signer fingerprint verified: $cert"
+
+      - name: Rename release APK for the release asset
         if: steps.release_gate.outputs.should_release == 'true'
         shell: bash
         env:
           ASSET: ${{ steps.metadata.outputs.release_asset }}
-        run: cp app/build/outputs/apk/debug/app-debug.apk "$ASSET"
+        run: cp app/build/outputs/apk/release/app-release.apk "$ASSET"
 
       - name: Create annotated tag
         if: steps.release_gate.outputs.should_release == 'true'

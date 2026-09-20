@@ -148,6 +148,16 @@ runtime requirements.
 - Linux starts when the app is opened and continues behind a visible Android
   notification.
 - One clear Stop action in the system notification.
+- Optional "Start Linux at boot": when you turn it on, the session comes back
+  after a reboot or an app update, re-checked against the installed runtime
+  and never started without your opt-in (ADR-0037).
+- A battery-optimization card explains Android's background limits and can ask
+  Android for the exemption directly, from one explicit tap.
+- A launcher banner (plus, where Android already allows notifications, a
+  notification) points to a newer signed release; the check runs only while
+  the app is open, at most once a day, and one tap downloads the verified
+  update in a popup with live progress — ending at Android's own install
+  confirmation (ADR-0038, ADR-0039).
 - Curated setup flow for the Linux foundation and terminal component.
 - No remote-host SSH UI and no LAN-sharing mode in the current product.
 
@@ -185,7 +195,12 @@ treating the current build as a production release.
 
 ## License and distribution
 
-NusaDesk's own code is MIT-licensed — see [LICENSE](LICENSE). The final
-distribution model is still under review. Third-party runtime components carry
-their own license and notice obligations; see the
-[technical documentation](docs/) before redistribution.
+NusaDesk's own code is MIT-licensed — see [LICENSE](LICENSE). Release APKs
+published on the project's GitHub channel are signed with a dedicated
+release key whose certificate fingerprint is pinned in CI (ADR-0040), so
+successive releases update each other in place (manually or through the
+in-app flow). Builds published before that decision were signed ad hoc and
+need a one-time reinstall to join the update chain. The final distribution
+model is still under review; third-party runtime components carry their own
+license and notice obligations — see the [technical documentation](docs/)
+before redistribution.

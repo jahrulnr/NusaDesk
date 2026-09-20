@@ -257,7 +257,7 @@ or port parameter is ever added).
 | AUTO-004 | Foreground event while `STOPPING` | No resurrection mid-stop; the next foreground event may start a fresh session |
 | AUTO-005 | Notification `Stop` while the app is foregrounded | Guest daemon signalled and gone, endpoint refused, `STOPPED`; the pill says Linux starts again on the next app launch, and there is deliberately no in-app start control |
 | AUTO-006 | App backgrounded while `RUNNING` | Home, screen-off/Doze, and Activity recreation leave the tracer, daemon, and endpoint untouched under the foreground service |
-| AUTO-007 | Manifest guard | No boot receiver, no boot permission, no job/alarm path, host service unexported and `specialUse`; asserted by `RuntimeAutostartManifestTest` |
+| AUTO-007 | Manifest guard | Exactly one receiver component: the opt-in boot trigger (`BootStartReceiver`, unexported, filter pinned to `BOOT_COMPLETED` + `MY_PACKAGE_REPLACED`), no job/alarm path, host service unexported and `specialUse`; asserted by `RuntimeAutostartManifestTest` (ADR-0037) |
 | AUTO-008 | Process death while `RUNNING` | Reopening the app reconciles honestly (`FAILED`/`STOPPED`, never false `RUNNING`) and the foreground event starts a fresh session with no orphaned listener |
 | AUTO-009 | Terminal component installed while the app is open | The launcher requests the runtime without waiting for the next foreground event; the request stays idempotent |
 | AUTO-010 | Half-installed device (system missing or component missing) | No start is requested; the launcher states the missing setup step |
@@ -737,6 +737,92 @@ process/lifecycle rules:
    `stopService` caller) previously left the guest daemon running with no
    notification and no supervision. Terminal states remain a no-op. Unit
    tested; not device-triggerable while the service stays unexported.
+
+## Boot start, battery recommendation, and update check (2026-09-20)
+
+Implemented with unit evidence (policy truth table, opt-in prefs, receiver
+trigger wiring, amended manifest guard, comparator/checker/prefs/notifier)
+and **device-verified on the Samsung S10e (SM-G970F, OneUI, Android 12/API 31,
+arm64, id-ID locale, 2026-09-20)**. Evidence: `/tmp/qa-boot/` (logcat
+captures, uiautomator dumps, screenshots).
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| BOOT-001 | Opt-in OFF (default) + reboot, unlock | `BootStartReceiver: BOOT_COMPLETED -> SKIP_OPT_OUT` after user unlock; zero disk gate probing (opt-in checked first); no runtime procs |
+| BOOT-002 | Opt-in ON + reboot, unlock | `BOOT_COMPLETED -> START` ~1 min after unlock; tracer + `libproot.so` + `sshd_config -p 22022` spawned; `0100007F:5606` LISTEN; runtime notification posted |
+| BOOT-003 | `adb install -r` while the session is live (opt-in ON) | `MY_PACKAGE_REPLACED -> START`; old tracers/daemon gone, new pids; endpoint republished. Fired on every package replace in the run (upgrade 0.2.1→0.3.0, QA reinstalls, downgrade-name build) — opt-in OFF answered `SKIP_OPT_OUT` instead |
+| BOOT-004 | Service-bridge overlay deleted + reboot (opt-in ON) | `BOOT_COMPLETED -> SKIP_BRIDGE_NOT_SETTLED`; no runtime start, no install attempt; launching the app reinstalled the bridge through the setup pipeline and the session started |
+| BOOT-005 | Force-stop (`stopped=true` confirmed via `dumpsys package`) + reboot | **OEM deviation**: OneUI delivered `BOOT_COMPLETED` anyway (`-> START`, session up) — the stock stopped-state suppression does not apply on this build. The toggle, not force-stop, is the reliable off here |
+| BAT-001 | Battery card + exemption cycle | Card rendered "Not exempt" honestly (probe re-reads); action opened the system dialog (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, localized); granting flipped the card to "Exempt" and `dumpsys deviceidle whitelist` listed the app |
+| BAT-002 | The build that hides the direct dialog | Not reachable on this device (the direct dialog works); the fallback chain is unit-pinned and start-and-fall-back identical to the workspace card |
+| UPD-001 | Debug build with a lower `versionName` (0.2.9, versionCode 5) against the real channel | Fresh check returned UPDATE_AVAILABLE: launcher banner "Update available: v0.3.0" with View release / Dismiss rendered (uiautomator + screenshot); notification posted on the `updates` channel (below API 33 no grant is needed); Dismiss cleared the banner and persisted `dismissed_tag` |
+| UPD-002 | Current build (`versionName` == latest tag) + second foreground within 24 h | `UP_TO_DATE`: no banner, no notification; `last_check_at` unchanged across relaunches — the throttle suppressed the second network call |
+| UPD-003 | Airplane mode + fresh check | Offline `UNAVAILABLE` (typed, silent): `last_check_at` recorded, no banner, no crash |
+
+Run findings:
+
+1. **Found and fixed (coordinator wiring):** the battery card did not
+   re-render after the exemption dialog closed, because a dialog-themed
+   screen only pauses the Activity (no `onStart`). Fixed with
+   `startActivityForResult`/`onActivityResult` re-probe in
+   `MainActivity`/`BatteryOptimizationAccess`; the full revoke → request →
+   allow cycle was then verified on device.
+2. **`UpdateNotifier.cancelUpdateNotice()` added:** "Dismiss" now also
+   cancels the standing notification, so both surfaces stay consistent for a
+   dismissed tag.
+3. **OEM delivery deviation (documented above and in `docs/limitations.md`):**
+   OneUI delivered `BOOT_COMPLETED` to a `stopped=true` app.
+4. **Egress reality for the check:** through the device's hotspot/mobile
+   carrier path (CGNAT), `api.github.com` answered 403 for several minutes
+   straight (six consecutive attempts) while another path answered 200; the
+   checker mapped every one to silent `UNAVAILABLE` — the throttle recorded
+   each attempt and no UI noise appeared. On shared-CGNAT networks the
+   unauthenticated 60/hour budget is shared, so multi-minute 403 windows are
+   normal; the design handles them.
+5. Remaining: the same pass on a stock (non-OneUI) device and another OEM;
+   the UPDATE_AVAILABLE notification captured on-device end-to-end once an
+   egress allows a successful check (unit evidence covers the gate).
+
+## Assisted in-app update (ADR-0039), device run 2026-09-20
+
+Run on the Samsung S10e (SM-G970F, OneUI, Android 12/API 31): QA build with
+`versionName 0.2.9` (versionCode 5) against an update stub served over the
+loopback bridge (`adb reverse`), digest recorded from the served artifact.
+Evidence: `/tmp/qa-boot/` (screenshots, uiautomator dumps, logcat).
+
+| ID | Case | Observed result |
+| --- | --- | --- |
+| UPD-101 | Banner Install opens the popup | Popup rendered "v0.3.0 • 16.8 MB" and the unknown-sources step (grant not yet enabled), with Cancel and Release page actions |
+| UPD-102 | Unknown-sources gate | "Allow installing" opened the platform settings surface; with the grant active the flow proceeded straight to the download |
+| UPD-103 | Cleartext asset URL | A LAN `http://…` asset URL failed with the typed "Cleartext HTTP traffic … not permitted" — the network security config's loopback-only cleartext exception holds; the retry used `http://127.0.0.1` through `adb reverse` |
+| UPD-104 | Streaming progress | Download ran with live progress; the popup's status line showed bytes/total, speed, and the time estimate (screenshots mid-download) |
+| UPD-105 | Checksum gate + session hand-off | Post-download verification passed and the platform's own confirmation dialog appeared ("NusaDesk — Ingin mengupdate aplikasi ini?" with Batal/Update) |
+| UPD-106 | Cancel keeps the cache | Batal produced `STATUS_FAILURE_ABORTED` ("User rejected installation"); the popup showed "Install cancelled. The downloaded file is kept for the next attempt." |
+| UPD-107 | Cache-hit retry | Tapping Install again reached the system dialog in ~1.2 s (vs ~11 s for the throttled download) and the cache file's mtime was unchanged — no re-download |
+| UPD-108 | Final platform apply | **OPEN (platform-side stall):** after Update, the pipeline logs `PACKAGE_INSTALL_STARTED` → integrity check passed → `Verification timed out` → `Continuing with installation`, then never reaches the `stagedDir`/`Update package` steps; the version stays unchanged. Reproduced across a reboot and with WARP off, app backgrounded, and package-verifier settings changed. A `adb install -r` (shell session) of the same APK completes the identical replace, so the stall is in the device's app-staged session pipeline (Samsung verifier path) after a correct hand-off, not in the app flow |
+
+Run findings:
+
+1. **Confirmation-extra key corrected on device.** The broadcast carries the
+   confirmation intent under `android.intent.extra.INTENT` (not the
+   `android.content.pm.extra.*` family the bridge originally read); with the
+   corrected key the system dialog opened. The bridge and its test pin the
+   verified key.
+2. **The unknown-sources Settings trip can recreate the Activity** (OneUI
+   Settings is a separate task); the popup closes with it, the banner
+   remains, and the next Install tap resumes the flow — acceptable for this
+   slice, tracked here as observed behavior.
+3. **Play Protect verification times out on this device for app-staged
+   sessions** even with WARP disabled and the verifier setting cleared; the
+   platform's "continue anyway" path is where UPD-108 stalls.
+4. **Release-signing requirement (repo-level):** the release workflow built
+   the debug APK on an ephemeral CI runner, so the signing certificate
+   rotated between releases; an update install (assisted or manual) requires
+   every release to be signed with a stable key. Wired 2026-09-20 (ADR-0040):
+   the workflow now builds the signed **release** APK and fails closed
+   without the pinned keystore or when the certificate fingerprint drifts;
+   the maintainer-side keystore secrets must be set before the next release,
+   and pre-key builds need a one-time reinstall.
 
 ## License and distribution note
 

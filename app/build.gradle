@@ -10,8 +10,31 @@ android {
         applicationId 'gh.nusashell.nusadesk'
         minSdk 29
         targetSdk 37
-        versionCode 5
-        versionName '0.3.0'
+        versionCode 6
+        versionName '0.4.0'
+    }
+
+    // Release signing (ADR-0040). The published GitHub/F-Droid APK must be
+    // signed with a stable, dedicated key: the platform refuses to update an
+    // installed app whose signer changed, so an ephemeral CI debug keystore
+    // (the previous behavior) could never update a previously published
+    // release, and the in-app update flow (ADR-0039) depends on it. CI
+    // decodes the keystore from repository secrets and points
+    // ANDROID_KEYSTORE_PATH at it. Without those variables a local release
+    // build stays unsigned and debug builds keep the default debug signing —
+    // both deliberate: only CI publishes artifacts, and it fails closed when
+    // the pinned key is missing.
+    def releaseKeystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
+
+    signingConfigs {
+        if (releaseKeystorePath) {
+            release {
+                storeFile file(releaseKeystorePath)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
     }
 
     compileOptions {
@@ -23,6 +46,9 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (releaseKeystorePath) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
@@ -49,6 +75,17 @@ android {
         // and an approved use case; today the project ships only the signed
         // GitHub release APK.
         disable 'ScopedStorage'
+        // BatteryLife flags the REQUEST_IGNORE_BATTERY_OPTIMIZATIONS dialog
+        // intent as a Play policy risk, exactly like ScopedStorage above. The
+        // permission is already declared and pinned (BridgePermissionsManifest
+        // Test), and the intent fires only from the battery card's explicit tap
+        // on the Linux system screen — never at launch, never in the
+        // background. The recommended exemption is itself one of Android's
+        // documented background-start exemptions, which is why the card exists;
+        // it mitigates OEM throttling of the runtime host service (ADR-0037).
+        // The distribution channel is the signed GitHub release APK / F-Droid,
+        // so the Play policy rule does not bind this project today.
+        disable 'BatteryLife'
     }
 
     testOptions {

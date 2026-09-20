@@ -10,6 +10,7 @@ import android.text.TextWatcher;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -78,6 +79,11 @@ public final class DesktopHomeView extends ScrollView
     private View searchClear;
     private LauncherGridView grid;
 
+    private View updateBanner;
+    private TextView updateText;
+    private Button updateOpen;
+    private Button updateDismiss;
+
     private List<WebAppDefinition> webApps = Collections.emptyList();
     private Map<String, Bitmap> favicons = Collections.emptyMap();
 
@@ -90,6 +96,8 @@ public final class DesktopHomeView extends ScrollView
 
     private LauncherGridView.OpenListener entryOpenListener;
     private LauncherGridView.OpenListener entryEditListener;
+    private View.OnClickListener updateOpenListener;
+    private View.OnClickListener updateDismissListener;
 
     public DesktopHomeView(Context context) {
         super(context);
@@ -121,6 +129,20 @@ public final class DesktopHomeView extends ScrollView
         searchInput = findViewById(R.id.apps_search_input);
         searchClear = findViewById(R.id.apps_search_clear);
         grid = findViewById(R.id.apps_grid);
+        updateBanner = findViewById(R.id.home_update_banner);
+        updateText = findViewById(R.id.home_update_text);
+        updateOpen = findViewById(R.id.home_update_open);
+        updateDismiss = findViewById(R.id.home_update_dismiss);
+        updateOpen.setOnClickListener(view -> {
+            if (updateOpenListener != null) {
+                updateOpenListener.onClick(view);
+            }
+        });
+        updateDismiss.setOnClickListener(view -> {
+            if (updateDismissListener != null) {
+                updateDismissListener.onClick(view);
+            }
+        });
 
         grid.setOnEntryOpenListener(entry -> {
             if (entryOpenListener != null) {
@@ -149,6 +171,30 @@ public final class DesktopHomeView extends ScrollView
     /** Receives a long press on a web app tile, which opens its edit form. */
     public void setOnEntryEditListener(LauncherGridView.OpenListener listener) {
         this.entryEditListener = listener;
+    }
+
+    /** Wires the update banner's "View release" action (ADR-0038). */
+    public void setOnUpdateOpenListener(OnClickListener listener) {
+        updateOpenListener = listener;
+    }
+
+    /** Wires the update banner's "Dismiss" action. */
+    public void setOnUpdateDismissListener(OnClickListener listener) {
+        updateDismissListener = listener;
+    }
+
+    /**
+     * Renders the update banner. {@code null} hides it; a tag renders the
+     * notice. The banner is presentation-only: it never fetches or stores
+     * anything, and both actions belong to the host.
+     */
+    public void renderUpdateBanner(String tag) {
+        if (tag == null || tag.trim().isEmpty()) {
+            updateBanner.setVisibility(GONE);
+            return;
+        }
+        updateBanner.setVisibility(VISIBLE);
+        updateText.setText(getContext().getString(R.string.update_banner_text, tag));
     }
 
     /** States the real storage requirement for the first-run setup step. */

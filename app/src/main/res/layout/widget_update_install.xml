@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Assisted in-app update popup (ADR-0039): identity, determinate progress
+     with speed and a time estimate, the checksum state, and the two actions.
+     The layout stays a single column so font scaling reflows it. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/update_install_title"
+            android:textColor="@color/ink"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/update_install_detail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/ink_secondary"
+            android:textSize="13sp" />
+
+        <ProgressBar
+            android:id="@+id/update_install_progress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:max="100"
+            android:indeterminate="false" />
+
+        <TextView
+            android:id="@+id/update_install_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:minHeight="36dp"
+            android:textColor="@color/ink_secondary"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/update_install_action"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_target"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/button_secondary"
+            android:fontFamily="sans"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/update_install_action_install"
+            android:textAllCaps="false"
+            android:textColor="@color/primary_dark"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/update_install_cancel"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_target"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/button_secondary"
+            android:fontFamily="sans"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/update_install_cancel"
+            android:textAllCaps="false"
+            android:textColor="@color/primary_dark"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/update_install_release"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_target"
+            android:layout_marginTop="8dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:fontFamily="sans"
+            android:minHeight="@dimen/touch_target"
+            android:text="@string/update_install_action_release"
+            android:textAllCaps="false"
+            android:textColor="@color/ink_secondary"
+            android:textSize="12sp" />
+    </LinearLayout>
+</merge>

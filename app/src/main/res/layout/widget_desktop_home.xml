@@ -114,6 +114,55 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
+        <!-- Update banner: shown only while an un-dismissed newer release is
+             known (ADR-0038). "View release" opens the release page in the
+             system browser; there is no in-app install path. -->
+        <LinearLayout
+            android:id="@+id/home_update_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/launcher_header_gap"
+            android:background="@drawable/card_surface"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="10dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/home_update_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/ink"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/home_update_open"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:background="?android:attr/selectableItemBackground"
+                android:fontFamily="sans"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/update_banner_open"
+                android:textAllCaps="false"
+                android:textColor="@color/primary_dark"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/home_update_dismiss"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:background="?android:attr/selectableItemBackground"
+                android:fontFamily="sans"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/update_banner_dismiss"
+                android:textAllCaps="false"
+                android:textColor="@color/ink_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
         <!-- Setup: the single installer surface. Visible while either the
              curated rootfs or the guest-SSH add-on is missing; gone once both
              are active. One wizard, one thumb-reachable action — there is no

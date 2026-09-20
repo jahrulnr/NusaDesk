@@ -217,6 +217,73 @@
     <string name="system_workspace_action_change">Change folder</string>
     <string name="system_workspace_unavailable">That folder cannot be used: pick one this app can write to.</string>
 
+    <!--
+        Battery optimization card. The state is read permission-free from
+        PowerManager; the action opens the system\'s direct exemption dialog and
+        falls back to the optimization list screen. The request happens only
+        from this card\'s button tap, never at launch, and an exempt app keeps
+        no button: revocation lives in the same Android screen.
+    -->
+    <string name="system_battery_label">Battery optimization</string>
+    <string name="system_battery_value_exempt">Exempt</string>
+    <string name="system_battery_value_not_exempt">Not exempt</string>
+    <string name="system_battery_detail_not_exempt">Android may stop this app\'s background work to save battery. Exempting it helps the Linux runtime and the optional boot start keep running.</string>
+    <string name="system_battery_detail_exempt">Android will not restrict this app for battery reasons. You can revoke it from the same optimization screen.</string>
+    <string name="system_battery_action_request">Request exemption</string>
+    <string name="system_battery_unavailable">The battery settings screen is not available right now.</string>
+
+    <!--
+        Boot start card (ADR-0037). One action that flips the opt-in; the
+        receiver stays inert until the user turns it on here, and both card
+        states stay honest about what boot start can and cannot promise on
+        every OEM.
+    -->
+    <string name="system_boot_label">Boot start</string>
+    <string name="system_boot_value_enabled">On</string>
+    <string name="system_boot_value_disabled">Off</string>
+    <string name="system_boot_detail_disabled">Linux stays off after a reboot until you open the app. Turn this on to start the session automatically once the device is unlocked, and after an app update installs.</string>
+    <string name="system_boot_detail_enabled">Linux starts after boot or an app update, using the same idempotent start the app itself uses. OEM battery policies can still intervene; the battery exemption below helps.</string>
+    <string name="system_boot_action_enable">Start at boot</string>
+    <string name="system_boot_action_disable">Turn off</string>
+
+    <!--
+        Update banner and notification (ADR-0038). The check runs at most once
+        per 24 hours from a foreground event and is silent on every failure;
+        the banner always renders when an un-dismissed newer tag is known, and
+        the system notification posts only when the notification grant already
+        exists. Tapping either surface opens the release page in the system
+        browser: there is no in-app install path and no silent self-update.
+    -->
+    <string name="update_banner_text">Update available: %1$s</string>
+    <string name="update_banner_open">Install</string>
+    <string name="update_banner_dismiss">Dismiss</string>
+    <string name="update_banner_open_unavailable">No browser can open the release page right now.</string>
+
+    <!--
+        Assisted in-app update (ADR-0039). One explicit Install tap opens the
+        download popup (progress, speed, time estimate), the checksum is
+        verified against the channel-reported digest, and the platform's own
+        installer confirmation finishes the update: an install is never
+        applied silently. A cancelled install keeps the hash-validated cached
+        file, so the next Install tap skips the download.
+    -->
+    <string name="update_install_title">Download update</string>
+    <string name="update_install_detail">%1$s • %2$s</string>
+    <string name="update_install_preparing">Checking for a cached copy…</string>
+    <string name="update_install_verifying">Verifying checksum…</string>
+    <string name="update_install_installing">Handing off to the Android installer. Confirm there to finish.</string>
+    <string name="update_install_aborted">Install cancelled. The downloaded file is kept for the next attempt.</string>
+    <string name="update_install_failed">Download failed: %1$s</string>
+    <string name="update_install_unavailable">The channel did not report the APK over HTTPS, so the in-app install cannot start. Open the release page instead.</string>
+    <string name="update_install_unknown_sources_detail">Android requires one-time permission before NusaDesk can stage an install. You enable it in Settings; every install still asks you to confirm.</string>
+    <string name="update_install_action_install">Install</string>
+    <string name="update_install_action_allow">Allow installing</string>
+    <string name="update_install_action_retry">Try again</string>
+    <string name="update_install_action_release">Release page</string>
+    <string name="update_install_cancel">Cancel</string>
+    <string name="update_notification_title">NusaDesk update available</string>
+    <string name="update_notification_text">Version %1$s is available. Open the release page to download it.</string>
+
     <!-- App permissions: Android's own App Info page manages the camera,
          microphone, location, contacts, SMS and other permission switches for
          this app. NusaDesk never prompts for them on this screen; the card only

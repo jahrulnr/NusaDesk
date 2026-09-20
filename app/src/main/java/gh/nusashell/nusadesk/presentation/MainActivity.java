@@ -2,8 +2,13 @@ package gh.nusashell.nusadesk.presentation;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Insets;
@@ -34,8 +39,12 @@ import gh.nusashell.nusadesk.domain.runtime.GuestAddonPayloadProfile;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
+import gh.nusashell.nusadesk.domain.update.ApkDigest;
+import gh.nusashell.nusadesk.domain.update.ReleaseVersion;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.workspace.WorkspaceFolder;
+import gh.nusashell.nusadesk.infrastructure.battery.BatteryOptimizationAccess;
+import gh.nusashell.nusadesk.infrastructure.boot.BootAutostartPreferences;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogCatalog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTail;
@@ -49,6 +58,12 @@ import gh.nusashell.nusadesk.infrastructure.service.RuntimeHostService;
 import gh.nusashell.nusadesk.infrastructure.service.TerminalSessionBus;
 import gh.nusashell.nusadesk.infrastructure.service.TerminalSessionRegistry;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshSecurityInitializer;
+import gh.nusashell.nusadesk.infrastructure.update.ApkDownloader;
+import gh.nusashell.nusadesk.infrastructure.update.GitHubReleaseChecker;
+import gh.nusashell.nusadesk.infrastructure.update.HttpAssetSource;
+import gh.nusashell.nusadesk.infrastructure.update.PackageInstallerBridge;
+import gh.nusashell.nusadesk.infrastructure.update.UpdateCheckPrefs;
+import gh.nusashell.nusadesk.infrastructure.update.UpdateNotifier;
 import gh.nusashell.nusadesk.infrastructure.webapp.SharedPreferencesWebAppStore;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppFaviconFetcher;
 import gh.nusashell.nusadesk.infrastructure.workspace.SharedPreferencesWorkspaceStore;
@@ -60,12 +75,15 @@ import gh.nusashell.nusadesk.presentation.desktop.LauncherEntry;
 import gh.nusashell.nusadesk.presentation.logs.LogsScreenView;
 import gh.nusashell.nusadesk.presentation.system.SystemScreenView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
+import gh.nusashell.nusadesk.presentation.update.UpdateInstallDialog;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppFormView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
 import gh.nusashell.nusadesk.presentation.widget.InstallPhaseSnapshot;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
+import java.io.File;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -74,6 +92,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -106,6 +125,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService installExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService faviconExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService updateExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean installInProgress = new AtomicBoolean(false);
     private final Map<DesktopDestination, View> fixedSurfaces =
             new EnumMap<>(DesktopDestination.class);
@@ -136,6 +156,22 @@ public final class MainActivity extends Activity {
     private WebAppFaviconFetcher faviconFetcher;
     private WorkspaceStore workspaceStore;
     private WorkspaceFolderAccess workspaceAccess;
+    private BatteryOptimizationAccess batteryAccess;
+    private BootAutostartPreferences bootPreferences;
+    private UpdateCheckPrefs updatePrefs;
+    private UpdateNotifier updateNotifier;
+    /** Release page of the tag currently known; null falls back to /releases/latest. */
+    private String pendingReleaseUrl;
+    /** The tag currently rendered in the launcher banner, or null. */
+    private String visibleUpdateTag;
+    private UpdateInstallDialog installDialog;
+    private BroadcastReceiver installStatusReceiver;
+    private String installToken;
+    /** The one broadcast action the status receiver filters on. */
+    private static final String ACTION_INSTALL_STATUS =
+            "gh.nusashell.nusadesk.update.STATUS";
+    /** Hard cap for a streamed release asset. */
+    private static final long APK_SIZE_CAP = 64L * 1024 * 1024;
     private Handler mainHandler;
 
     private RuntimeSnapshot currentSnapshot;
@@ -179,6 +215,10 @@ public final class MainActivity extends Activity {
         // platform rules, so the Activity only asks for state and renders it.
         workspaceStore = new SharedPreferencesWorkspaceStore(this);
         workspaceAccess = new WorkspaceFolderAccess(this);
+        batteryAccess = new BatteryOptimizationAccess(this);
+        bootPreferences = new BootAutostartPreferences(this);
+        updatePrefs = new UpdateCheckPrefs(this);
+        updateNotifier = new UpdateNotifier(this);
         faviconFetcher = new WebAppFaviconFetcher();
         mainHandler = new Handler(Looper.getMainLooper());
         contractDialog = new FoundationContractDialog(this);
@@ -192,6 +232,8 @@ public final class MainActivity extends Activity {
         refreshGuestSshState();
         refreshWebApps();
         refreshWorkspace();
+        refreshBattery();
+        refreshBoot();
         applyWindowInsets();
         registerBackCallback();
         showRestoredShell();
@@ -210,11 +252,13 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * The one autostart path (ADR-0013). An explicit Activity foreground event is
-     * the only thing that starts Linux, and the call is idempotent: a runtime that
-     * is already starting or running is left alone. There is deliberately no boot
-     * receiver, job, or alarm, and no in-app start control that could start a
-     * second session or contradict this one.
+     * The in-app autostart boundary (ADR-0013, amended by ADR-0037). An
+     * explicit Activity foreground event starts Linux when no session is live,
+     * and the call is idempotent. The only other start path is the user's own
+     * opt-in boot start: the BootStartReceiver runs after boot or an app update
+     * and calls the same ensure-running boundary. There is no job, no alarm,
+     * and no in-app start control that could start a second session or
+     * contradict this one.
      *
      * <p>The call is made only once the curated system is installed and its
      * terminal component is present, so a half-installed device never asks the
@@ -226,9 +270,20 @@ public final class MainActivity extends Activity {
         activityStarted = true;
         continuePendingSetup();
         ensureRuntimeRunning();
-        // Returning from the all-files access settings page is a foreground
-        // event: re-read the grant so the workspace card tells the truth.
+        // Returning from the all-files access or battery settings pages is a
+        // foreground event: re-read both grants/states so the workspace and
+        // battery cards tell the truth.
         refreshWorkspace();
+        refreshBattery();
+        refreshBoot();
+        checkForUpdate();
+        // Returning from the unknown-apps Settings page (assisted update,
+        // ADR-0039) re-runs the gate: the popup may be waiting for it.
+        if (installDialog != null && installDialog.isShowing()
+                && installDialog.isWaitingForAllowance()) {
+            continueInstallFlow(updatePrefs.lastSeenTag(), updatePrefs.assetUrl(),
+                    updatePrefs.assetDigest(), updatePrefs.assetSizeBytes());
+        }
     }
 
     @Override
@@ -292,9 +347,14 @@ public final class MainActivity extends Activity {
         // it would outlive the view it feeds.
         stopLogTail();
         contractDialog.dispose();
+        if (installDialog != null && installDialog.isShowing()) {
+            installDialog.dismiss();
+        }
+        unregisterInstallStatusReceiver();
         installExecutor.shutdownNow();
         probeExecutor.shutdownNow();
         faviconExecutor.shutdownNow();
+        updateExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -356,6 +416,12 @@ public final class MainActivity extends Activity {
             onWorkspacePicked(resultCode, data);
             return;
         }
+        if (requestCode == BatteryOptimizationAccess.REQUEST_OPTIMIZATION) {
+            // The dialogs return no result, and a dialog-themed screen only
+            // pauses this Activity, so the state row must re-probe here.
+            refreshBattery();
+            return;
+        }
         if (requestCode != WebAppFormView.REQUEST_OPEN_IMAGE) {
             return;
         }
@@ -373,6 +439,8 @@ public final class MainActivity extends Activity {
         desktopHome.setOnEntryEditListener(entry -> openWebAppForm(entry.getWebApp()));
         desktopHome.setStorageRequirement(
                 catalogEntry.getCompressedBytes() + catalogEntry.getUncompressedBytes());
+        desktopHome.setOnUpdateOpenListener(view -> onBannerInstall());
+        desktopHome.setOnUpdateDismissListener(view -> dismissUpdateBanner());
     }
 
     private void wireAppSurfaceHost() {
@@ -384,6 +452,8 @@ public final class MainActivity extends Activity {
         systemScreen.setOnHowItWorksListener(view -> contractDialog.show());
         systemScreen.setOnWorkspaceActionListener(view -> onWorkspaceAction());
         systemScreen.setOnOpenAppSettingsListener(view -> openAppSettings());
+        systemScreen.setOnBatteryActionListener(view -> onBatteryAction());
+        systemScreen.setOnBootActionListener(view -> onBootAction());
     }
 
     private void restoreShellState(Bundle savedInstanceState) {
@@ -872,6 +942,410 @@ public final class MainActivity extends Activity {
     }
 
     /**
+     * The battery card's single action: asks Android for the battery
+     * optimization exemption directly and falls back to the optimization list
+     * screen on the builds that refuse the direct dialog. The dialogs give no
+     * result, so the card re-renders when the dialog closes (the
+     * {@code onActivityResult} callback fires even when the underlying
+     * Activity was only paused, not stopped) and again on the next foreground
+     * event instead of trusting a return value.
+     */
+    private void onBatteryAction() {
+        if (startSettingsForResult(batteryAccess.requestExemptionIntent(),
+                BatteryOptimizationAccess.REQUEST_OPTIMIZATION)) {
+            refreshBattery();
+            return;
+        }
+        if (startSettingsForResult(batteryAccess.optimizationSettingsIntent(),
+                BatteryOptimizationAccess.REQUEST_OPTIMIZATION)) {
+            return;
+        }
+        Toast.makeText(this, R.string.system_battery_unavailable,
+                Toast.LENGTH_LONG).show();
+        refreshBattery();
+    }
+
+    /** Renders the battery-optimization card from the permission-free probe. */
+    private void refreshBattery() {
+        if (systemScreen == null || batteryAccess == null) {
+            return;
+        }
+        systemScreen.renderBattery(batteryAccess.isExempt());
+    }
+
+    /**
+     * The boot card's single action: flips the "Start Linux at boot" opt-in
+     * (ADR-0037). The receiver stays inert until this store says on; the card
+     * re-renders from the store so the row always mirrors the persisted truth.
+     */
+    private void onBootAction() {
+        bootPreferences.setEnabled(!bootPreferences.enabled());
+        refreshBoot();
+    }
+
+    /** Renders the boot-start card from the persisted opt-in. */
+    private void refreshBoot() {
+        if (systemScreen == null || bootPreferences == null) {
+            return;
+        }
+        systemScreen.renderBoot(bootPreferences.enabled());
+    }
+
+    // ---- Update check (ADR-0038) ----
+
+    /**
+     * The one update-check path: at most once per 24 hours, fired only from a
+     * foreground event, silent on every failure. The banner always renders
+     * what the last stored check proved; the throttled network check runs on
+     * the update executor and lands on the main thread.
+     */
+    private void checkForUpdate() {
+        if (updatePrefs == null) {
+            return;
+        }
+        renderStoredUpdateBanner();
+        if (!updatePrefs.isDue(System.currentTimeMillis())) {
+            return;
+        }
+        updateExecutor.execute(() -> {
+            GitHubReleaseChecker.UpdateCheckResult result =
+                    new GitHubReleaseChecker().check(installedVersionName());
+            updatePrefs.recordCheck(System.currentTimeMillis(), result.getTag());
+            mainHandler.post(() -> applyUpdateResult(result));
+        });
+    }
+
+    /**
+     * Renders the banner from the last stored check without a network round
+     * trip. The stored tag counts as available only while it really is newer
+     * than the installed version and the user has not dismissed it.
+     */
+    private void renderStoredUpdateBanner() {
+        ReleaseVersion seen = ReleaseVersion.parseOrNull(updatePrefs.lastSeenTag());
+        ReleaseVersion installed = ReleaseVersion.parseOrNull(installedVersionName());
+        boolean show = seen != null && installed != null
+                && seen.isNewerThan(installed)
+                && !seen.getRaw().equals(updatePrefs.dismissedTag());
+        pendingReleaseUrl = null;
+        visibleUpdateTag = show ? seen.getRaw() : null;
+        desktopHome.renderUpdateBanner(visibleUpdateTag);
+    }
+
+    /**
+     * Applies one completed check on the main thread. Anything but a newer
+     * release clears the banner; a release the user dismissed stays quiet for
+     * both surfaces until a different tag arrives.
+     */
+    private void applyUpdateResult(GitHubReleaseChecker.UpdateCheckResult result) {
+        if (result.getKind() != GitHubReleaseChecker.UpdateCheckResult.Kind.UPDATE_AVAILABLE) {
+            desktopHome.renderUpdateBanner(null);
+            return;
+        }
+        if (result.getTag().equals(updatePrefs.dismissedTag())) {
+            return;
+        }
+        pendingReleaseUrl = result.getReleaseUrl();
+        visibleUpdateTag = result.getTag();
+        desktopHome.renderUpdateBanner(result.getTag());
+        updateNotifier.notifyIfAvailable(this,
+                getString(R.string.update_notification_title),
+                getString(R.string.update_notification_text, result.getTag()),
+                result.getReleaseUrl());
+    }
+
+    /** Remembers the dismissed tag and silences both surfaces for that release. */
+    private void dismissUpdateBanner() {
+        if (visibleUpdateTag != null) {
+            updatePrefs.setDismissed(visibleUpdateTag);
+            updateNotifier.cancelUpdateNotice();
+        }
+        desktopHome.renderUpdateBanner(null);
+    }
+
+    /**
+     * Opens a release page in the system browser: the exact page a live check
+     * returned, or the channel's own "latest" page when the banner came from a
+     * stored tag. The browser hand-off stays available alongside the assisted
+     * install flow (ADR-0039) — it is the fallback whenever the channel did
+     * not report a usable asset.
+     */
+    private void openReleasePage(String releasePageUrl) {
+        String url = releasePageUrl == null || releasePageUrl.trim().isEmpty()
+                ? "https://github.com/jahrulnr/NusaDesk/releases/latest"
+                : releasePageUrl;
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (ActivityNotFoundException noBrowser) {
+            Toast.makeText(this, R.string.update_banner_open_unavailable,
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    // ---- Assisted in-app update (ADR-0039) ----
+
+    /**
+     * The banner's Install action: opens the popup and runs the assisted
+     * flow — probe the digest-validated cache, stream the asset when needed
+     * with live progress, verify the checksum, and stage the platform
+     * install session whose confirmation dialog the user taps themselves.
+     */
+    private void onBannerInstall() {
+        if (installDialog != null && installDialog.isShowing()) {
+            return;
+        }
+        String tag = updatePrefs.lastSeenTag();
+        String url = updatePrefs.assetUrl();
+        String digest = updatePrefs.assetDigest();
+        long size = updatePrefs.assetSizeBytes();
+        UpdateInstallDialog dialog = new UpdateInstallDialog(this);
+        installDialog = dialog;
+        dialog.showWithHost(new UpdateInstallDialog.Host() {
+            @Override
+            public void onInstallReady() {
+                continueInstallFromCache();
+            }
+            @Override
+            public void onAllowInstalls() {
+                openUnknownSourcesSettings();
+            }
+
+            @Override
+            public void onRetry() {
+                continueInstallFlow(tag, url, digest, size);
+            }
+
+            @Override
+            public void onReleasePage() {
+                openReleasePage(pendingReleaseUrl);
+            }
+
+            @Override
+            public void onPopupClosed() {
+                unregisterInstallStatusReceiver();
+            }
+        });
+        if (tag == null || url == null || ApkDigest.normalize(digest) == null) {
+            // The channel did not report a usable HTTPS asset for this tag.
+            dialog.renderUnavailable();
+            return;
+        }
+        dialog.renderIdentity(tag, UpdateInstallDialog.formatBytes(size));
+        continueInstallFlow(tag, url, digest, size);
+    }
+
+    /**
+     * Continues the flow from wherever it stopped: the unknown-apps gate
+     * first (returning from that Settings page is a resume, not a new
+     * install), then the cache probe, then the streaming download.
+     */
+    private void continueInstallFlow(String tag, String url, String digest, long size) {
+        if (getPackageManager().canRequestPackageInstalls()) {
+            installDialog.resetProgress();
+            installDialog.renderPreparing();
+            updateExecutor.execute(() -> downloadAndStage(tag, url, digest, size));
+            return;
+        }
+        installDialog.renderNeedsUnknownSources();
+    }
+
+    /**
+     * The aborted-install path: re-verify the kept cache file and restage it
+     * without touching the network. A cache file that no longer matches its
+     * recorded digest (evicted, truncated) falls back to a typed failure so
+     * the user can retry the full download.
+     */
+    private void continueInstallFromCache() {
+        String digest = updatePrefs.assetDigest();
+        updateExecutor.execute(() -> {
+            File cached = cachedUpdateApk();
+            try {
+                if (cached.exists()
+                        && ApkDigest.matches(digest, ApkDownloader.sha256Hex(cached))) {
+                    mainHandler.post(() -> {
+                        installDialog.renderReady();
+                        stageInstall(cached);
+                    });
+                    return;
+                }
+                mainHandler.post(() -> installDialog.renderFailed(
+                        "the cached copy is missing or stale"));
+            } catch (IOException unreadable) {
+                mainHandler.post(() -> installDialog.renderFailed(
+                        "the cached copy cannot be read"));
+            }
+        });
+    }
+
+    /**
+     * The platform installer is staged from a verified file: the session is
+     * created and committed with a token-carrying status PendingIntent, and
+     * the system's own confirmation dialog is where the user taps Install.
+     */
+    private void stageInstall(File apk) {
+        installToken = UUID.randomUUID().toString();
+        PendingIntent sender = PackageInstallerBridge.buildStatusPendingIntent(this,
+                ACTION_INSTALL_STATUS, installToken, 0);
+        registerInstallStatusReceiver();
+        installDialog.renderInstalling();
+        updateExecutor.execute(() -> {
+            try {
+                PackageInstallerBridge.stageApk(this, apk, sender.getIntentSender());
+            } catch (IOException stagingFailed) {
+                mainHandler.post(() -> installDialog.renderFailed(
+                        stagingFailed.getMessage() == null ? "staging failed"
+                                : stagingFailed.getMessage()));
+            }
+        });
+    }
+
+    /** Cache probe, streaming download, checksum verify — on the executor. */
+    private void downloadAndStage(String tag, String url, String digest, long size) {
+        File cached = cachedUpdateApk();
+        try {
+            if (cached.exists()
+                    && ApkDigest.matches(digest, ApkDownloader.sha256Hex(cached))) {
+                // A cancelled install left a verified file: skip the download.
+                mainHandler.post(() -> {
+                    installDialog.renderReady();
+                    stageInstall(cached);
+                });
+                return;
+            }
+            mainHandler.post(() -> installDialog.resetProgress());
+            String computed = ApkDownloader.download(new HttpAssetSource(url), cached,
+                    APK_SIZE_CAP,
+                    (read, total) -> mainHandler.post(() -> installDialog.onProgress(read, total)));
+            mainHandler.post(installDialog::renderVerifying);
+            if (!ApkDigest.matches(digest, computed)) {
+                mainHandler.post(() -> installDialog.renderFailed("checksum mismatch"));
+                return;
+            }
+            mainHandler.post(() -> {
+                installDialog.renderReady();
+                stageInstall(cached);
+            });
+        } catch (IOException failed) {
+            mainHandler.post(() -> installDialog.renderFailed(
+                    failed.getMessage() == null ? failed.getClass().getSimpleName()
+                            : failed.getMessage()));
+        }
+    }
+
+    /**
+     * The fixed-name cache slot for one pending update. The digest recorded
+     * with the tag ties the file to its release, so a stale file for another
+     * version fails the probe and re-downloads.
+     */
+    private File cachedUpdateApk() {
+        File dir = new File(getCacheDir(), "update");
+        dir.mkdirs();
+        return new File(dir, "NusaDesk-update.apk");
+    }
+
+    /**
+     * Listens for the platform's install-session status: first the
+     * pending-user-action broadcast (whose confirmation intent the app
+     * launches — that is what shows the system dialog), then the terminal
+     * result. Token-verified; a spoofed broadcast is dropped.
+     *
+     * <p>The below-33 branch cannot pass a receiver flag — the overload
+     * arrived with API 33 — so the lint flag rule is suppressed here with the
+     * token check as the actual gate, and API 33+ registers not-exported.</p>
+     */
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private void registerInstallStatusReceiver() {
+        if (installStatusReceiver != null) {
+            return;
+        }
+        installStatusReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (installToken == null || !installToken.equals(
+                        intent.getStringExtra(PackageInstallerBridge.EXTRA_STATUS_TOKEN))) {
+                    return;
+                }
+                PackageInstallerBridge.InstallStatus status =
+                        PackageInstallerBridge.parseStatus(intent);
+                if (status == null) {
+                    return;
+                }
+                if (status.isPendingUserAction()) {
+                    Intent confirmation = status.getConfirmationIntent();
+                    if (confirmation != null) {
+                        confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        try {
+                            startActivity(confirmation);
+                        } catch (RuntimeException noScreen) {
+                            mainHandler.post(() -> installDialog.renderFailed(
+                                    "the installer did not open"));
+                        }
+                    }
+                    return;
+                }
+                unregisterInstallStatusReceiver();
+                if (status.isSuccess()) {
+                    // The platform replaces the process for a real install.
+                    cachedUpdateApk().delete();
+                    mainHandler.post(installDialog::dismiss);
+                } else if (status.isUserAborted()) {
+                    mainHandler.post(installDialog::renderAborted);
+                } else {
+                    String message = status.getMessage();
+                    mainHandler.post(() -> installDialog.renderFailed(
+                            message == null ? "install failed" : message));
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(ACTION_INSTALL_STATUS);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(installStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(installStatusReceiver, filter);
+        }
+    }
+
+    private void unregisterInstallStatusReceiver() {
+        if (installStatusReceiver != null) {
+            try {
+                unregisterReceiver(installStatusReceiver);
+            } catch (IllegalArgumentException notRegistered) {
+                // Nothing to clean up.
+            }
+            installStatusReceiver = null;
+        }
+    }
+
+    /**
+     * The one-time Android gate: allow installs staged by this app. Enabling
+     * it does not change what installs silently — the system still asks for
+     * confirmation on every update.
+     */
+    private void openUnknownSourcesSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                    .setData(Uri.parse("package:" + getPackageName())));
+        } catch (ActivityNotFoundException noScreen) {
+            if (installDialog != null) {
+                installDialog.renderFailed("the Android settings screen is not available");
+            }
+        }
+    }
+
+    /** Reads the installed APK versionName; null when the platform has none. */
+    private String installedVersionName() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                return getPackageManager().getPackageInfo(getPackageName(),
+                        PackageManager.PackageInfoFlags.of(0L)).versionName;
+            }
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (PackageManager.NameNotFoundException missing) {
+            return null;
+        }
+    }
+
+    /**
      * The System card's app-permissions shortcut: opens this app's Android App
      * Info page, where the platform manages camera, microphone, location,
      * contacts, SMS and other permission switches. NusaDesk never requests these
@@ -899,6 +1373,24 @@ public final class MainActivity extends Activity {
         }
         try {
             startActivity(intent);
+            return true;
+        } catch (ActivityNotFoundException noSuchScreen) {
+            return false;
+        }
+    }
+
+    /**
+     * startActivityForResult with the same start-and-fall-back shape as
+     * {@link #startSettings(Intent)}. The battery dialogs return no result,
+     * but their close callback is the reliable re-render signal.
+     */
+    @SuppressWarnings("deprecation")
+    private boolean startSettingsForResult(Intent intent, int requestCode) {
+        if (intent == null) {
+            return false;
+        }
+        try {
+            startActivityForResult(intent, requestCode);
             return true;
         } catch (ActivityNotFoundException noSuchScreen) {
             return false;

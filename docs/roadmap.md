@@ -259,6 +259,28 @@ Scope:
       sensor streaming, and additional capability tracks (Bluetooth, usage
       stats, overlay) as separately scoped work.
 
+## Host app UX — boot start, battery recommendation, and update check
+
+Implemented 2026-09-20 with unit evidence; device verification of the
+lifecycle rows is open work in `docs/test-plan.md` (BOOT-*, BAT-*, UPD-*).
+
+- [x] Opt-in "Start Linux at boot" (default OFF): one unexported receiver for
+      `BOOT_COMPLETED` + `MY_PACKAGE_REPLACED`, persisted install gates, and
+      the idempotent ensure-running boundary (ADR-0037).
+- [x] Battery-optimization recommendation card: permission-free state plus one
+      explicit tap into the system exemption dialog with a generic fallback;
+      automatic exemption stays unsupported.
+- [x] Foreground-only update check against GitHub releases: once per 24 hours,
+      launcher banner + notification only when already granted, per-tag
+      dismissal, browser hand-off, silent failures (ADR-0038).
+- [x] Device verification on the S10e (SM-G970F, OneUI, API 31, 2026-09-20):
+      boot delivery + typed skips, `MY_PACKAGE_REPLACED` restores, the
+      exemption-dialog cycle, and the update banner/throttle/offline rows
+      (`docs/test-plan.md` BOOT-*/BAT-*/UPD-*).
+- [ ] The same pass on a stock (non-OneUI) Android and one more OEM; the
+      UPDATE_AVAILABLE notification captured on-device once an egress allows
+      a successful check.
+
 ## Phase 4 — second curated runtime profile
 
 **Question:** Can a second, materially different runtime profile run without device-side compilation or weakening the host security contract?

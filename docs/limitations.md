@@ -431,29 +431,52 @@ force-stop or process death (ADR-0026).
 
 A foreground service improves process importance and provides user visibility but cannot guarantee persistence across low memory, OEM battery policy, Doze, force-stop, reboot, or user revocation. The UI must expose `STOPPED`, `FAILED`, and `RECOVERING` states rather than pretending the daemon is always alive. `dataSync` is not used as an indefinite server type (Android 15 caps it at six hours per 24h); the declared type is `specialUse` with a `linux_runtime_host` subtype, and the subtype rationale plus any distribution-channel policy review remain open.
 
-### Autostart is app-visible only (ADR-0013)
+### Autostart is app-visible, plus an opt-in boot start (ADR-0013, ADR-0037)
 
 Linux starts when the user opens the app: an Activity foreground event calls
 `RuntimeHostService.ensureRunning`, which starts a session only when none is
 live, and the foreground service then keeps the guest running while the app is
-backgrounded. What this deliberately does **not** do:
+backgrounded. Since ADR-0037 the user may additionally enable **Start Linux at
+boot** on the Linux system screen (default OFF): the unexported
+`BootStartReceiver` then answers `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`,
+re-checks the persisted install state, and calls the same idempotent
+ensure-running boundary. What this still deliberately does **not** do:
 
-- No boot start, no `BOOT_COMPLETED` receiver, no boot permission, no job,
-  alarm, or sticky-restart resurrection. Linux does not exist before the user
-  launches the app, and a device reboot leaves it stopped.
+- No job, alarm, or sticky-restart resurrection, and no boot start without the
+  opt-in — the default-OFF install never wakes at boot.
+- `LOCKED_BOOT_COMPLETED` is never requested: credential-encrypted storage is
+  unavailable before the first unlock, and every persisted signal the boot
+  gate reads lives there.
+- Boot delivery is best-effort and OEM-dependent. Stock Android does not
+  deliver `BOOT_COMPLETED` to a stopped app, but the 2026-09-20 S10e run
+  (OneUI 4.x, API 31) observed delivery to an app with `stopped=true` — on
+  that OEM force-stop does not keep the session off across a reboot; the
+  toggle is the reliable off. MIUI devices gate the broadcast behind a
+  separate Autostart switch; Samsung sleeping-apps and battery policy can
+  still kill the foreground service after it starts. The battery-optimization
+  recommendation card on the same screen mitigates this but does not
+  guarantee delivery or survival.
+- A boot trigger that finds an incomplete install does nothing: the receiver
+  never installs or downloads — it logs a typed skip, and the next
+  app-visible launch runs the normal setup pipeline. A service bridge absent
+  at boot (never attempted, or failed — add-on install outcomes are not
+  persisted) also skips, because a session started without it could never
+  run the service manager and the idempotent boundary would then leave that
+  live session alone.
 - No in-app start/stop control. The ongoing notification and its `Stop` action
   remain because Android requires foreground work to be user-visible and
   stoppable. Tapping `Stop` while the app is already in the foreground leaves
-  the runtime stopped until the next foreground event (leaving and reopening the
-  app); there is no control that starts it in place.
+  the runtime stopped until the next foreground event (leaving and reopening
+  the app); there is no control that starts it in place.
 - An uninstalled or failed runtime is retried once per foreground event, so the
   notification can re-appear with the same honest failure until the missing
   payload (the curated OpenSSH add-on) is installed.
 - On Android 12+ a foreground-service start must come from a foreground app
-  context; the boundary is only safe from an Activity foreground event, which is
-  exactly how it is wired. Background-start and FGS-type restrictions on API
-  levels newer than the tested device remain unverified — the app targets API 37
-  but has only run on API 29 (see `docs/test-plan.md`).
+  context or an explicit platform exemption — `BOOT_COMPLETED` is one — and
+  the declared `specialUse` type is not among the FGS types Android 15 blocks
+  from that broadcast. API levels and OEM builds newer than the tested
+  devices remain unverified: the app targets API 37 but has only run on
+  API 29/31 (see `docs/test-plan.md`).
 
 ### Background lifecycle is device- and OEM-specific (observed on Samsung Android 10)
 

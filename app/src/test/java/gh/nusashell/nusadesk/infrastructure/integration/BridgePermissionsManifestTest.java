@@ -49,6 +49,14 @@ public class BridgePermissionsManifestTest {
             "android.permission.ACCESS_NETWORK_STATE",
             "android.permission.FOREGROUND_SERVICE",
             "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+            // Assisted in-app update (ADR-0039): stages the verified release
+            // APK through the platform PackageInstaller; the user enables the
+            // per-app unknown-sources toggle from the install popup, and the
+            // platform confirms every install. Never a silent install.
+            "android.permission.REQUEST_INSTALL_PACKAGES",
+            // Opt-in "Start Linux at boot" trigger (ADR-0037): a normal
+            // install-time permission, default OFF, no runtime grant.
+            "android.permission.RECEIVE_BOOT_COMPLETED",
             // Workspace folder the user picks (ADR-0023).
             "android.permission.MANAGE_EXTERNAL_STORAGE",
             // Camera / microphone / location capabilities.
@@ -101,6 +109,16 @@ public class BridgePermissionsManifestTest {
         }
         throw new IllegalStateException("AndroidManifest.xml not found from "
                 + Paths.get("").toAbsolutePath());
+    }
+
+    private static int occurrences(String haystack, String needle) {
+        int count = 0;
+        for (int index = haystack.indexOf(needle);
+                index >= 0;
+                index = haystack.indexOf(needle, index + needle.length())) {
+            count++;
+        }
+        return count;
     }
 
     /** Every permission name declared by a {@code <uses-permission>} element. */
@@ -167,8 +185,13 @@ public class BridgePermissionsManifestTest {
                 manifest.contains("BIND_ACCESSIBILITY_SERVICE"));
         assertFalse("no notification listener may be declared",
                 manifest.contains("BIND_NOTIFICATION_LISTENER_SERVICE"));
-        assertFalse("no broadcast receiver may be declared",
-                manifest.contains("<receiver"));
+        // A manifest receiver is a background wake-up surface; the single
+        // reviewed exception is the opt-in boot trigger (ADR-0037). Anything
+        // else — an SMS receive trigger above all — stays out.
+        assertEquals("only the opt-in boot receiver may be declared",
+                1, occurrences(manifest, "<receiver"));
+        assertTrue("the one allowed receiver is the opt-in boot trigger",
+                manifest.contains(".infrastructure.boot.BootStartReceiver"));
         // WRITE_EXTERNAL_STORAGE adds nothing beside all-files access on API
         // 30+, so it stays out as installer noise.
         assertFalse(manifest.contains("android.permission.WRITE_EXTERNAL_STORAGE"));

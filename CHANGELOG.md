@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-20
+
+### Added
+
+- Add an opt-in "Start Linux at boot" toggle on the Linux system screen (default OFF): one unexported receiver listens to `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`, re-checks the persisted install gates, and reuses the idempotent ensure-running boundary; jobs, alarms, and silent always-on stay forbidden, and the amended manifest guard pins the exact receiver shape (ADR-0037)
+- Add a battery-optimization recommendation card on the Linux system screen: a permission-free state row plus one explicit tap into the system's direct exemption dialog, with the generic optimization screen as fallback; automatic exemption stays unsupported
+- Add a foreground-only update check against the GitHub releases channel: at most once per 24 hours from an app foreground event, a launcher banner plus a system notification only when the notification grant already exists, per-tag dismissal, a browser hand-off to the release page, and silent typed failures (ADR-0038); no background scheduling and no silent self-update
+- Add an assisted in-app update flow (ADR-0039): the banner's Install action opens a popup with determinate download progress, speed, and a time estimate; the APK streams into the app cache with its SHA-256 computed in the same pass, is verified against the channel-reported `sha256` digest, and is staged through the platform `PackageInstaller` — the system still asks for confirmation, and a cancelled install keeps the verified file so the next attempt skips the download. `REQUEST_INSTALL_PACKAGES` joins the reviewed permission allow-list
+
+### Changed
+
+- Publish the release asset from the signed release build with a dedicated keystore pinned in CI (ADR-0040): the workflow fails closed without the signing secrets or when the certificate fingerprint drifts, successive releases can update each other in place, and the shipped APK is no longer debuggable; builds signed before this change need a one-time reinstall
+- Amend the AGENTS.md dependency rule: a well-maintained, vetted dependency is now the preferred default over hand-rolled code, with the existing supply-chain discipline (pinned versions, license check, recorded vetting rationale) unchanged
+
 ## [0.3.0] - 2026-09-19
 
 ### Added
