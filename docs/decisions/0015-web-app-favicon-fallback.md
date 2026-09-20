@@ -6,6 +6,25 @@ Accepted and implemented in `infrastructure/webapp/`, `presentation/`, and their
 tests. UX-verified on the x86_64 UI emulator (API 35) against a
 loopback fixture server; see `docs/test-plan.md`.
 
+**Amended 2026-09-21: the document is read, and the declared icon is the first
+source.** The original decision fetched exactly `/favicon.ico` and refused HTML
+parsing (see the rejected alternative below). A real app proved the convention is
+not enough — measured on the S7 Edge against a NusaShell server on port 10994:
+
+| Request | Answer |
+| --- | --- |
+| `GET /` | `200`, 114 KiB, `<link rel="icon" href="./nusashell-mark.png" type="image/png">` |
+| `GET /nusashell-mark.png` | `200`, 340 281 bytes, 512x512 PNG |
+| `GET /favicon.ico` | `404` |
+
+So the tile kept its monogram while a perfectly decodable icon sat one attribute
+away, and the old 64 KiB cap would have rejected that icon anyway. The fetch now
+reads the app's own document once, resolves its icon declarations same-origin,
+tries them in declaration order, and keeps `/favicon.ico` as the fallback.
+Device-verified on the S7 Edge: the NusaShell tile renders its declared icon
+(screenshots kept outside the repository), and the first-attempt timing below is
+unchanged.
+
 ## Context
 
 A user web app is registered with a name, a guest port, and an **optional**
@@ -36,18 +55,24 @@ request per app, never per render — while allowing the request itself.
 
 ## Decision
 
-1. **One derived URL, never user input.**
-   `WebAppFaviconEndpoint.forDefinition(definition)` returns the definition's own
-   generated origin plus the single `favicon.ico` path, so the request is exactly
+1. **Every request stays on the generated origin, and the user never supplies a
+   URL.** The document read and every icon attempt start from
+   `WebAppDefinition.getEndpointUrl()`, the origin the WebView already loads. The
+   declared URLs come from the app's own document and are resolved against that
+   origin — a declaration that names another scheme, host, or port is refused,
+   not followed (`FaviconLinkParser`) — and the conventional fallback stays
+   exactly `WebAppFaviconEndpoint.forDefinition(definition)`, i.e.
    `http://127.0.0.1:<guestPort>/favicon.ico`. The port is already validated by
    `GuestPortPolicy` (the terminal's reserved port is not a web-app port), and no
    record field, no stored icon token, and no response can change the host,
-   scheme, port, or path.
+   scheme, or port.
 
 2. **`FaviconResponsePolicy` is the whole acceptance rule, and it is pure.**
    Only `200 OK` is usable — a redirect is never followed, and the body of any
-   other status is never read. The payload must fit a 64 KiB byte cap, declared or
-   received. The image must fit a 1024 px source cap, and it is decoded with a
+   other status is never read. The payload must fit a 2 MiB byte cap, declared or
+   received, and the document read its own 256 KiB cap (both raised from 64 KiB
+   on 2026-09-21 after measuring a real declared icon at 340 KiB; see Status).
+   The image must fit a 1024 px source cap, and it is decoded with a
    power-of-two `inSampleSize` that keeps both sides within 256 px (the tile
    plate at 4x), so the decoded bitmap is bounded by the tile rather than by
    whatever the server chose. A bitmap outside that budget is recycled and
@@ -89,7 +114,9 @@ request per app, never per render — while allowing the request itself.
    before the user has ever opened the app, when the endpoint is usually still
    down. Each app is identified by port and edit time, so an image fetched from a
    previous endpoint is dropped rather than shown for the new one, and a result
-   that arrives after the app was edited or deleted is ignored.
+   that arrives after the app was edited or deleted is ignored. One attempt is
+   bounded: at most one document read, three declared candidates, and one
+   conventional path, each under the same policy.
 
 8. **Every failure is silent.**
    Unreachable, timed out, redirected, wrong status, too large, not an image,
@@ -98,11 +125,14 @@ request per app, never per render — while allowing the request itself.
 
 Rejected alternatives:
 
-- **Parse the app's HTML for `<link rel="icon">`.** It is the only way to find a
-  non-default icon path, but it means fetching and parsing an arbitrary document
-  and then trusting a URL inside it, which is exactly the arbitrary-URL boundary
-  this product refuses. `/favicon.ico` is a convention, not a promise; a miss is
-  free.
+- **Parse the app's HTML for `<link rel="icon">`.** Rejected here, then
+  **adopted in bounded form on 2026-09-21** (see Status): a real app showed the
+  convention is not enough, because it declares its icon and answers `404` for
+  `/favicon.ico`. The original objection survives as a constraint rather than a
+  ban — the document is untrusted, so it is read once under its own cap, every
+  declaration is resolved against the generated origin, and a URL that names
+  another scheme, host, or port is refused rather than followed. The fetch never
+  leaves `127.0.0.1:<guestPort>`.
 - **Persist favicons to an app-private cache.** It would survive process death
   and save one loopback request per app, at the cost of storing bytes from an
   endpoint that may have changed, plus eviction, corruption, and lifecycle rules
@@ -124,6 +154,9 @@ Rejected alternatives:
 
 - A registered app with no user image shows its own favicon as soon as its server
   is running, with no user action and no extra permission.
+- The fetch is now up to four bounded requests instead of one — the document, up
+  to three declared candidates, the conventional path — all loopback and all
+  inside the same one-shot attempt. Nothing from the document is stored.
 - The launcher's first attempt usually fails on a device where the app is not
   running; the favicon then appears after the user opens the app once and returns
   to the launcher. A favicon is never fetched again in that process, and an app

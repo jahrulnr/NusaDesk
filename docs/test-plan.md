@@ -103,9 +103,9 @@ and persistence.
 | WA-014 | WebView renderer dies | The surface reports the failure with a retry; a retry starts a fresh renderer |
 | WA-015 | No JavaScript interface | `addJavascriptInterface` is never called for a web app; file and universal file-from-URL access stay disabled |
 | WA-016 | Rotation while an app is open | The surface re-probes and reloads the same generated origin |
-| WA-017 | Web app with no user image, its server running | The tile shows the favicon served at exactly `http://127.0.0.1:<port>/favicon.ico`, for a PNG and for a real multi-size ICO |
+| WA-017 | Web app with no user image, its server running | The tile shows the icon the app's own document declares (same-origin only) and, when it declares none, the favicon served at exactly `http://127.0.0.1:<port>/favicon.ico` — for a PNG, for a real multi-size ICO, and for a declared PNG over the old cap |
 | WA-018 | Web app with a user image | The user's image stays on the tile and the favicon is **never requested** — the user's choice is primary |
-| WA-019 | Favicon missing, `404`, redirected, oversized, over the byte cap, or not an image | The tile keeps its monogram; no error, toast, or state change is shown |
+| WA-019 | Favicon missing, `404`, redirected, oversized, over the byte cap, or not an image — including a declared icon that is over the cap or names another origin | The tile keeps its monogram; no error, toast, or state change is shown |
 | WA-020 | Endpoint down when the launcher renders, up when the app is opened | The favicon appears on the launcher after the app surface reports the endpoint reachable, with no app restart |
 | WA-021 | Launcher re-renders (typing in search) | No additional favicon request is made: one request per app, never one per render |
 
@@ -615,13 +615,29 @@ is never committed (`13-evidence-montage.png` for WA-019,
 `16-retry-step4-launcher-favicon.png` for WA-020). The fixture app was removed and the pushed image deleted afterwards, so
 the emulator's web-app store is empty again.
 
+#### Declared-icon pass (2026-09-21, S7 Edge, API 29, arm64, real guest)
+
+The NusaShell tile on the S7 Edge ran the real case the emulator pass could not:
+a web app whose document declares its icon and whose conventional path is absent.
+
+| Case | Method | Observed result |
+| --- | --- | --- |
+| WA-017 (declared PNG) | `GET /` on port 10994 returns `200`, 114 KiB, with `<link rel="icon" href="./nusashell-mark.png">`; `GET /nusashell-mark.png` returns `200`, 340 281 bytes (512x512); `GET /favicon.ico` returns `404` | Tile shows the declared icon (screenshots kept outside the repository); before the change the same tile kept its monogram |
+| WA-020 (retry) | The launcher's first attempt raced the guest's own start-up and answered with the monogram; the tile was then opened once and Back returned to the launcher | The icon appears without an app restart, on the retry the app surface triggers |
+
+The declared PNG is 340 KiB — over the original 64 KiB cap — which is why the
+byte budget moved with the same change. The fetch chain was also replayed on the
+workstation against the same forwarded port: the parser resolves exactly
+`http://127.0.0.1:10994/nusashell-mark.png` from the real document.
+
 **Not covered by this pass.** The reachability retry is triggered by the app's own
 surface, which needs an unlocked tile; the emulator's app-private `READY`
 snapshot (see the method note above) provided that, so the path is covered on the
 emulator but not on a device that really runs the runtime. The stale-result guard
 (app edited or deleted while a fetch is in flight) and the platform decode of a
 malformed image are covered by inspection and by the emulator cases above, not by
-a dedicated run. No favicon case was run on the arm64 device.
+a dedicated run. The arm64 gap this pass left was closed on the S7 Edge on
+2026-09-21 (declared-icon pass above).
 
 The curated **install** itself also ran for real on the same emulator during this
 session: `Start setup` completed download → digest verification → safe extraction

@@ -44,17 +44,69 @@ public class WebAppFaviconFetcherTest {
     private static final int SHORT_TIMEOUT_MILLIS = 400;
 
     @Test
-    public void requestsExactlyTheAppsOwnFaviconPathOnLoopback() throws Exception {
-        try (TestServer server = TestServer.start(TestServer.ok(new byte[] {1, 2, 3}))) {
+    public void theDeclaredIconIsPreferredOverTheConventionalPath() throws Exception {
+        byte[] icon = new byte[] {9, 9, 9};
+        try (TestServer server = TestServer.start(TestServer.routes(
+                "/", TestServer.html("<html><head><link rel=\"icon\" "
+                        + "href=\"./nusashell-mark.png\" type=\"image/png\"></head></html>"),
+                "/nusashell-mark.png", TestServer.ok(icon),
+                "/favicon.ico", TestServer.ok(new byte[] {7, 7})))) {
+            FakeDecoder decoder = new FakeDecoder(new WebAppFaviconFetcher.Size(512, 512));
+
+            fetcher(decoder).fetch(webApp(server.port()));
+
+            // The fake decoder never yields an image, so the declared icon is
+            // tried first and the conventional path is still the fallback: the
+            // declaration decides the ORDER, which is what the fix is about.
+            assertEquals(3, server.requestCount());
+            assertEquals("GET / HTTP/1.1", server.requestLineAt(0));
+            assertEquals("GET /nusashell-mark.png HTTP/1.1", server.requestLineAt(1));
+            assertEquals("GET /favicon.ico HTTP/1.1", server.requestLineAt(2));
+            assertEquals("both candidates reach the decoder", 2, decoder.decodeCalls.get());
+            assertEquals("the fallback's bytes are the last decode", 2, decoder.decodedLength);
+        }
+    }
+
+    @Test
+    public void withoutADeclarationTheConventionalPathIsStillTried() throws Exception {
+        try (TestServer server = TestServer.start(TestServer.routes(
+                "/", TestServer.html("<html><head><title>no icon here</title></head></html>"),
+                "/favicon.ico", TestServer.ok(new byte[] {1, 2, 3})))) {
             FakeDecoder decoder = new FakeDecoder(new WebAppFaviconFetcher.Size(32, 32));
 
             fetcher(decoder).fetch(webApp(server.port()));
 
-            assertEquals(1, server.requestCount());
-            assertEquals("GET /favicon.ico HTTP/1.1", server.firstRequestLine());
-            assertEquals(1, decoder.boundsCalls.get());
-            assertEquals(1, decoder.decodeCalls.get());
+            assertEquals(2, server.requestCount());
+            assertEquals("GET /favicon.ico HTTP/1.1", server.requestLineAt(1));
             assertEquals(3, decoder.decodedLength);
+        }
+    }
+
+    @Test
+    public void aCrossOriginDeclarationIsNeverFollowed() throws Exception {
+        try (TestServer server = TestServer.start(TestServer.routes(
+                "/", TestServer.html("<link rel=\"icon\" href=\"http://example.com/evil.png\">"),
+                "/favicon.ico", TestServer.ok(new byte[] {4, 5})))) {
+            FakeDecoder decoder = new FakeDecoder(new WebAppFaviconFetcher.Size(16, 16));
+
+            fetcher(decoder).fetch(webApp(server.port()));
+
+            assertEquals("only the app's own origin is ever asked", 2, server.requestCount());
+            assertEquals("GET /favicon.ico HTTP/1.1", server.requestLineAt(1));
+        }
+    }
+
+    @Test
+    public void aDocumentThatCannotBeReadStillFallsBackToTheConventionalPath() throws Exception {
+        try (TestServer server = TestServer.start(TestServer.routes(
+                "/favicon.ico", TestServer.ok(new byte[] {7})))) {
+            FakeDecoder decoder = new FakeDecoder(new WebAppFaviconFetcher.Size(16, 16));
+
+            fetcher(decoder).fetch(webApp(server.port()));
+
+            assertEquals("the document 404s, the fallback answers", 2, server.requestCount());
+            assertEquals("GET /favicon.ico HTTP/1.1", server.requestLineAt(1));
+            assertEquals(1, decoder.decodedLength);
         }
     }
 
@@ -102,7 +154,12 @@ public class WebAppFaviconFetcherTest {
 
             assertNull(fetcher(decoder).fetch(webApp(server.port())));
 
-            assertEquals("a redirect must not become a second request", 1, server.requestCount());
+            // The document and the conventional path both answer 302: neither is
+            // followed, so the redirect target is never requested and nothing
+            // reaches the decoder.
+            assertEquals("a redirect must never be followed into another request",
+                    2, server.requestCount());
+            assertEquals("GET /favicon.ico HTTP/1.1", server.requestLineAt(1));
             assertEquals(0, decoder.decodeCalls.get());
         }
     }
@@ -266,7 +323,7 @@ public class WebAppFaviconFetcherTest {
     private static final class TestServer implements Closeable {
 
         interface Responder {
-            void respond(OutputStream out) throws IOException;
+            void respond(String requestLine, OutputStream out) throws IOException;
         }
 
         private final ServerSocket serverSocket;
@@ -299,8 +356,44 @@ public class WebAppFaviconFetcherTest {
             }
         }
 
+        /** Answers by request path; anything else is 404. */
+        static Responder routes(Object... pairs) {
+            java.util.Map<String, Responder> byPath = new java.util.LinkedHashMap<>();
+            for (int i = 0; i + 1 < pairs.length; i += 2) {
+                byPath.put((String) pairs[i], (Responder) pairs[i + 1]);
+            }
+            return (requestLine, out) -> {
+                Responder inner = byPath.get(pathOf(requestLine));
+                if (inner == null) {
+                    writeHead(out, "404 Not Found", "Content-Length: 0\r\n");
+                    out.flush();
+                    return;
+                }
+                inner.respond(requestLine, out);
+            };
+        }
+
+        /** A document response, so the fetcher can read its icon declarations. */
+        static Responder html(String body) {
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            return (requestLine, out) -> {
+                writeHead(out, "200 OK", "Content-Length: " + bytes.length + "\r\n"
+                        + "Content-Type: text/html; charset=utf-8\r\n");
+                out.write(bytes);
+                out.flush();
+            };
+        }
+
+        static String pathOf(String requestLine) {
+            if (requestLine == null) {
+                return "";
+            }
+            String[] parts = requestLine.split(" ");
+            return parts.length >= 2 ? parts[1] : "";
+        }
+
         static Responder ok(byte[] body) {
-            return out -> {
+            return (requestLine, out) -> {
                 writeHead(out, "200 OK", "Content-Length: " + body.length + "\r\n"
                         + "Content-Type: image/png\r\n");
                 out.write(body);
@@ -309,14 +402,14 @@ public class WebAppFaviconFetcherTest {
         }
 
         static Responder status(int code, String reason) {
-            return out -> {
+            return (requestLine, out) -> {
                 writeHead(out, code + " " + reason, "Content-Length: 0\r\n");
                 out.flush();
             };
         }
 
         static Responder declaredLength(int declaredBytes) {
-            return out -> {
+            return (requestLine, out) -> {
                 writeHead(out, "200 OK", "Content-Length: " + declaredBytes + "\r\n"
                         + "Content-Type: image/png\r\n");
                 out.flush();
@@ -324,7 +417,7 @@ public class WebAppFaviconFetcherTest {
         }
 
         static Responder undeclaredBody(int bodyBytes) {
-            return out -> {
+            return (requestLine, out) -> {
                 writeHead(out, "200 OK", "Content-Type: image/png\r\n");
                 byte[] chunk = new byte[8 * 1024];
                 int written = 0;
@@ -337,7 +430,7 @@ public class WebAppFaviconFetcherTest {
         }
 
         static Responder neverAnswers() {
-            return out -> {
+            return (requestLine, out) -> {
                 try {
                     Thread.sleep(10_000);
                 } catch (InterruptedException interrupted) {
@@ -361,17 +454,21 @@ public class WebAppFaviconFetcherTest {
         }
 
         String firstRequestLine() {
+            return requestLineAt(0);
+        }
+
+        String requestLineAt(int index) {
             synchronized (requestLines) {
-                return requestLines.isEmpty() ? "" : requestLines.get(0);
+                return index < requestLines.size() ? requestLines.get(index) : "";
             }
         }
 
         private void serve(Responder responder) {
             while (!closed) {
                 try (Socket socket = serverSocket.accept()) {
-                    readRequestHead(socket);
+                    String requestLine = readRequestHead(socket);
                     try (OutputStream out = socket.getOutputStream()) {
-                        responder.respond(out);
+                        responder.respond(requestLine, out);
                     }
                 } catch (IOException expected) {
                     // The client disconnected or the server was closed mid-answer.
@@ -382,18 +479,19 @@ public class WebAppFaviconFetcherTest {
             }
         }
 
-        private void readRequestHead(Socket socket) throws IOException {
+        private String readRequestHead(Socket socket) throws IOException {
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
             String requestLine = reader.readLine();
             if (requestLine == null) {
-                return;
+                return "";
             }
             requestLines.add(requestLine.trim());
             String line;
             while ((line = reader.readLine()) != null && !line.isEmpty()) {
                 // Headers are read so the client's request is fully consumed.
             }
+            return requestLine.trim();
         }
 
         @Override

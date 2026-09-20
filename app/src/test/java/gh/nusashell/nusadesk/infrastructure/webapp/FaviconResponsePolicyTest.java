@@ -126,11 +126,19 @@ public class FaviconResponsePolicyTest {
 
     @Test
     public void theCapsAreTheDeclaredBudgets() {
-        assertEquals(64 * 1024, FaviconResponsePolicy.MAX_RESPONSE_BYTES);
+        // Raised from 64 KiB after measuring the real NusaShell tile: the icon it
+        // declares is a 512x512 PNG of 340 KiB, so the old cap rejected exactly
+        // the image the app publishes (2026-09-21). The document read has its own
+        // budget because a page is not an image.
+        assertEquals(2 * 1024 * 1024, FaviconResponsePolicy.MAX_RESPONSE_BYTES);
+        assertEquals(256 * 1024, FaviconResponsePolicy.MAX_DOCUMENT_BYTES);
         assertEquals(1_024, FaviconResponsePolicy.MAX_SOURCE_DIMENSION);
         assertEquals(256, FaviconResponsePolicy.TARGET_MAX_DIMENSION);
         assertTrue("the source cap must be reachable by the downsample rule",
                 FaviconResponsePolicy.MAX_SOURCE_DIMENSION
                         <= FaviconResponsePolicy.TARGET_MAX_DIMENSION * 8);
+        assertTrue("the document budget stays below the image budget",
+                FaviconResponsePolicy.MAX_DOCUMENT_BYTES
+                        < FaviconResponsePolicy.MAX_RESPONSE_BYTES);
     }
 }

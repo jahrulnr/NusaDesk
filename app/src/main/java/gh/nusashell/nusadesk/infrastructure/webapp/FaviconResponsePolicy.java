@@ -22,8 +22,23 @@ package gh.nusashell.nusadesk.infrastructure.webapp;
  */
 public final class FaviconResponsePolicy {
 
-    /** Largest favicon payload accepted, in bytes. A favicon is not a photo. */
-    public static final int MAX_RESPONSE_BYTES = 64 * 1024;
+    /**
+     * Largest image payload accepted, in bytes. A favicon is not a photo, but a
+     * real one is not tiny either: the NusaShell tile this rule was measured
+     * against serves a 512×512 PNG of 340 KiB (2026-09-21), so a 64 KiB cap
+     * rejected exactly the icon the app declares. The decoded size is bounded
+     * separately ({@link #MAX_SOURCE_DIMENSION}, {@link #MAX_BITMAP_BYTES}), so
+     * this only bounds what is read from the socket.
+     */
+    public static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+    /**
+     * Largest HTML document accepted, in bytes. The document is read for one
+     * reason — to find the icon links it declares — and a page can be large
+     * (the same app's page is 114 KiB), so this is its own, still bounded,
+     * budget rather than the image cap.
+     */
+    public static final int MAX_DOCUMENT_BYTES = 256 * 1024;
     /** Largest source image accepted, in pixels on either side. */
     public static final int MAX_SOURCE_DIMENSION = 1024;
     /** Largest decoded image kept, in pixels on either side; the tile plate at 4x. */

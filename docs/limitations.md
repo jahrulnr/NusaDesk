@@ -632,12 +632,19 @@ Uninstalling the Android app removes app-specific runtime and state. A future ba
 
 Loopback limits reachability but does not provide authentication. Target apps with sensitive APIs must use an application token or a host proxy. WebView must be restricted to the owned origin and must not expose a general-purpose Android bridge to downloaded web content.
 
-### Web-app favicon fallback (ADR-0015)
+### Web-app favicon fallback (ADR-0015, amended 2026-09-21)
 
-A launcher tile without a user-picked image asks the app's own endpoint for exactly `http://127.0.0.1:<guestPort>/favicon.ico`. The limitations are deliberate:
+A launcher tile without a user-picked image reads the app's own document once for
+its icon declarations (`<link rel="icon">` and friends) and asks only for the URLs
+that resolve to `http://127.0.0.1:<guestPort>/`; the conventional `/favicon.ico`
+remains the fallback. The limitations are deliberate:
 
-- **One path, no discovery.** There is no HTML parsing for `<link rel="icon">`, because that would mean trusting a URL found inside an arbitrary document. A server that publishes its icon only under another path shows a monogram.
-- **Whatever the platform decoder accepts.** The payload is decoded with `BitmapFactory`, so a vector or otherwise undecodable "favicon" (for example SVG served at that path) falls back to the monogram.
+- **Same-origin discovery only.** The document is untrusted input: a declaration
+  that names another scheme, host, or port is refused, not followed, and at most
+  three declared candidates are tried. There is no `<base>` handling, no CSS or
+  script parsing, and no URL from any other source.
+- **Whatever the platform decoder accepts.** The payload is decoded with `BitmapFactory`, so a vector or otherwise undecodable "favicon" (for example an SVG, including a declared one) falls back to the monogram.
+- **Bounded reads, not a browser.** The document read stops at 256 KiB and an image at 2 MiB; the image must fit a 1024 px source cap and decodes downsampled to 256 px.
 - **Not persisted.** The decoded image lives in memory for the life of the app process; there is no disk cache, so it is fetched once per app per process.
 - **One retry, on a real event.** The launcher's first attempt usually happens before the app's server is running. A missing favicon is retried only when the app's own surface proves the endpoint answers, so an app that is never opened keeps its monogram.
 - **Never fetched for an app with a user image.** The user's own pick is primary and is not replaced, and no request is made in that case.

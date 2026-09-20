@@ -295,13 +295,15 @@ flowchart TD
 
 - The endpoint is generated from the validated port and is never user input, so
   a registered app cannot become an arbitrary-navigation surface. The favicon is
-  derived from that same origin plus one fixed path, never from a stored field.
+  derived from that same origin — the document's own icon declarations, resolved
+  same-origin, then one fixed conventional path — never from a stored field.
 - Port `22022` is reserved for the terminal; two apps cannot share a port.
 - The stored icon is an opaque `content://` token whose read permission the form
   persisted; it always wins over a favicon. A token that cannot be resolved falls
   back to the favicon and then to a monogram.
-- A favicon response is untrusted: `200` only, no redirects, a 64 KiB byte cap, a
-  1024 px source cap, a decode downsampled to 256 px, and silence on any failure.
+- A favicon response is untrusted: `200` only, no redirects, a 2 MiB image byte
+  cap (256 KiB for the document read that declares the icons), a 1024 px source
+  cap, a decode downsampled to 256 px, and silence on any failure.
 - A different loopback port is a different origin and is blocked, not handed to
   the system browser, so one registered app cannot reach another app's server.
 - Reachability is not health: the surface never claims the app is working.

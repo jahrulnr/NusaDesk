@@ -10,18 +10,26 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * One bounded fetch of a registered web app's own favicon, made before the
  * launcher tile renders it.
  *
- * <p>The request goes to exactly one URL — {@link WebAppFaviconEndpoint} derives
- * it from the definition's generated origin — with explicit connect and read
- * timeouts, no redirect following, no cache, and {@code Connection: close}. The
- * body is read through a hard byte cap, and the bytes only become a tile image
- * if {@link FaviconResponsePolicy} accepts the response and
- * {@link BitmapFactory} actually decodes it, downsampled so the bitmap's memory
- * is bounded by the tile rather than by whatever the server sent.</p>
+ * <p>Every request stays on the app's generated origin: the app's own document
+ * is read once, bounded, for the icon URLs it declares
+ * ({@link FaviconLinkParser}, same-origin only), those candidates are tried in
+ * declaration order, and {@link WebAppFaviconEndpoint#forDefinition} remains the
+ * conventional fallback — so an app whose icon lives at a declared path is no
+ * longer missed just because {@code /favicon.ico} is absent (ADR-0048). Each
+ * request uses explicit connect and read timeouts, no redirect following, no
+ * cache, and {@code Connection: close}. Every body is read through a hard byte
+ * cap, and the bytes only become a tile image if {@link FaviconResponsePolicy}
+ * accepts the response and {@link BitmapFactory} actually decodes it,
+ * downsampled so the bitmap's memory is bounded by the tile rather than by
+ * whatever the server sent.</p>
  *
  * <p>Every failure — unreachable, timed out, redirected, wrong status, too
  * large, not an image, undecodable — is the same answer: {@code null}. A tile
@@ -115,13 +123,61 @@ public final class WebAppFaviconFetcher {
     /**
      * Fetches one app's favicon once.
      *
+     * <p>Two sources, in order: the icon URLs the app's own document declares
+     * ({@code <link rel="icon">} and friends, same-origin only — the convention
+     * {@code /favicon.ico} is often absent, which is what kept real tiles on
+     * their monogram), then {@code /favicon.ico} itself as the conventional
+     * fallback. Every attempt obeys the same policy; the first image that
+     * decodes wins, and a document that cannot be read simply means the fallback
+     * is tried.</p>
+     *
      * @param definition the registered app; its port is already validated
-     * @return the decoded, dimension-bounded image, or {@code null} when the
-     *         endpoint has no usable favicon
+     * @return the decoded, dimension-bounded image, or {@code null} when neither
+     *         source has a usable favicon
      * @throws IllegalArgumentException when no definition is given
      */
     public Bitmap fetch(WebAppDefinition definition) {
-        String url = WebAppFaviconEndpoint.forDefinition(definition);
+        if (definition == null) {
+            throw new IllegalArgumentException("definition must not be null");
+        }
+        String origin = definition.getEndpointUrl();
+        for (String declared : declaredIconUrls(origin)) {
+            Bitmap image = fetchImage(declared);
+            if (image != null) {
+                return image;
+            }
+        }
+        return fetchImage(WebAppFaviconEndpoint.forDefinition(definition));
+    }
+
+    /**
+     * Reads the app's own document and returns the same-origin icon URLs it
+     * declares. A document that is unreachable, non-200, oversized, or without a
+     * usable declaration yields no candidates — never an error.
+     */
+    private List<String> declaredIconUrls(String origin) {
+        HttpURLConnection connection = null;
+        try {
+            connection = open(origin);
+            if (!FaviconResponsePolicy.isUsableStatus(connection.getResponseCode())) {
+                return Collections.emptyList();
+            }
+            byte[] document = readBounded(connection, FaviconResponsePolicy.MAX_DOCUMENT_BYTES);
+            return document == null
+                    ? Collections.emptyList()
+                    : FaviconLinkParser.iconUrls(
+                            new String(document, StandardCharsets.UTF_8), origin);
+        } catch (IOException | RuntimeException failure) {
+            return Collections.emptyList();
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /** One bounded image fetch: status, byte cap, dimensions, and decode. */
+    private Bitmap fetchImage(String url) {
         HttpURLConnection connection = null;
         try {
             connection = open(url);
@@ -133,7 +189,7 @@ public final class WebAppFaviconFetcher {
             if (!FaviconResponsePolicy.isWithinByteBudget(declaredLength, 0)) {
                 return null;
             }
-            byte[] bytes = readBounded(connection);
+            byte[] bytes = readBounded(connection, FaviconResponsePolicy.MAX_RESPONSE_BYTES);
             if (bytes == null
                     || !FaviconResponsePolicy.isWithinByteBudget(declaredLength, bytes.length)) {
                 return null;
@@ -173,15 +229,15 @@ public final class WebAppFaviconFetcher {
      * Reads the body through the byte cap.
      *
      * @return the payload, or {@code null} when the server sent more than
-     *         {@link FaviconResponsePolicy#MAX_RESPONSE_BYTES}
+     *         {@code capBytes}
      */
-    private static byte[] readBounded(HttpURLConnection connection) throws IOException {
+    private static byte[] readBounded(HttpURLConnection connection, int capBytes) throws IOException {
         try (InputStream stream = connection.getInputStream()) {
             ByteArrayOutputStream collected = new ByteArrayOutputStream();
             byte[] buffer = new byte[READ_BUFFER_BYTES];
             int read;
             while ((read = stream.read(buffer)) != -1) {
-                if (collected.size() + read > FaviconResponsePolicy.MAX_RESPONSE_BYTES) {
+                if (collected.size() + read > capBytes) {
                     return null;
                 }
                 collected.write(buffer, 0, read);

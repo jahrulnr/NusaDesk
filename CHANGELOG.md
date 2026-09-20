@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The launcher tile now uses the icon a web app declares in its own document
+  (`<link rel="icon">` and friends, same-origin only, at most three candidates)
+  before the conventional `/favicon.ico`, which many apps do not serve: the
+  NusaShell tile declares a 512x512 PNG of 340 KiB and answers `404` for
+  `/favicon.ico`, so the tile kept its monogram while a perfectly decodable icon
+  sat one attribute away. The byte caps were raised to match that measurement —
+  2 MiB for an image, 256 KiB for the document read — while the decoded bitmap
+  stays bounded by the tile. Device-verified on the S7 Edge: the NusaShell tile
+  shows its declared icon (ADR-0015 amendment)
+
 ## [0.6.1] - 2026-09-21
+
+### Fixed
+
+- Fix the banner's Install action (ADR-0039 wiring): the update check parsed the
+  release asset — HTTPS URL, channel digest, size — but nothing ever persisted
+  it, so every Install tap answered "The channel did not report the APK over
+  HTTPS, so the in-app install cannot start" and only the browser hand-off
+  worked. The coordinator now records the asset from the check result; a device
+  run confirms the dialog proceeds to the download ("v0.6.0 • 14.5 MB") with the
+  recorded digest matching the published asset, and a wiring guard pins the call
 
 ## [0.6.0] - 2026-09-21
 
@@ -46,13 +68,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fix the banner's Install action (ADR-0039 wiring): the update check parsed the
-  release asset — HTTPS URL, channel digest, size — but nothing ever persisted
-  it, so every Install tap answered "The channel did not report the APK over
-  HTTPS, so the in-app install cannot start" and only the browser hand-off
-  worked. The coordinator now records the asset from the check result; a device
-  run confirms the dialog proceeds to the download ("v0.6.0 • 14.5 MB") with the
-  recorded digest matching the published asset, and a wiring guard pins the call
 - Fix the stored workspace on Android 10 and for the in-app picker (ADR-0047):
   a `picked-path` choice read back as "no workspace" because the store's restore
   only understood SAF tree document ids, and the Android 10 card ignored a
