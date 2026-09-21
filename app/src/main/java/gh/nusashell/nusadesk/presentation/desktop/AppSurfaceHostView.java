@@ -21,7 +21,8 @@ import java.util.List;
  *
  * <p>The bar is deliberately small and contextual: a way back to the launcher,
  * the surface title, and — only for a surface that really has app-level actions
- * — one options button. It carries no session chrome, because Linux is
+ * — one options button. A user web app uses that menu for edit and internal tab
+ * actions. It carries no session chrome, because Linux is
  * background infrastructure: an app surface says nothing about the session, and
  * the launcher owns the single readiness statement (ADR-0013).</p>
  *
@@ -34,11 +35,24 @@ public final class AppSurfaceHostView extends LinearLayout {
     /** One entry in the surface's options menu. */
     public static final class MenuAction {
         private final int titleRes;
+        private final CharSequence title;
         private final Runnable action;
 
         public MenuAction(int titleRes, Runnable action) {
             this.titleRes = titleRes;
+            this.title = null;
             this.action = action;
+        }
+
+        /** Dynamic title variant used for runtime-created web-app tabs. */
+        public MenuAction(CharSequence title, Runnable action) {
+            this.titleRes = 0;
+            this.title = title;
+            this.action = action;
+        }
+
+        private CharSequence title(Context context) {
+            return title != null ? title : context.getString(titleRes);
         }
     }
 
@@ -111,7 +125,8 @@ public final class AppSurfaceHostView extends LinearLayout {
         }
         PopupMenu menu = new PopupMenu(getContext(), anchor);
         for (int index = 0; index < menuActions.size(); index++) {
-            menu.getMenu().add(Menu.NONE, index, index, menuActions.get(index).titleRes);
+            MenuAction action = menuActions.get(index);
+            menu.getMenu().add(Menu.NONE, index, index, action.title(getContext()));
         }
         menu.setOnMenuItemClickListener(item -> {
             int index = item.getItemId();

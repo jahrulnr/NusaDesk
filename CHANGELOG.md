@@ -5,7 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.4] - 2026-09-22
+
+### Added
+
+- Add internal web-app tabs (ADR-0048): user-gesture `target="_blank"` and
+  `window.open()` requests create bounded child tabs scoped to the registered
+  app, while the root page remains available. The taskbar menu can select or
+  close child tabs, Android Back follows the selected page history before
+  closing a child or returning to the launcher, and background popups remain
+  refused. Every tab keeps the app's exact loopback-origin boundary.
 
 ## [0.6.3] - 2026-09-21
 

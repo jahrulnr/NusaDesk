@@ -90,6 +90,7 @@ import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
 import gh.nusashell.nusadesk.presentation.update.UpdateInstallDialog;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppFormView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
+import gh.nusashell.nusadesk.presentation.webapp.WebAppTabStack;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
 import gh.nusashell.nusadesk.presentation.widget.InstallPhaseSnapshot;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceFolderBrowserDialog;
@@ -466,6 +467,16 @@ public final class MainActivity extends Activity {
                 && systemScreen != null && systemScreen.navigateBack()) {
             return true;
         }
+        if (activeWebAppId != null) {
+            WebAppSurfaceView surface = webAppSurfaces.get(activeWebAppId);
+            if (surface != null && surface.handleBack()) {
+                WebAppDefinition definition = definitionFor(activeWebAppId);
+                if (definition != null) {
+                    renderWebAppMenu(definition, surface);
+                }
+                return true;
+            }
+        }
         if (activeDestination == DesktopDestination.HOME && activeWebAppId == null) {
             return false;
         }
@@ -692,9 +703,33 @@ public final class MainActivity extends Activity {
             other.setVisibility(other == surface ? View.VISIBLE : View.GONE);
         }
         appSurfaceHost.setAppTitle(definition.getDisplayName());
-        appSurfaceHost.setMenuActions(Collections.singletonList(
-                new AppSurfaceHostView.MenuAction(
-                        R.string.webapp_menu_edit, () -> openWebAppForm(definition))));
+        renderWebAppMenu(definition, surface);
+    }
+
+    /** Renders edit plus the live internal tabs for the active web app. */
+    private void renderWebAppMenu(WebAppDefinition definition, WebAppSurfaceView surface) {
+        List<AppSurfaceHostView.MenuAction> actions = new ArrayList<>();
+        actions.add(new AppSurfaceHostView.MenuAction(
+                R.string.webapp_menu_edit, () -> openWebAppForm(definition)));
+        for (WebAppTabStack.Tab tab : surface.getTabs()) {
+            String tabId = tab.getId();
+            String tabTitle = tab.isRoot()
+                    ? getString(R.string.webapp_tab_main)
+                    : surface.getTabTitle(tabId);
+            if (tabId.equals(surface.getSelectedTabId())) {
+                tabTitle = getString(R.string.webapp_tab_current, tabTitle);
+            }
+            String finalTitle = tabTitle;
+            actions.add(new AppSurfaceHostView.MenuAction(
+                    getString(R.string.webapp_tab_open, finalTitle),
+                    () -> surface.selectTab(tabId)));
+            if (!tab.isRoot()) {
+                actions.add(new AppSurfaceHostView.MenuAction(
+                        getString(R.string.webapp_tab_close, finalTitle),
+                        () -> surface.closeTab(tabId)));
+            }
+        }
+        appSurfaceHost.setMenuActions(actions);
     }
 
     /**
@@ -915,8 +950,17 @@ public final class MainActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT));
         }
-        surface.bind(definition, probeExecutor);
-        return surface;
+        WebAppSurfaceView activeSurface = surface;
+        activeSurface.setOnTabListener((tabs, selectedTabId) -> {
+            if (id.equals(activeWebAppId) && activeSurface == webAppSurfaces.get(id)) {
+                WebAppDefinition current = definitionFor(id);
+                if (current != null) {
+                    renderWebAppMenu(current, activeSurface);
+                }
+            }
+        });
+        activeSurface.bind(definition, probeExecutor);
+        return activeSurface;
     }
 
     /** Removes a deleted app's retained surface and releases its WebView. */

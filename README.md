@@ -185,6 +185,8 @@ runtime requirements.
 - Open each app from its own launcher tile.
 - Reachability checks before loading the app surface.
 - Clear unavailable, failed, and loaded states.
+- User-initiated new windows stay inside bounded tabs for that app, with the
+  root page always reachable from the taskbar and Android Back (ADR-0048).
 
 ### Quiet background runtime
 

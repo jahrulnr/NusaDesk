@@ -108,6 +108,12 @@ and persistence.
 | WA-019 | Favicon missing, `404`, redirected, oversized, over the byte cap, or not an image — including a declared icon that is over the cap or names another origin | The tile keeps its monogram; no error, toast, or state change is shown |
 | WA-020 | Endpoint down when the launcher renders, up when the app is opened | The favicon appears on the launcher after the app surface reports the endpoint reachable, with no app restart |
 | WA-021 | Launcher re-renders (typing in search) | No additional favicon request is made: one request per app, never one per render |
+| WA-022 | User-gesture `target="_blank"` or `window.open()` | A child tab opens inside the same web-app surface; the root page is not replaced |
+| WA-023 | Select root after a child tab opens | The root WebView and its page state become visible again without reloading the app surface |
+| WA-024 | Android Back on a child tab | WebView history is consumed first; when exhausted, the child closes and the previous tab becomes selected |
+| WA-025 | `window.close()` from a child tab | Only that child tab closes; the root tab cannot be closed |
+| WA-026 | Background/script popup or fifth child popup | The request is refused; existing tabs and the root page remain unchanged |
+| WA-027 | Child opens another loopback port or external HTTPS link | The other loopback origin is blocked; external HTTPS leaves through the system browser |
 
 ### Regression checks tied to shipped defects
 

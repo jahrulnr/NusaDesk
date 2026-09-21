@@ -80,7 +80,7 @@
     <!-- App surface task bar: one compact bar with a way back and the surface
          title. A web app surface additionally carries its own app actions. -->
     <string name="taskbar_home_desc">Back to all apps</string>
-    <string name="taskbar_more_desc">App options</string>
+    <string name="taskbar_more_desc">App options and tabs</string>
 
     <!-- Terminal app surface -->
     <string name="terminal_loading">Loading terminal…</string>
@@ -168,6 +168,10 @@
     <string name="webapp_delete_confirm_action">Remove</string>
     <string name="webapp_cancel">Cancel</string>
     <string name="webapp_menu_edit">Edit app…</string>
+    <string name="webapp_tab_main">Main page</string>
+    <string name="webapp_tab_current">Current: %1$s</string>
+    <string name="webapp_tab_open">Open %1$s</string>
+    <string name="webapp_tab_close">Close %1$s</string>
 
     <!-- Web app surface: the app's own page, loaded only after its loopback
          endpoint answers, with honest loading and unreachable states. -->

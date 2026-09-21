@@ -3,11 +3,13 @@ package gh.nusashell.nusadesk.presentation.webapp;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Message;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.webkit.RenderProcessGoneDetail;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -27,6 +29,11 @@ import gh.nusashell.nusadesk.infrastructure.runtimehost.WebViewFailureListener;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppReadinessObserver;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppWebViewBoundary;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -70,8 +77,15 @@ public final class WebAppSurfaceView extends FrameLayout {
         void onEndpointReachable(WebAppDefinition definition);
     }
 
+    /** Receives tab creation, selection, and close events on the UI thread. */
+    public interface TabListener {
+        void onTabsChanged(List<WebAppTabStack.Tab> tabs, String selectedTabId);
+    }
+
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final WebAppReadinessObserver observer = new WebAppReadinessObserver();
+    private final WebAppTabStack tabStack = new WebAppTabStack();
+    private final Map<String, WebView> tabWebViews = new LinkedHashMap<>();
 
     private FrameLayout viewContainer;
     private ScrollView statePanel;
@@ -83,11 +97,13 @@ public final class WebAppSurfaceView extends FrameLayout {
     private WebAppDefinition definition;
     private WebAppWebViewBoundary boundary;
     private ExecutorService probeExecutor;
+    /** Alias for the permanent root tab, retained for existing surface logic. */
     private WebView webView;
     private State state = State.PROBING;
     private String failureDetail;
     private boolean released;
     private ReachabilityListener reachabilityListener;
+    private TabListener tabListener;
 
     public WebAppSurfaceView(Context context) {
         super(context);
@@ -126,6 +142,80 @@ public final class WebAppSurfaceView extends FrameLayout {
         this.reachabilityListener = listener;
     }
 
+    /** Receives tab changes so the shell can render a tab switcher. */
+    public void setOnTabListener(TabListener listener) {
+        this.tabListener = listener;
+        notifyTabsChanged();
+    }
+
+    /** Returns an immutable snapshot of this app's live tabs. UI thread only. */
+    public List<WebAppTabStack.Tab> getTabs() {
+        return tabStack.tabs();
+    }
+
+    /** Returns the selected tab id. UI thread only. */
+    public String getSelectedTabId() {
+        return tabStack.selectedTabId();
+    }
+
+    /** Returns a display title for a tab, falling back to its stable id. */
+    public String getTabTitle(String tabId) {
+        if (WebAppTabStack.ROOT_TAB_ID.equals(tabId) && definition != null) {
+            return definition.getDisplayName();
+        }
+        WebView selected = tabWebViews.get(tabId);
+        if (selected != null && selected.getTitle() != null
+                && !selected.getTitle().trim().isEmpty()) {
+            return selected.getTitle();
+        }
+        return tabId == null ? "" : tabId;
+    }
+
+    /** Selects a live tab and switches its WebView visibility. UI thread only. */
+    public boolean selectTab(String tabId) {
+        if (!tabStack.select(tabId)) {
+            return false;
+        }
+        showSelectedTab();
+        notifyTabsChanged();
+        return true;
+    }
+
+    /** Closes a child tab. The root tab is permanent. UI thread only. */
+    public boolean closeTab(String tabId) {
+        if (tabId == null || WebAppTabStack.ROOT_TAB_ID.equals(tabId)
+                || !tabStack.contains(tabId)) {
+            return false;
+        }
+        WebView child = tabWebViews.get(tabId);
+        boolean closed = tabStack.close(tabId);
+        if (!closed) {
+            return false;
+        }
+        destroyTabWebView(tabId, child);
+        showSelectedTab();
+        notifyTabsChanged();
+        return true;
+    }
+
+    /**
+     * Applies the surface Back contract: page history first, then child-tab
+     * close, then false when the root has no history and the shell should return
+     * to the launcher. UI thread only.
+     */
+    public boolean handleBack() {
+        WebView selected = tabWebViews.get(tabStack.selectedTabId());
+        if (selected != null && selected.canGoBack()) {
+            selected.goBack();
+            return true;
+        }
+        String selectedId = tabStack.selectedTabId();
+        if (!WebAppTabStack.ROOT_TAB_ID.equals(selectedId)) {
+            return closeTab(selectedId);
+        }
+        return false;
+    }
+
     /**
      * Binds this surface to one registered app and starts its readiness
      * observation. A surface that is already showing this exact app keeps its
@@ -143,6 +233,10 @@ public final class WebAppSurfaceView extends FrameLayout {
             throw new IllegalArgumentException("executor must not be null");
         }
         boolean sameApp = definition.equals(this.definition);
+        if (!sameApp) {
+            closeAllChildTabs();
+            destroyWebView();
+        }
         this.definition = definition;
         this.boundary = new WebAppWebViewBoundary(definition);
         this.probeExecutor = executor;
@@ -160,6 +254,7 @@ public final class WebAppSurfaceView extends FrameLayout {
         }
         // A retry starts from a clean renderer: a crashed or blocked page must
         // not be reused.
+        closeAllChildTabs();
         destroyWebView();
         startProbe();
     }
@@ -210,14 +305,26 @@ public final class WebAppSurfaceView extends FrameLayout {
             return;
         }
         if (webView == null) {
-            webView = new WebView(getContext());
-            current.applySettings(webView);
-            webView.setWebViewClient(new SurfaceWebViewClient(
-                    current.newWebViewClient(externalLinkHandler(), failureListener())));
+            webView = createTabWebView(WebAppTabStack.ROOT_TAB_ID, current);
+            tabWebViews.put(WebAppTabStack.ROOT_TAB_ID, webView);
             viewContainer.addView(webView, new LayoutParams(
                     LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         }
         webView.loadUrl(current.getLoadUrl());
+        showSelectedTab();
+        notifyTabsChanged();
+    }
+
+    /** Creates one WebView with the same boundary and window policy as its root. */
+    private WebView createTabWebView(String tabId, WebAppWebViewBoundary current) {
+        WebView created = new WebView(getContext());
+        current.applySettings(created);
+        created.getSettings().setSupportMultipleWindows(true);
+        created.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
+        created.setWebViewClient(new SurfaceWebViewClient(
+                current.newWebViewClient(externalLinkHandler(), failureListener(tabId))));
+        created.setWebChromeClient(new SurfaceWebChromeClient(tabId, current));
+        return created;
     }
 
     /**
@@ -241,26 +348,49 @@ public final class WebAppSurfaceView extends FrameLayout {
      * navigation or a dead renderer is reported instead of leaving a silent
      * blank page behind.
      */
-    private WebViewFailureListener failureListener() {
+    private WebViewFailureListener failureListener(String tabId) {
+        if (WebAppTabStack.ROOT_TAB_ID.equals(tabId)) {
+            return new WebViewFailureListener() {
+                @Override
+                public void onLoadError(int errorCode, String description, String failingUrl) {
+                    showFailure(description);
+                }
+
+                @Override
+                public void onHttpError(int statusCode, String failingUrl) {
+                    showFailure("HTTP " + statusCode);
+                }
+
+                @Override
+                public void onBlockedNavigation(String url) {
+                    showFailure(getContext().getString(R.string.webapp_state_blocked));
+                }
+
+                @Override
+                public void onRenderProcessGone() {
+                    showFailure(getContext().getString(R.string.webapp_state_crashed));
+                }
+            };
+        }
         return new WebViewFailureListener() {
             @Override
             public void onLoadError(int errorCode, String description, String failingUrl) {
-                showFailure(description);
+                closeTab(tabId);
             }
 
             @Override
             public void onHttpError(int statusCode, String failingUrl) {
-                showFailure("HTTP " + statusCode);
+                closeTab(tabId);
             }
 
             @Override
             public void onBlockedNavigation(String url) {
-                showFailure(getContext().getString(R.string.webapp_state_blocked));
+                closeTab(tabId);
             }
 
             @Override
             public void onRenderProcessGone() {
-                showFailure(getContext().getString(R.string.webapp_state_crashed));
+                closeTab(tabId);
             }
         };
     }
@@ -274,6 +404,104 @@ public final class WebAppSurfaceView extends FrameLayout {
             state = State.FAILED;
             render();
         });
+    }
+
+    /**
+     * Owns the WebView window contract. Every accepted child is a tab in the
+     * same exact-origin surface, never an untracked overlay or Activity.
+     */
+    private final class SurfaceWebChromeClient extends WebChromeClient {
+        private final String ownerTabId;
+        private final WebAppWebViewBoundary webBoundary;
+
+        SurfaceWebChromeClient(String ownerTabId, WebAppWebViewBoundary webBoundary) {
+            this.ownerTabId = ownerTabId;
+            this.webBoundary = webBoundary;
+        }
+
+        @Override
+        public boolean onCreateWindow(
+                WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+            if (released || !isUserGesture || tabStack.isFull()
+                    || !tabStack.contains(ownerTabId) || resultMsg == null
+                    || !(resultMsg.obj instanceof WebView.WebViewTransport)) {
+                return false;
+            }
+            WebAppTabStack.Tab tab = tabStack.addTab();
+            if (tab == null) {
+                return false;
+            }
+            WebView child = createTabWebView(tab.getId(), webBoundary);
+            tabWebViews.put(tab.getId(), child);
+            viewContainer.addView(child, new LayoutParams(
+                    LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+            showSelectedTab();
+            WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+            transport.setWebView(child);
+            try {
+                resultMsg.sendToTarget();
+            } catch (RuntimeException deliveryFailed) {
+                closeTab(tab.getId());
+                return false;
+            }
+            notifyTabsChanged();
+            return true;
+        }
+
+        @Override
+        public void onCloseWindow(WebView window) {
+            String tabId = tabIdFor(window);
+            if (tabId != null && !WebAppTabStack.ROOT_TAB_ID.equals(tabId)) {
+                closeTab(tabId);
+            }
+        }
+
+        @Override
+        public void onReceivedTitle(WebView view, String title) {
+            notifyTabsChanged();
+        }
+    }
+
+    private String tabIdFor(WebView target) {
+        if (target == null) {
+            return null;
+        }
+        for (Map.Entry<String, WebView> entry : tabWebViews.entrySet()) {
+            if (entry.getValue() == target) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    private void showSelectedTab() {
+        String selectedId = tabStack.selectedTabId();
+        for (Map.Entry<String, WebView> entry : tabWebViews.entrySet()) {
+            entry.getValue().setVisibility(
+                    selectedId.equals(entry.getKey()) ? VISIBLE : GONE);
+        }
+    }
+
+    private void notifyTabsChanged() {
+        if (tabListener != null) {
+            tabListener.onTabsChanged(
+                    Collections.unmodifiableList(new ArrayList<>(tabStack.tabs())),
+                    tabStack.selectedTabId());
+        }
+    }
+
+    private void destroyTabWebView(String tabId, WebView target) {
+        WebView child = target == null ? tabWebViews.get(tabId) : target;
+        tabWebViews.remove(tabId);
+        if (child == null) {
+            return;
+        }
+        viewContainer.removeView(child);
+        child.stopLoading();
+        child.setWebChromeClient(null);
+        child.setWebViewClient(null);
+        child.loadUrl("about:blank");
+        child.destroy();
     }
 
     /**
@@ -373,15 +601,22 @@ public final class WebAppSurfaceView extends FrameLayout {
     }
 
     private void destroyWebView() {
-        if (webView == null) {
-            return;
+        for (String tabId : new ArrayList<>(tabWebViews.keySet())) {
+            destroyTabWebView(tabId, null);
         }
-        viewContainer.removeView(webView);
-        webView.stopLoading();
-        webView.loadUrl("about:blank");
-        webView.setWebViewClient(null);
-        webView.destroy();
         webView = null;
+        tabStack.select(WebAppTabStack.ROOT_TAB_ID);
+    }
+
+    private void closeAllChildTabs() {
+        for (WebAppTabStack.Tab tab : new ArrayList<>(tabStack.tabs())) {
+            if (!tab.isRoot()) {
+                tabStack.close(tab.getId());
+                destroyTabWebView(tab.getId(), null);
+            }
+        }
+        tabStack.select(WebAppTabStack.ROOT_TAB_ID);
+        notifyTabsChanged();
     }
 
     @Override
