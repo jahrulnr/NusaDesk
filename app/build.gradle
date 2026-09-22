@@ -10,8 +10,8 @@ android {
         applicationId 'gh.nusashell.nusadesk'
         minSdk 29
         targetSdk 37
-        versionCode 12
-        versionName '0.6.4'
+        versionCode 13
+        versionName '0.7.0'
     }
 
     // Release signing (ADR-0040). The published GitHub/F-Droid APK must be
@@ -46,6 +46,13 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // QA builds (-PqaDebuggable=true) keep the release signing config
+            // but make the APK debuggable, so a device probe can reach the
+            // app's own data directory through run-as while the installed
+            // release keeps its signature and guest data. Never published.
+            if (project.hasProperty('qaDebuggable')) {
+                debuggable true
+            }
             if (releaseKeystorePath) {
                 signingConfig signingConfigs.release
             }

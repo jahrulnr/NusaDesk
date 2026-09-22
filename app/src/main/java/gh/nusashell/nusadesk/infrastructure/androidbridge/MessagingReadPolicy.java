@@ -17,11 +17,10 @@ import java.util.Map;
  * deterministically and reported through {@link EncodedRows#isTruncated()},
  * never silently.</p>
  *
- * <p>SMS send and phone call are side-effecting operations and are out of
- * scope for this read slice: {@link #SIDE_EFFECTS_SUPPORTED} is {@code false}
- * and {@link #sideEffectUnsupported(String, String)} maps the reserved method
- * names to a typed {@code action-unsupported} error so the bridge can never
- * dispatch them.</p>
+ * <p>The side-effecting operations ({@code sms.send}, {@code phone.call}) are
+ * not part of this read policy at all: they live in the comms capability
+ * module, which owns their runtime grants and dispatch. This class only ever
+ * bounds reads.</p>
  */
 public final class MessagingReadPolicy {
     /** Hard cap on result rows for every list read. */
@@ -49,15 +48,6 @@ public final class MessagingReadPolicy {
     /** Row-array byte budget: the protocol frame limit minus the envelope margin. */
     public static final int ROWS_BUDGET_CHARS =
             AndroidCapabilityProtocol.MAX_FRAME_BYTES - ENVELOPE_MARGIN_CHARS;
-
-    /** Side-effecting operations are deliberately not implemented in this slice. */
-    public static final boolean SIDE_EFFECTS_SUPPORTED = false;
-    /** Reserved bridge method for sending an SMS; maps to a typed unsupported result. */
-    public static final String SIDE_EFFECT_METHOD_SMS_SEND = "sms.send";
-    /** Reserved bridge method for placing a phone call; maps to a typed unsupported result. */
-    public static final String SIDE_EFFECT_METHOD_PHONE_CALL = "phone.call";
-    /** Typed error returned for any side-effecting method in this slice. */
-    public static final String SIDE_EFFECT_UNSUPPORTED_ERROR = "action-unsupported";
 
     private MessagingReadPolicy() {
     }
@@ -142,27 +132,6 @@ public final class MessagingReadPolicy {
             }
         }
         return truncate(cleaned.toString(), MAX_SNIPPET_CHARS);
-    }
-
-    /** True for the reserved side-effecting methods that this slice must not dispatch. */
-    public static boolean isSideEffectMethod(String method) {
-        return SIDE_EFFECT_METHOD_SMS_SEND.equals(method)
-                || SIDE_EFFECT_METHOD_PHONE_CALL.equals(method);
-    }
-
-    /**
-     * Typed unsupported result for a reserved side-effecting method. The
-     * bridge reports {@code action-unsupported} instead of silently ignoring
-     * the request or fabricating a send/call.
-     *
-     * @throws IllegalArgumentException when {@code method} is not a known side-effect method
-     */
-    public static AndroidCapabilityProtocol.Response sideEffectUnsupported(
-            String id, String method) {
-        if (!isSideEffectMethod(method)) {
-            throw new IllegalArgumentException("not a side-effect method: " + method);
-        }
-        return AndroidCapabilityProtocol.Response.error(id, SIDE_EFFECT_UNSUPPORTED_ERROR);
     }
 
     /**

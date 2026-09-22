@@ -5,14 +5,15 @@ import org.junit.Test;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
  * Locks the read-only shape of the messaging/telephony/contacts slice: no
- * source interface and no adapter exposes a side-effecting method, and the
- * reserved side-effect bridge methods map to a typed unsupported result.
+ * source interface and no adapter exposes a side-effecting method. The
+ * side-effecting bridge methods ({@code sms.send}, {@code phone.call}) are
+ * not part of this surface — they live in the comms capability module with
+ * their own permission checks.
  */
 public class MessagingReadOnlySurfaceTest {
 
@@ -31,19 +32,6 @@ public class MessagingReadOnlySurfaceTest {
             AndroidTelephonyInfoSource.class,
             AndroidTelephonyCellSource.class
     };
-
-    @Test
-    public void reservedSideEffectMethodsMapToTypedUnsupportedResult() {
-        assertFalse(MessagingReadPolicy.SIDE_EFFECTS_SUPPORTED);
-        for (String method : new String[]{"sms.send", "phone.call"}) {
-            assertTrue(MessagingReadPolicy.isSideEffectMethod(method));
-            AndroidCapabilityProtocol.Response response =
-                    MessagingReadPolicy.sideEffectUnsupported("1", method);
-            assertFalse(response.isOk());
-            assertEquals(MessagingReadPolicy.SIDE_EFFECT_UNSUPPORTED_ERROR,
-                    response.getError());
-        }
-    }
 
     @Test
     public void sourceInterfacesExposeOnlyReadMethods() {

@@ -15,6 +15,11 @@ import java.util.Map;
  * read for real data; the bridge encodes only a {@link State#READING} snapshot
  * with fields and reports every other state as a typed error. The class is
  * Android-free so the protocol and its tests share one contract.</p>
+ *
+ * <p>A reading may be marked {@link #isStale() stale}: it is then a real
+ * last-known platform fix returned because no fresh fix arrived inside the
+ * read window, never a fabricated one. {@link #getAgeMillis()} carries the
+ * fix age when it can be computed from the platform fix time.</p>
  */
 public final class LocationSnapshot {
     public enum State {
@@ -43,11 +48,13 @@ public final class LocationSnapshot {
     private final Double altitudeMeters;
     private final Double speedMetersPerSecond;
     private final Double bearingDegrees;
+    private final boolean stale;
+    private final Long ageMillis;
 
     private LocationSnapshot(State state, double latitude, double longitude,
                              double accuracyMeters, String provider, long timestampUtcMillis,
                              Double altitudeMeters, Double speedMetersPerSecond,
-                             Double bearingDegrees) {
+                             Double bearingDegrees, boolean stale, Long ageMillis) {
         this.state = state;
         this.latitude = latitude;
         this.longitude = longitude;
@@ -57,6 +64,8 @@ public final class LocationSnapshot {
         this.altitudeMeters = altitudeMeters;
         this.speedMetersPerSecond = speedMetersPerSecond;
         this.bearingDegrees = bearingDegrees;
+        this.stale = stale;
+        this.ageMillis = ageMillis;
     }
 
     /**
@@ -75,6 +84,30 @@ public final class LocationSnapshot {
                                            double accuracyMeters, String provider,
                                            long timestampUtcMillis, Double altitudeMeters,
                                            Double speedMetersPerSecond, Double bearingDegrees) {
+        return reading(latitude, longitude, accuracyMeters, provider, timestampUtcMillis,
+                altitudeMeters, speedMetersPerSecond, bearingDegrees, false, null);
+    }
+
+    /**
+     * A real last-known platform fix returned because no fresh fix arrived
+     * inside the read window. Same required values as {@link #reading};
+     * {@code ageMillis} is the fix age, or {@code null} when the platform
+     * fix carries no time to compute it from.
+     */
+    public static LocationSnapshot staleReading(double latitude, double longitude,
+                                                double accuracyMeters, String provider,
+                                                long timestampUtcMillis, Double altitudeMeters,
+                                                Double speedMetersPerSecond,
+                                                Double bearingDegrees, Long ageMillis) {
+        return reading(latitude, longitude, accuracyMeters, provider, timestampUtcMillis,
+                altitudeMeters, speedMetersPerSecond, bearingDegrees, true, ageMillis);
+    }
+
+    private static LocationSnapshot reading(double latitude, double longitude,
+                                            double accuracyMeters, String provider,
+                                            long timestampUtcMillis, Double altitudeMeters,
+                                            Double speedMetersPerSecond, Double bearingDegrees,
+                                            boolean stale, Long ageMillis) {
         if (!Double.isFinite(latitude) || latitude < -90.0 || latitude > 90.0) {
             throw new IllegalArgumentException("latitude must be finite in [-90, 90]");
         }
@@ -100,39 +133,42 @@ public final class LocationSnapshot {
                 || bearingDegrees < 0.0 || bearingDegrees > 360.0)) {
             throw new IllegalArgumentException("bearingDegrees must be finite in [0, 360]");
         }
+        if (ageMillis != null && ageMillis < 0L) {
+            throw new IllegalArgumentException("ageMillis must be non-negative");
+        }
         return new LocationSnapshot(State.READING, latitude, longitude, accuracyMeters,
                 provider, timestampUtcMillis, altitudeMeters, speedMetersPerSecond,
-                bearingDegrees);
+                bearingDegrees, stale, ageMillis);
     }
 
     /** No location grant and no recorded denial; the later consent flow may ask. */
     public static LocationSnapshot permissionRequired() {
         return new LocationSnapshot(State.PERMISSION_REQUIRED, 0.0, 0.0, 0.0, "unknown",
-                -1L, null, null, null);
+                -1L, null, null, null, false, null);
     }
 
     /** No location grant and the user previously denied it. */
     public static LocationSnapshot permissionDenied() {
         return new LocationSnapshot(State.PERMISSION_DENIED, 0.0, 0.0, 0.0, "unknown",
-                -1L, null, null, null);
+                -1L, null, null, null, false, null);
     }
 
     /** The location manager, provider, or device location switch is absent/disabled. */
     public static LocationSnapshot unavailable() {
         return new LocationSnapshot(State.UNAVAILABLE, 0.0, 0.0, 0.0, "unknown",
-                -1L, null, null, null);
+                -1L, null, null, null, false, null);
     }
 
     /** No fix arrived before the bounded read deadline. */
     public static LocationSnapshot timeout() {
         return new LocationSnapshot(State.TIMEOUT, 0.0, 0.0, 0.0, "unknown",
-                -1L, null, null, null);
+                -1L, null, null, null, false, null);
     }
 
     /** The platform rejected or corrupted the read; never fabricate values. */
     public static LocationSnapshot error() {
         return new LocationSnapshot(State.ERROR, 0.0, 0.0, 0.0, "unknown",
-                -1L, null, null, null);
+                -1L, null, null, null, false, null);
     }
 
     public State getState() {
@@ -179,6 +215,24 @@ public final class LocationSnapshot {
     }
 
     /**
+     * {@code true} when this reading is a last-known fix returned after the
+     * fresh-fix window expired; {@code false} for a live fix. Meaningless
+     * unless {@link State#READING}.
+     */
+    public boolean isStale() {
+        return stale;
+    }
+
+    /**
+     * Age of a stale fix in milliseconds, or {@code null} when the platform
+     * fix carried no time to compute it from. Meaningless unless
+     * {@link State#READING} and {@link #isStale()}.
+     */
+    public Long getAgeMillis() {
+        return ageMillis;
+    }
+
+    /**
      * Flat fields for the RPC response. Only a complete fix has a field
      * representation; other states are reported as typed errors by the
      * request handler and must not look like a real fix here.
@@ -194,6 +248,10 @@ public final class LocationSnapshot {
         fields.put("longitude", longitude);
         fields.put("accuracy_meters", accuracyMeters);
         fields.put("timestamp_utc_ms", timestampUtcMillis);
+        fields.put("stale", stale);
+        if (ageMillis != null) {
+            fields.put("age_ms", ageMillis);
+        }
         if (altitudeMeters != null) {
             fields.put("altitude_meters", altitudeMeters);
         }

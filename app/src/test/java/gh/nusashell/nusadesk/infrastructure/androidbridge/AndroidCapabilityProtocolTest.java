@@ -129,6 +129,30 @@ public class AndroidCapabilityProtocolTest {
     }
 
     @Test
+    public void acceptsParamsAtTheDocumentedBounds() {
+        // The v2 bound: 16 keys, 32-char keys, 8192-char string values. The
+        // rejection cases in rejectsUnboundedOrMalformedParams sit one unit
+        // past each of these, so this case pins the boundary from below.
+        String longKey = "k".repeat(
+                AndroidCapabilityProtocol.Request.MAX_PARAM_KEY_CHARS);
+        StringBuilder params = new StringBuilder("{");
+        for (int i = 0; i < AndroidCapabilityProtocol.Request.MAX_PARAM_KEYS - 2; i++) {
+            params.append("\"k").append(i).append("\":1,");
+        }
+        params.append("\"").append(longKey).append("\":\"v\",");
+        params.append("\"big\":\"").append("t".repeat(
+                AndroidCapabilityProtocol.Request.MAX_PARAM_STRING_CHARS)).append("\"}");
+
+        AndroidCapabilityProtocol.Request request = AndroidCapabilityProtocol.decodeRequest(
+                "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\",\"params\":"
+                        + params + "}");
+
+        assertNotNull("params at the documented bounds must decode", request);
+        assertEquals(AndroidCapabilityProtocol.Request.MAX_PARAM_KEYS,
+                request.getParams().size());
+    }
+
+    @Test
     public void aRequestWithoutParamsCarriesAnEmptyMap() {
         AndroidCapabilityProtocol.Request request =
                 AndroidCapabilityProtocol.decodeRequest(
@@ -157,15 +181,17 @@ public class AndroidCapabilityProtocolTest {
                 // unsupported scalar type
                 "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.delete\","
                         + "\"params\":{\"event_id\":1.5}}",
-                // too many keys
+                // too many keys (the bound is MAX_PARAM_KEYS = 16)
                 "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
                         + "\"params\":{\"a\":1,\"b\":1,\"c\":1,\"d\":1,\"e\":1,\"f\":1,"
-                        + "\"g\":1,\"h\":1,\"i\":1}}",
-                // oversized key and oversized string value
+                        + "\"g\":1,\"h\":1,\"i\":1,\"j\":1,\"k\":1,\"l\":1,\"m\":1,"
+                        + "\"n\":1,\"o\":1,\"p\":1,\"q\":1}}",
+                // oversized key and oversized string value (bounds: 32 chars
+                // per key, MAX_PARAM_STRING_CHARS = 8192 chars per string)
                 "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
                         + "\"params\":{\"" + "k".repeat(33) + "\":\"v\"}}",
                 "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
-                        + "\"params\":{\"title\":\"" + "t".repeat(257) + "\"}}",
+                        + "\"params\":{\"title\":\"" + "t".repeat(8193) + "\"}}",
                 // control character in a string value
                 "{\"v\":1,\"id\":\"7\",\"token\":\"x\",\"method\":\"calendar.insert\","
                         + "\"params\":{\"title\":\"two\\nlines\"}}",

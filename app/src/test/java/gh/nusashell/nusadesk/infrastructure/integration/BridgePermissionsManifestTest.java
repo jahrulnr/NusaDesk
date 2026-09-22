@@ -30,7 +30,9 @@ import org.junit.Test;
  * capability is ever exercised is the user's decision. Consequences this test
  * also protects: nothing is requested at launch, special access is never
  * assumed, and component-level capabilities that are a different class of risk
- * (accessibility, notification listener, SMS broadcast trigger) stay out.</p>
+ * stay out except the single reviewed notification listener behind
+ * {@code termux-notification-list} (ADR-0049) — accessibility services and an
+ * SMS broadcast trigger are still forbidden.</p>
  */
 public class BridgePermissionsManifestTest {
 
@@ -104,6 +106,24 @@ public class BridgePermissionsManifestTest {
             "android.permission.SYSTEM_ALERT_WINDOW",
             "android.permission.PACKAGE_USAGE_STATS",
             "android.permission.QUERY_ALL_PACKAGES",
+            // Termux:API parity surface (ADR-0049): one permission set per
+            // capability method, checked per call; special access through
+            // Settings. Rationales sit next to the manifest declarations.
+            "android.permission.VIBRATE",
+            "android.permission.SEND_SMS",
+            "android.permission.CALL_PHONE",
+            "android.permission.SET_WALLPAPER",
+            "android.permission.TRANSMIT_IR",
+            "android.permission.NFC",
+            "android.permission.WRITE_SETTINGS",
+            "android.permission.USE_BIOMETRIC",
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.CHANGE_WIFI_STATE",
+            "android.permission.NEARBY_WIFI_DEVICES",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+            "android.permission.DOWNLOAD_WITHOUT_NOTIFICATION",
+
     };
 
     private static String manifest() throws Exception {
@@ -189,8 +209,15 @@ public class BridgePermissionsManifestTest {
         String manifest = manifest().replaceAll("(?s)<!--.*?-->", "");
         assertFalse("no accessibility service may be declared",
                 manifest.contains("BIND_ACCESSIBILITY_SERVICE"));
-        assertFalse("no notification listener may be declared",
-                manifest.contains("BIND_NOTIFICATION_LISTENER_SERVICE"));
+        // The single reviewed exception is the notification listener behind
+        // termux-notification-list (ADR-0049): the user grants notification
+        // access in Settings, and the platform-held bind permission means only
+        // the system can attach to it. No second listener may appear.
+        assertEquals("only the reviewed notification listener may be declared",
+                1, occurrences(manifest, "BIND_NOTIFICATION_LISTENER_SERVICE"));
+        assertTrue("the listener is the capability service",
+                manifest.contains(
+                        ".infrastructure.androidbridge.CapabilityNotificationListenerService"));
         // A manifest receiver is a background wake-up surface; the single
         // reviewed exception is the opt-in boot trigger (ADR-0037). Anything
         // else — an SMS receive trigger above all — stays out.

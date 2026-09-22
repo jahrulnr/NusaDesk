@@ -65,28 +65,6 @@ public class MessagingReadPolicyTest {
     }
 
     @Test
-    public void sideEffectMethodsAreTypedUnsupportedAndNeverSupported() {
-        assertFalse(MessagingReadPolicy.SIDE_EFFECTS_SUPPORTED);
-        assertTrue(MessagingReadPolicy.isSideEffectMethod("sms.send"));
-        assertTrue(MessagingReadPolicy.isSideEffectMethod("phone.call"));
-        assertFalse(MessagingReadPolicy.isSideEffectMethod("sms.list"));
-        assertFalse(MessagingReadPolicy.isSideEffectMethod(null));
-
-        AndroidCapabilityProtocol.Response send =
-                MessagingReadPolicy.sideEffectUnsupported("9", "sms.send");
-        assertFalse(send.isOk());
-        assertEquals(MessagingReadPolicy.SIDE_EFFECT_UNSUPPORTED_ERROR, send.getError());
-        assertEquals("9", send.getId());
-
-        AndroidCapabilityProtocol.Response call =
-                MessagingReadPolicy.sideEffectUnsupported("10", "phone.call");
-        assertFalse(call.isOk());
-        assertEquals(MessagingReadPolicy.SIDE_EFFECT_UNSUPPORTED_ERROR, call.getError());
-        assertThrows(IllegalArgumentException.class,
-                () -> MessagingReadPolicy.sideEffectUnsupported("11", "sms.list"));
-    }
-
-    @Test
     public void encodeRowsIsSingleLineBoundedAndOrdered() {
         List<Map<String, Object>> rows = new ArrayList<>();
         Map<String, Object> row = new LinkedHashMap<>();
@@ -127,9 +105,13 @@ public class MessagingReadPolicyTest {
     @Test
     public void encodeRowsDropsTrailingRowsThatExceedTheByteBudget() {
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (int i = 0; i < 20; i++) {
+        // Rows sized against the live budget (the 64 KiB frame minus the
+        // envelope margin): a quarter-budget row plus its JSON overhead
+        // leaves room for only three, so six rows must drop the last three.
+        int rowChars = MessagingReadPolicy.ROWS_BUDGET_CHARS / 4;
+        for (int i = 0; i < 6; i++) {
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("x", repeat('x', 2_000));
+            row.put("x", repeat('x', rowChars));
             rows.add(row);
         }
         MessagingReadPolicy.EncodedRows encoded = MessagingReadPolicy.encodeRows(rows);

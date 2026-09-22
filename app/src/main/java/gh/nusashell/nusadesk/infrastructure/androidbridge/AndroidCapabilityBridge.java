@@ -118,6 +118,7 @@ public final class AndroidCapabilityBridge implements AutoCloseable {
     private final CalendarSource calendarSource;
     private final CalendarWriter calendarWriter;
     private final AndroidUsbPassThrough usbPassThrough;
+    private final List<CapabilityModule> modules;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final Semaphore connectionSlots = new Semaphore(MAX_CONNECTIONS);
     private final ExecutorService connectionExecutor = Executors.newFixedThreadPool(
@@ -183,6 +184,7 @@ public final class AndroidCapabilityBridge implements AutoCloseable {
         this.calendarSource = new AndroidCalendarSource(this.context);
         this.calendarWriter = new AndroidCalendarWriter(this.context);
         this.usbPassThrough = new AndroidUsbPassThrough(this.context);
+        this.modules = CapabilityModules.build(this.context);
     }
 
     /** Start the session bridge; each bridge instance is single-use and never replaces a live token. */
@@ -198,7 +200,8 @@ public final class AndroidCapabilityBridge implements AutoCloseable {
                 nextToken, new AndroidBatteryStatusProvider(context), sensorSource,
                 locationSource, contactsSource, callLogSource, smsSource,
                 telephonyInfoSource, telephonyCellSource, locationStream,
-                mediaController, calendarSource, calendarWriter, usbPassThrough);
+                mediaController, calendarSource, calendarWriter, usbPassThrough,
+                modules);
         ServerSocket nextServer = new ServerSocket();
         try {
             // Explicit IPv4 loopback: binding wildcard or an IPv6-any address
@@ -483,6 +486,13 @@ public final class AndroidCapabilityBridge implements AutoCloseable {
      * both {@link #close()} paths (running and never-started).
      */
     private void closeCapabilitySources() {
+        for (CapabilityModule module : modules) {
+            try {
+                module.close();
+            } catch (RuntimeException ignored) {
+                // One module's close failure must not strand the others.
+            }
+        }
         sensorSource.close();
         locationSource.close();
         locationStream.close();

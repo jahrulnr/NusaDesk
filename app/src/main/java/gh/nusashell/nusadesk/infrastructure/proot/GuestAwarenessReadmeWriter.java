@@ -147,86 +147,24 @@ public final class GuestAwarenessReadmeWriter {
         updated |= ensureFile(bin.resolve(GuestAndroidCliWriter.CLI_FILE_NAME),
                 GuestAndroidCliWriter.scriptContent(version)
                         .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
-        updated |= ensureTermuxCompat(bin, docs, version);
+        updated |= ensureTermuxCompat(activeRootfs, version);
         return updated ? Result.UPDATED : Result.UNCHANGED;
     }
 
     /**
-     * Install the Termux command compatibility layer (ADR-0036): one generated
-     * script per supported Termux command name, plus its documentation page.
-     * The files are owned by this writer like every other generated guest
-     * file, so an app update refreshes them and manual edits are overwritten.
-     * A script this writer once installed but that is no longer in
-     * {@link GuestTermuxCompatWriter#COMMANDS} is swept, so a shrinking command
-     * set cannot leave a stale executable behind.
+     * Install the Termux command compatibility layer (ADR-0036): the shared
+     * python runtime module plus one thin script per supported command, and
+     * the generated documentation page.
+     *
+     * <p>The layer owns its own generated file set (module, scripts, doc, and
+     * the stale-script sweep), so it installs itself through
+     * {@link GuestTermuxCompatWriter#ensure(Path, String)} instead of this
+     * writer duplicating the file list and the modes.</p>
      */
-    private static boolean ensureTermuxCompat(Path bin, Path docs,
-                                              String version) throws IOException {
-        boolean updated = false;
-        for (String command : GuestTermuxCompatWriter.COMMANDS) {
-            updated |= ensureFile(bin.resolve(command),
-                    GuestTermuxCompatWriter.scriptContent(command, version)
-                            .getBytes(StandardCharsets.UTF_8),
-                    CLI_PERMISSIONS);
-        }
-        updated |= ensureFile(docs.resolve("termux-compat.md"),
-                GuestTermuxCompatWriter.docContent(version).getBytes(StandardCharsets.UTF_8),
-                README_PERMISSIONS);
-        updated |= sweepStaleTermuxCompat(bin);
-        return updated;
-    }
-
-    /**
-     * Delete a previously generated Termux-compat script whose command is no
-     * longer declared. Only a regular (never a symlink) file whose name starts
-     * with {@code termux-} and whose content carries this writer's marker is
-     * eligible, so a user file or another tool's file is never touched.
-     */
-    private static boolean sweepStaleTermuxCompat(Path bin) throws IOException {
-        Set<String> declared = new HashSet<>(Arrays.asList(GuestTermuxCompatWriter.COMMANDS));
-        boolean removed = false;
-        try (DirectoryStream<Path> entries = Files.newDirectoryStream(bin)) {
-            for (Path entry : entries) {
-                String name = entry.getFileName().toString();
-                if (!name.startsWith("termux-") || declared.contains(name)) {
-                    continue;
-                }
-                if (!Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
-                    continue;
-                }
-                if (!carriesTermuxCompatMarker(entry)) {
-                    continue;
-                }
-                Files.delete(entry);
-                removed = true;
-            }
-        }
-        return removed;
-    }
-
-    private static boolean carriesTermuxCompatMarker(Path file) throws IOException {
-        // Open with NOFOLLOW so a symlink swapped in after the check above is
-        // never read through; the marker is only ever in our own regular files.
-        Set<java.nio.file.OpenOption> options = new HashSet<>();
-        options.add(StandardOpenOption.READ);
-        options.add(LinkOption.NOFOLLOW_LINKS);
-        try (java.nio.channels.SeekableByteChannel channel =
-                     Files.newByteChannel(file, options);
-             BufferedReader reader = new BufferedReader(
-                     new java.io.InputStreamReader(
-                             java.nio.channels.Channels.newInputStream(channel),
-                             StandardCharsets.UTF_8))) {
-            for (int line = 0; line < 3; line++) {
-                String text = reader.readLine();
-                if (text == null) {
-                    return false;
-                }
-                if (text.contains(GuestTermuxCompatWriter.MARKER)) {
-                    return true;
-                }
-            }
-        }
-        return false;
+    private static boolean ensureTermuxCompat(Path activeRootfs, String version)
+            throws IOException {
+        return GuestTermuxCompatWriter.ensure(activeRootfs, version)
+                == Result.UPDATED;
     }
 
     /** Canonical README text, public for focused tests and documentation tooling. */

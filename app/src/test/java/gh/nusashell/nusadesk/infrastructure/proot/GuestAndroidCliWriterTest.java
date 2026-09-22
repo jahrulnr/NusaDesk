@@ -67,6 +67,7 @@ public class GuestAndroidCliWriterTest {
         // The verbs and only those verbs.
         assertTrue(content.contains("usage: android-cli [-q] doctor"));
         assertTrue(content.contains(" | status"));
+        assertTrue(content.contains(" | permissions"));
         assertTrue(content.contains(" | sh [args...]"));
         assertTrue(content.contains(" | getprop [name]"));
         assertTrue(content.contains(" | toolbox <applet> [args...]"));
@@ -100,6 +101,27 @@ public class GuestAndroidCliWriterTest {
         assertTrue(content.contains("device su"));
         assertTrue(content.contains("Magisk"));
 
+        // The bridge-backed permissions verb: the shared termux_compat
+        // module does the transport, states come only from
+        // bridge.permissions, hints print the Settings action for every
+        // non-granted entry, and every failure mode is an honest typed
+        // exit (1 typed bridge error, 5 absent/unreachable/malformed).
+        assertTrue(content.contains("bridge.permissions"));
+        assertTrue(content.contains("termux_compat"));
+        assertTrue(content.contains("'/usr/local/lib/nusadesk'"));
+        assertTrue(content.contains("sys.path.insert(0, MODULE_DIR)"));
+        assertTrue(content.contains("ANDROID_CLI_MODULE_DIR"));
+        assertTrue(content.contains("ANDROID_CLI_ENV_FILE"));
+        assertTrue(content.contains("PERMISSION_STATES"));
+        assertTrue(content.contains("  settings: ' + action"));
+        assertTrue(content.contains("'permissions (bridge): ' + count_text(counts)"));
+        assertTrue(content.contains("permission states unknown"));
+        assertTrue(content.contains("grant"));
+        assertTrue(content.contains("states unknown"));
+        assertTrue(content.contains("permission.request"));
+        assertTrue(content.contains("def info(tier, quiet, source='native'):"));
+        assertTrue(content.contains("info(tier_now(), quiet, 'bridge')"));
+
         String lower = content.toLowerCase(java.util.Locale.ROOT);
         assertFalse("no adb client invocation", lower.contains("adb connect")
                 || lower.contains("adb devices") || lower.contains("adb shell"));
@@ -110,7 +132,12 @@ public class GuestAndroidCliWriterTest {
         assertFalse("no os.exec", lower.contains("os.exec"));
         assertFalse("no eval(", lower.contains("eval("));
         assertFalse("no os.popen", lower.contains("os.popen"));
-        assertFalse("no token handling at all", lower.contains("token"));
+        // The token stays out of this script entirely: the shared
+        // termux_compat module is the only component that reads it. Comment
+        // text is stripped first — a comment may name what the module owns,
+        // but no code path may read or print a token.
+        String codeOnly = lower.replaceAll("(?m)#.*$", "");
+        assertFalse("no token handling at all", codeOnly.contains("token"));
     }
 
     @Test
@@ -166,6 +193,11 @@ public class GuestAndroidCliWriterTest {
      * delegation and argv passthrough for every verb, child exit-code
      * propagation with the child's stderr kept, the missing-tool and su
      * typed exits, quiet mode, the doctor report, and usage handling.
+     * A fake {@code termux_compat} module behind
+     * {@code ANDROID_CLI_MODULE_DIR}/{@code ANDROID_CLI_ENV_FILE} covers
+     * the bridge-backed {@code permissions} verb and the doctor summary:
+     * report, typed error, dead bridge, malformed answer, and an absent
+     * module.
      */
     private static String harnessScript() {
         return String.join("\n",
@@ -243,6 +275,52 @@ public class GuestAndroidCliWriterTest {
                 "make_tree(FULL, ['sh', 'toolbox', 'toybox', 'su', 'faketool'])",
                 "make_tree(BARE, ['sh', 'toolbox', 'toybox'])",
                 "os.makedirs(os.path.join(EMPTY, 'bin'), exist_ok=True)",
+                "",
+                "# A fake termux_compat module stands in for the shared bridge",
+                "# runtime: bridge_call replays canned answers or failures so",
+                "# the permissions verb and doctor summary get a live",
+                "# round-trip without a real bridge socket.",
+                "FAKE_TC_DIR = os.path.join(WORK, 'fakelib')",
+                "os.makedirs(FAKE_TC_DIR, exist_ok=True)",
+                "ENVFILE = os.path.join(WORK, 'bridge.env')",
+                "FAKE_TC = (\"import os\\n\"",
+                "           \"class CliError(Exception):\\n\"",
+                "           \"    pass\\n\"",
+                "           \"class BridgeError(Exception):\\n\"",
+                "           \"    pass\\n\"",
+                "           \"def bridge_call(method, params=None, timeout=None):\\n\"",
+                "           \"    if method != 'bridge.permissions':\\n\"",
+                "           \"        raise CliError('unsupported-method')\\n\"",
+                "           \"    mode = os.environ.get('FAKE_TC_MODE', 'ok')\\n\"",
+                "           \"    if mode == 'typed':\\n\"",
+                "           \"        raise BridgeError('fake-typed-error:hint text')\\n\"",
+                "           \"    if mode == 'dead':\\n\"",
+                "           \"        raise CliError('cannot read session env')\\n\"",
+                "           \"    if mode == 'refused':\\n\"",
+                "           \"        raise OSError(111, 'Connection refused')\\n\"",
+                "           \"    if mode == 'malformed':\\n\"",
+                "           \"        return {'permissions': 'bogus-state-string'}\\n\"",
+                "           \"    return {\\n\"",
+                "           \"        'v': 1, 'ok': True,\\n\"",
+                "           \"        'permissions': (\\n\"",
+                "           \"            'android.permission.CAMERA:granted,'\\n\"",
+                "           \"            'android.permission.RECORD_AUDIO:required,'\\n\"",
+                "           \"            'android.permission.SYSTEM_ALERT_WINDOW:denied,'\\n\"",
+                "           \"            'android.permission.FUTURE_PERM:unsupported'),\\n\"",
+                "           \"        'hints': (\\n\"",
+                "           \"            'android.permission.RECORD_AUDIO='\\n\"",
+                "           \"            'android.settings.APPLICATION_DETAILS_SETTINGS,'\\n\"",
+                "           \"            'android.permission.SYSTEM_ALERT_WINDOW='\\n\"",
+                "           \"            'android.settings.action.MANAGE_OVERLAY_PERMISSION,'\\n\"",
+                "           \"            'android.permission.FUTURE_PERM='\\n\"",
+                "           \"            'android.settings.APPLICATION_DETAILS_SETTINGS')}\\n\")",
+                "with open(os.path.join(FAKE_TC_DIR, 'termux_compat.py'), 'w',",
+                "          encoding='utf-8') as handle:",
+                "    handle.write(FAKE_TC)",
+                "with open(ENVFILE, 'w', encoding='utf-8') as handle:",
+                "    handle.write('NUSADESK_ANDROID_BRIDGE_ADDRESS=127.0.0.1\\n')",
+                "PERM_ENV = {'ANDROID_CLI_MODULE_DIR': FAKE_TC_DIR,",
+                "            'ANDROID_CLI_ENV_FILE': ENVFILE}",
                 "",
                 "# status: one machine line on stdout, the info line on stderr.",
                 "rc, out, err = run(['status'], FULL)",
@@ -349,6 +427,82 @@ public class GuestAndroidCliWriterTest {
                 "rc, out, err = run(['doctor'], BARE)",
                 "expect(rc == 0, 'doctor-bare: rc ' + str(rc))",
                 "expect('device su: absent' in out, 'doctor-bare: ' + repr(out))",
+                "",
+                "# permissions: a live bridge answers the declared grant report.",
+                "rc, out, err = run(['permissions'], FULL, PERM_ENV)",
+                "expect(rc == 0, 'permissions: rc ' + str(rc) + ' ' + repr(err))",
+                "expect('tier=app source=bridge device=' in err,",
+                "       'permissions: info ' + repr(err))",
+                "for needle in ('android-cli permissions',",
+                "               'android.permission.CAMERA: granted',",
+                "               'android.permission.RECORD_AUDIO: required'",
+                "               + '  settings: '",
+                "               + 'android.settings.APPLICATION_DETAILS_SETTINGS',",
+                "               'android.permission.SYSTEM_ALERT_WINDOW: denied'",
+                "               + '  settings: '",
+                "               + 'android.settings.action.MANAGE_OVERLAY_PERMISSION',",
+                "               'android.permission.FUTURE_PERM: unsupported',",
+                "               'summary: 1 granted, 1 required, 1 denied,'",
+                "               + ' 1 unsupported',",
+                "               'permission.request'):",
+                "    expect(needle in out, 'permissions: missing ' + needle",
+                "           + ' in ' + repr(out))",
+                "",
+                "# A typed bridge error propagates verbatim at exit 1.",
+                "env = dict(PERM_ENV)",
+                "env['FAKE_TC_MODE'] = 'typed'",
+                "rc, out, err = run(['permissions'], FULL, env)",
+                "expect(rc == 1 and 'fake-typed-error:hint text' in err,",
+                "       'permissions-typed: rc ' + str(rc) + ' ' + repr(err))",
+                "",
+                "# Unreachable and malformed answers are the honest typed 5 -",
+                "# the states are reported unknown, never guessed.",
+                "env = dict(PERM_ENV)",
+                "env['FAKE_TC_MODE'] = 'dead'",
+                "rc, out, err = run(['permissions'], FULL, env)",
+                "expect(rc == 5 and 'permission states unknown' in err",
+                "       and 'cannot read session env' in err,",
+                "       'permissions-dead: rc ' + str(rc) + ' ' + repr(err))",
+                "env = dict(PERM_ENV)",
+                "env['FAKE_TC_MODE'] = 'refused'",
+                "rc, out, err = run(['permissions'], FULL, env)",
+                "expect(rc == 5 and 'permission states unknown' in err,",
+                "       'permissions-refused: rc ' + str(rc) + ' ' + repr(err))",
+                "env = dict(PERM_ENV)",
+                "env['FAKE_TC_MODE'] = 'malformed'",
+                "rc, out, err = run(['permissions'], FULL, env)",
+                "expect(rc == 5 and 'malformed bridge response' in err,",
+                "       'permissions-malformed: rc ' + str(rc) + ' ' + repr(err))",
+                "",
+                "# An absent runtime module is the same honest typed 5.",
+                "rc, out, err = run(['permissions'], FULL,",
+                "                   {'ANDROID_CLI_MODULE_DIR': EMPTY})",
+                "expect(rc == 5 and 'not installed' in err,",
+                "       'permissions-module: rc ' + str(rc) + ' ' + repr(err))",
+                "",
+                "# permissions takes no arguments.",
+                "rc, out, err = run(['permissions', 'extra'], FULL, PERM_ENV)",
+                "expect(rc == 2, 'permissions-args: rc ' + str(rc))",
+                "",
+                "# doctor prints the bridge permission summary after the tier",
+                "# line, with the grant-opening guidance.",
+                "rc, out, err = run(['doctor'], FULL, PERM_ENV)",
+                "expect(rc == 0, 'doctor-perms: rc ' + str(rc) + ' ' + repr(err))",
+                "expect('permissions (bridge): 1 granted, 1 required, 1 denied,'",
+                "       + ' 1 unsupported' in out,",
+                "       'doctor-perms: ' + repr(out))",
+                "expect('permission.request' in out,",
+                "       'doctor-perms: ' + repr(out))",
+                "expect(out.index('tier: app') < out.index('permissions (bridge):'),",
+                "       'doctor-perms: order ' + repr(out))",
+                "",
+                "# No session env: the summary is honestly unknown.",
+                "env = dict(PERM_ENV)",
+                "env['ANDROID_CLI_ENV_FILE'] = os.path.join(WORK, 'absent.env')",
+                "rc, out, err = run(['doctor'], FULL, env)",
+                "expect(rc == 0, 'doctor-noenv: rc ' + str(rc))",
+                "expect('permissions (bridge): no session env - grant states'",
+                "       + ' unknown' in out, 'doctor-noenv: ' + repr(out))",
                 "",
                 "# A missing requested tool is the typed 5 and names the path.",
                 "rc, out, err = run(['toolbox', 'ls'], EMPTY)",

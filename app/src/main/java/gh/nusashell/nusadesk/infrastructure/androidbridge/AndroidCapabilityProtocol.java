@@ -14,7 +14,7 @@ import java.util.Map;
  */
 public final class AndroidCapabilityProtocol {
     public static final long VERSION = 1L;
-    public static final int MAX_FRAME_BYTES = 16 * 1024;
+    public static final int MAX_FRAME_BYTES = 64 * 1024;
 
     private AndroidCapabilityProtocol() {
     }
@@ -22,11 +22,16 @@ public final class AndroidCapabilityProtocol {
     /** One authenticated guest request. */
     public static final class Request {
         /** Max keys in one {@code params} object. */
-        public static final int MAX_PARAM_KEYS = 8;
+        public static final int MAX_PARAM_KEYS = 16;
         /** Max length of one {@code params} key. */
         public static final int MAX_PARAM_KEY_CHARS = 32;
-        /** Max length of one string {@code params} value. */
-        public static final int MAX_PARAM_STRING_CHARS = 256;
+        /**
+         * Max length of one string {@code params} value. Large enough for a
+         * bounded text payload (an SMS body, a notification content, a TTS
+         * phrase, a dialog prefill) while still refusing an unbounded upload;
+         * bulk content travels as a file path, never inline.
+         */
+        public static final int MAX_PARAM_STRING_CHARS = 8192;
 
         private final long version;
         private final String id;

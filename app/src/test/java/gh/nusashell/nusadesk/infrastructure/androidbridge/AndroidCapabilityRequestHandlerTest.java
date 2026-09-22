@@ -328,19 +328,48 @@ public class AndroidCapabilityRequestHandlerTest {
     }
 
     @Test
-    public void sideEffectMethodsMapToActionUnsupportedAndAreNeverDispatched() {
-        AndroidCapabilityRequestHandler handler = handler("right-token", query -> {
+    public void moduleMethodsDispatchAndUnregisteredOnesStayUnsupported() {
+        // Without a registered module the side-effecting names fall through
+        // to the same unsupported-method as any unknown name, and no read
+        // source is touched.
+        AndroidCapabilityRequestHandler bare = handler("right-token", query -> {
             throw new AssertionError("sms source must not be called for sms.send");
         });
-        AndroidCapabilityProtocol.Response smsSend = handler.handle(
-                request("1", "sms.send"));
-        assertFalse(smsSend.isOk());
-        assertEquals("action-unsupported", smsSend.getError());
+        assertError(bare, "1", "sms.send", "unsupported-method");
+        assertError(bare, "2", "phone.call", "unsupported-method");
 
-        AndroidCapabilityProtocol.Response phoneCall = handler.handle(
-                request("2", "phone.call"));
-        assertFalse(phoneCall.isOk());
-        assertEquals("action-unsupported", phoneCall.getError());
+        // With a module registered the same names dispatch to it: they are
+        // advertised in bridge.info, carry the module's declared params, and
+        // the module owns the response.
+        FakeModule module = new FakeModule();
+        AndroidCapabilityRequestHandler handler = handler("right-token", query -> {
+            throw new AssertionError("sms source must not be called for sms.send");
+        }, module);
+        AndroidCapabilityProtocol.Response info = handler.handle(
+                request("3", "bridge.info"));
+        assertTrue(info.isOk());
+        assertTrue(String.valueOf(info.getFields().get("capabilities"))
+                .contains("sms.send"));
+
+        AndroidCapabilityProtocol.Response sent = handler.handle(
+                request("4", "sms.send", "{\"to\":\"123\",\"body\":\"hi\"}"));
+        assertTrue(sent.isOk());
+        assertEquals("sms.send", module.lastMethod);
+        assertEquals("123", module.lastParams.get("to"));
+
+        // Params on a module method that does not declare them are refused
+        // before the module is ever reached.
+        assertParamsError(handler, "5", "module.ping", "{\"x\":1}",
+                "unsupported-parameter");
+        assertEquals(1, module.calls);
+
+        // A declared-params violation is the typed argument error, and a
+        // platform failure inside the module stays a bounded capability
+        // error — neither kills the connection loop.
+        module.failWith = new CapabilityParams.Invalid("bad params");
+        assertError(handler, "6", "sms.send", "invalid-argument");
+        module.failWith = new IllegalStateException("platform detail must not cross");
+        assertError(handler, "7", "sms.send", "capability-unavailable");
     }
 
     @Test
@@ -568,6 +597,58 @@ public class AndroidCapabilityRequestHandlerTest {
                 new FakeLocationStream(), new FakeLiveMediaController(),
                 new FakeCalendarSource(), new FakeCalendarWriter(),
                 new UsbPassThroughSource.Empty());
+    }
+
+    /** Handler with one fake module registered after the built-in methods. */
+    private static AndroidCapabilityRequestHandler handler(String token,
+                                                           ContactsSource contacts,
+                                                           CapabilityModule module) {
+        return new AndroidCapabilityRequestHandler(token, () -> BATTERY,
+                kind -> SensorReading.unavailable(kind.getName()),
+                () -> LocationSnapshot.unavailable(),
+                contacts,
+                query -> CallLogSnapshot.unavailable(),
+                query -> SmsSnapshot.unavailable(),
+                () -> TelephonyDeviceInfo.unavailable(),
+                () -> TelephonyCellInfo.unavailable(),
+                new FakeLocationStream(), new FakeLiveMediaController(),
+                new FakeCalendarSource(), new FakeCalendarWriter(),
+                new UsbPassThroughSource.Empty(), List.of(module));
+    }
+
+    /**
+     * Fake capability module: declares the comms side-effect pair plus one
+     * param-free method, records the last call, and can be scripted to fail.
+     */
+    private static final class FakeModule implements CapabilityModule {
+        int calls;
+        String lastMethod;
+        Map<String, Object> lastParams;
+        RuntimeException failWith;
+
+        @Override
+        public List<String> methods() {
+            return List.of("sms.send", "phone.call", "module.ping");
+        }
+
+        @Override
+        public java.util.Set<String> parameterMethods() {
+            return java.util.Set.of("sms.send", "phone.call");
+        }
+
+        @Override
+        public AndroidCapabilityProtocol.Response handle(
+                AndroidCapabilityProtocol.Request request) {
+            calls++;
+            lastMethod = request.getMethod();
+            lastParams = request.getParams();
+            if (failWith != null) {
+                throw failWith;
+            }
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("handled", true);
+            return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
+        }
     }
 
     private static AndroidCapabilityRequestHandler handler(String token,

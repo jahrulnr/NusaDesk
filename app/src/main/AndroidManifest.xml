@@ -237,15 +237,61 @@
         tools:ignore="QueryAllPackagesPermission" />
 
     <!--
+        Termux:API parity surface (tasks/termux-parity-matrix.md). Every entry
+        here exists because a `termux-*` client command needs it and the user
+        asked for the full Android capability surface to be reachable from the
+        guest. The pattern is unchanged from ADR-0030: one method = one
+        permission set, checked per call, a missing grant is a typed result,
+        and special access goes through Settings instead of a fake dialog.
+    -->
+    <!-- termux-vibrate: normal permission, granted at install. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- termux-sms-send: runtime grant, asked on first use. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- termux-telephony-call: runtime grant, asked on first use. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- termux-wallpaper: normal permission, granted at install. -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <!-- termux-infrared-*: normal permission. The S10e has no IR emitter, so
+         the commands answer typed-absent there; the permission keeps a device
+         with the hardware working without a code change. -->
+    <uses-permission android:name="android.permission.TRANSMIT_IR" />
+    <!-- termux-nfc: normal permission; the reader-mode flow needs the app in
+         the foreground. -->
+    <uses-permission android:name="android.permission.NFC" />
+    <!-- termux-brightness: special access (Settings.System write), opened
+         through the platform Settings screen, never assumed. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- termux-fingerprint: normal permission plus a visible BiometricPrompt. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- termux-wifi-*: connection/scan reads need the location grant the app
+         already holds; these are the wifi state reads and the API 33+ nearby
+         devices gate. Toggling wifi is refused by the platform for third-party
+         apps on API 29+ and the command reports that instead of pretending. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+    <!-- termux-volume / termux-audio-info: normal permission. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- termux-media-player: a foreground service with the media-playback type
+         keeps audio alive while the guest session owns playback. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- termux-download: lets DownloadManager post its own progress without a
+         second notification path. -->
+    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
+    <!-- No READ_MEDIA_*: nothing queries MediaStore image/video/audio —
+         media.scan feeds resolved guest paths to MediaScannerConnection and
+         storage reads go through MANAGE_EXTERNAL_STORAGE + SAF. -->
+
+    <!--
         Not declared here, because they are not plain permissions and each needs
         its own accepted decision:
         - Accessibility service: declared as a <service> with
           BIND_ACCESSIBILITY_SERVICE, and it can read all on-screen content
           including credentials. That is a different class of capability, not
-          an API surface to opt into.
-        - Notification listener: declared as a <service> with
-          BIND_NOTIFICATION_LISTENER_SERVICE plus the user enabling
-          notification access in Settings; it reads every app's notifications.
+          an API surface to opt into. No Termux client command needs it.
         - SMS receive trigger: needs a broadcast receiver component, which
           would add a background wake-up path beyond the single opt-in boot
           receiver the amended autostart contract allows (ADR-0037). READ_SMS
@@ -333,6 +379,71 @@
             android:name=".infrastructure.service.LiveMediaService"
             android:exported="false"
             android:foregroundServiceType="camera|microphone" />
+
+        <!--
+            Foreground capability host (dialog, runtime consent, SAF pickers,
+            share chooser, biometric prompt, speech recognition, NFC reader
+            mode). Transparent and inert on its own: the capability bridge
+            parks exactly one bounded operation and launches this Activity to
+            run it, because the platform only allows those platform APIs to a
+            visible app. No layout, no exported surface, never in recents.
+        -->
+        <activity
+            android:name=".infrastructure.androidbridge.foreground.CapabilityForegroundActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!--
+            Notification listener (termux-notification-list). Inert until the
+            user grants notification access in Settings; the module reports
+            that state as a typed permission result and never pretends to see
+            notifications it cannot. BIND_NOTIFICATION_LISTENER_SERVICE is
+            held by the system, so only the platform can bind it.
+        -->
+        <service
+            android:name=".infrastructure.androidbridge.CapabilityNotificationListenerService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!--
+            Capture foreground service (termux-camera-photo,
+            termux-microphone-record). Started only from the foreground host
+            while the app is visible (the platform's while-in-use rule), owns
+            the camera/microphone device work on one worker, and posts a
+            user-visible notification. No capture artifact is written outside
+            the guest path the command asked for.
+        -->
+        <service
+            android:name=".infrastructure.service.CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone" />
+
+        <!--
+            Media playback foreground service (termux-media-player). Owns one
+            MediaPlayer and keeps audio alive while the guest session drives
+            it, with a user-visible notification and a Stop action.
+        -->
+        <service
+            android:name=".infrastructure.service.MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!--
+            Job scheduler bridge (termux-job-scheduler). The job can only run
+            while the NusaDesk guest session is alive: the service re-checks the
+            published runtime state and records a `session-down` outcome instead
+            of pretending a background run happened. BIND_JOB_SERVICE is held by
+            the system, so only the platform can start it.
+        -->
+        <service
+            android:name=".infrastructure.androidbridge.CommsJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!--
             Opt-in boot start (ADR-0037). Enabled by the user's "Start Linux

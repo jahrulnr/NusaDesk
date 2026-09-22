@@ -26,9 +26,10 @@ import java.util.Map;
  * bridge closes.</p>
  *
  * <p>The messaging/telephony/contacts reads are read-only with fixed
- * {@link MessagingQuery#all()} defaults; the reserved side-effecting methods
- * ({@code sms.send}, {@code phone.call}) map to a typed
- * {@code action-unsupported} and are never dispatched. The location stream is
+ * {@link MessagingQuery#all()} defaults; the side-effecting methods
+ * ({@code sms.send}, {@code phone.call}) are served by a registered
+ * {@link CapabilityModule} with their own per-call permission checks — an
+ * earlier typed {@code action-unsupported} interception is gone. The location stream is
  * a foreground-only pull contract ({@code location.stream.start} /
  * {@code location.stream.poll} / {@code location.stream.stop}) with one fixed
  * bounded request ({@link #LOCATION_STREAM_INTERVAL_MILLIS} ms, fine accuracy
@@ -94,10 +95,23 @@ public final class AndroidCapabilityRequestHandler {
 
     /** Typed error for a method that carries parameters it does not declare. */
     public static final String ERROR_UNSUPPORTED_PARAMETER = "unsupported-parameter";
+    /** Typed error for a params object that violates the method's schema. */
+    public static final String ERROR_INVALID_ARGUMENT = "invalid-argument";
     /** Methods that accept a bounded {@code params} object. */
     private static final java.util.Set<String> PARAMETER_METHODS = java.util.Set.of(
             METHOD_CALENDAR_INSERT, METHOD_CALENDAR_UPDATE, METHOD_CALENDAR_DELETE,
-            METHOD_USB_OPEN);
+            METHOD_USB_OPEN, METHOD_LOCATION);
+
+    /**
+     * Providers {@code location.get} accepts in its {@code provider} param —
+     * the same names the platform and Termux use. An absent param picks a
+     * provider automatically.
+     */
+    private static final java.util.Set<String> LOCATION_PROVIDERS = java.util.Set.of(
+            "gps", "network", "passive");
+    /** Param keys {@code location.get} declares. */
+    private static final java.util.Set<String> LOCATION_PARAM_KEYS = java.util.Set.of(
+            "provider", "request");
 
     /** Stable comma-separated capability list reported by {@code bridge.info}. */
     public static final String CAPABILITIES = METHOD_BATTERY + ","
@@ -127,6 +141,12 @@ public final class AndroidCapabilityRequestHandler {
     private final CalendarSource calendarSource;
     private final CalendarWriter calendarWriter;
     private final UsbPassThroughSource usbSource;
+    /**
+     * Capability domains served after the built-in methods, in registration
+     * order. Empty in the built-in-only construction used by the original
+     * tests; production registers every module the app ships.
+     */
+    private final List<CapabilityModule> modules;
 
     public AndroidCapabilityRequestHandler(String expectedToken,
                                            BatteryStatusSource batterySource,
@@ -142,6 +162,27 @@ public final class AndroidCapabilityRequestHandler {
                                            CalendarSource calendarSource,
                                            CalendarWriter calendarWriter,
                                            UsbPassThroughSource usbSource) {
+        this(expectedToken, batterySource, sensorSource, locationSource, contactsSource,
+                callLogSource, smsSource, telephonyInfoSource, telephonyCellSource,
+                locationStream, mediaController, calendarSource, calendarWriter, usbSource,
+                List.of());
+    }
+
+    public AndroidCapabilityRequestHandler(String expectedToken,
+                                           BatteryStatusSource batterySource,
+                                           SensorReadingSource sensorSource,
+                                           LocationSource locationSource,
+                                           ContactsSource contactsSource,
+                                           CallLogSource callLogSource,
+                                           SmsSource smsSource,
+                                           TelephonyInfoSource telephonyInfoSource,
+                                           TelephonyCellSource telephonyCellSource,
+                                           LocationStreamSession locationStream,
+                                           LiveMediaController mediaController,
+                                           CalendarSource calendarSource,
+                                           CalendarWriter calendarWriter,
+                                           UsbPassThroughSource usbSource,
+                                           List<CapabilityModule> modules) {
         if (expectedToken == null || expectedToken.isEmpty()) {
             throw new IllegalArgumentException("expectedToken must not be blank");
         }
@@ -158,6 +199,10 @@ public final class AndroidCapabilityRequestHandler {
         requireNonNull(calendarSource, "calendarSource");
         requireNonNull(calendarWriter, "calendarWriter");
         requireNonNull(usbSource, "usbSource");
+        if (modules == null) {
+            throw new IllegalArgumentException("modules must not be null");
+        }
+        this.modules = List.copyOf(modules);
         this.expectedToken = expectedToken;
         this.batterySource = batterySource;
         this.sensorSource = sensorSource;
@@ -186,7 +231,7 @@ public final class AndroidCapabilityRequestHandler {
             return AndroidCapabilityProtocol.Response.error(request.getId(), "unauthorized");
         }
         if (!request.getParams().isEmpty()
-                && !PARAMETER_METHODS.contains(request.getMethod())) {
+                && !declaresParameters(request.getMethod())) {
             // Only the methods that declare parameters may carry them; every
             // other method fails closed instead of silently ignoring input.
             return AndroidCapabilityProtocol.Response.error(
@@ -195,7 +240,7 @@ public final class AndroidCapabilityRequestHandler {
         if (METHOD_INFO.equals(request.getMethod())) {
             Map<String, Object> fields = new LinkedHashMap<>();
             fields.put("transport", "tcp-loopback");
-            fields.put("capabilities", CAPABILITIES);
+            fields.put("capabilities", capabilityList());
             fields.put("best_effort", true);
             return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
         }
@@ -268,13 +313,58 @@ public final class AndroidCapabilityRequestHandler {
         if (METHOD_USB_OPEN.equals(request.getMethod())) {
             return usbOpen(request);
         }
-        if (MessagingReadPolicy.isSideEffectMethod(request.getMethod())) {
-            // Reserved side-effecting methods are never dispatched: the
-            // guest gets a typed unsupported result instead of a fake action.
-            return MessagingReadPolicy.sideEffectUnsupported(
-                    request.getId(), request.getMethod());
+        // The side-effecting messaging/telephony methods (sms.send,
+        // phone.call) used to be reserved as typed `action-unsupported`; the
+        // CommsModule now serves them with the real platform path and the
+        // required runtime grants, so the interception is gone rather than
+        // silently shadowing the module.
+        for (CapabilityModule module : modules) {
+            if (!module.methods().contains(request.getMethod())) {
+                continue;
+            }
+            try {
+                return module.handle(request);
+            } catch (CapabilityParams.Invalid invalid) {
+                // A params object that violates the module's declared schema is
+                // a typed argument error, not a capability failure.
+                return AndroidCapabilityProtocol.Response.error(
+                        request.getId(), ERROR_INVALID_ARGUMENT);
+            } catch (RuntimeException e) {
+                // A module must return its own typed error; a thrown platform
+                // failure still stays inside the bridge instead of killing the
+                // connection thread, and never leaks a platform message.
+                return AndroidCapabilityProtocol.Response.error(
+                        request.getId(), "capability-unavailable");
+            }
         }
         return AndroidCapabilityProtocol.Response.error(request.getId(), "unsupported-method");
+    }
+
+    /**
+     * Whether the method accepts a bounded {@code params} object: a built-in
+     * declaring method or one declared by a registered module.
+     */
+    private boolean declaresParameters(String method) {
+        if (PARAMETER_METHODS.contains(method)) {
+            return true;
+        }
+        for (CapabilityModule module : modules) {
+            if (module.parameterMethods().contains(method)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Built-in capabilities plus every registered module method, in order. */
+    private String capabilityList() {
+        StringBuilder list = new StringBuilder(CAPABILITIES);
+        for (CapabilityModule module : modules) {
+            for (String method : module.methods()) {
+                list.append(',').append(method);
+            }
+        }
+        return list.toString();
     }
 
     private AndroidCapabilityProtocol.Response batteryReading(
@@ -741,14 +831,37 @@ public final class AndroidCapabilityRequestHandler {
      * Map one one-shot location read to a bounded protocol response: only a
      * complete fix carries fields; permission, unavailable, timeout, and error
      * states are typed errors, and a platform exception never crosses the
-     * wire. The location source checks the foreground grant itself; this
-     * handler never prompts for permission.
+     * wire. The bounded {@code params} are {@code provider} ({@code gps},
+     * {@code network}, or {@code passive} to force one; absent selects
+     * automatically) and {@code request} ({@code once} default, {@code last}
+     * for the cached fix only); unknown keys or values are
+     * {@code invalid-argument}, never silently ignored. The location source
+     * checks the foreground grant itself; this handler never prompts for
+     * permission.
      */
     private AndroidCapabilityProtocol.Response locationReading(
             AndroidCapabilityProtocol.Request request) {
+        String provider;
+        boolean lastOnly;
+        try {
+            CapabilityParams params = CapabilityParams.of(request);
+            params.rejectUnknown(LOCATION_PARAM_KEYS);
+            provider = params.optionalString("provider", 16, null);
+            if (provider != null && !LOCATION_PROVIDERS.contains(provider)) {
+                throw new CapabilityParams.Invalid("unsupported provider: " + provider);
+            }
+            String mode = params.optionalString("request", 16, "once");
+            if (!"once".equals(mode) && !"last".equals(mode)) {
+                throw new CapabilityParams.Invalid("unsupported request: " + mode);
+            }
+            lastOnly = "last".equals(mode);
+        } catch (CapabilityParams.Invalid invalid) {
+            return AndroidCapabilityProtocol.Response.error(
+                    request.getId(), ERROR_INVALID_ARGUMENT);
+        }
         LocationSnapshot snapshot;
         try {
-            snapshot = locationSource.read();
+            snapshot = locationSource.read(provider, lastOnly);
         } catch (RuntimeException e) {
             return AndroidCapabilityProtocol.Response.error(
                     request.getId(), "capability-unavailable");
