@@ -230,33 +230,51 @@ The first feasible slice is implemented (ADR-0030, ADR-0031): the existing
 `GuestSshdWorkload` starts a session-scoped host bridge on an ephemeral
 `127.0.0.1` TCP port and passes its address, protocol version, and a fresh
 random token to the guest through the PRoot environment. Every connection is
-bounded (one line-delimited frame, 16 KiB maximum, fifteen-second socket timeout,
+bounded (one line-delimited frame, 64 KiB maximum, fifteen-second socket timeout,
 four concurrent clients), and every request must carry the token. Loopback is
 only a reachability restriction, not authentication, because another app can
 share the device loopback namespace.
 
-The protocol is intentionally small and dependency-free:
+The protocol is intentionally small and dependency-free. Since ADR-0049 the
+handler keeps its built-in methods and dispatches the rest to registered
+`CapabilityModule`s; a module declares its methods, which of them accept a
+bounded `params` object (at most 16 keys, key <= 32 chars, one string value
+<= 8192 chars), and answers one typed response per call. `CapabilityParams`
+typed getters plus `rejectUnknown` make a misspelled key fail closed as
+`invalid-argument`, and module errors follow one taxonomy
+(`<capability>-permission-required`/`-permission-denied`/`-unavailable`/
+`-busy`/`-timeout`, `foreground-required`, `invalid-argument`,
+`action-unsupported`):
 
-- `bridge.info` reports the transport and allowlisted capability set.
-- The guest also carries a bounded Termux command compatibility layer
-  (ADR-0036): `termux-battery-status`, `termux-location`, `termux-sensor`,
-  `termux-contact-list`, `termux-sms-list`, `termux-telephony-deviceinfo`, and
-  `termux-telephony-cellinfo` translate Termux flags into the fixed methods
-  above and print the Termux JSON shape. The Termux:API app cannot be used by
-  this product (it is signature/UID-locked to Termux), so these are the only
-  Termux-compatible surface, and commands whose capability the bridge does not
-  answer are deliberately absent (documented in the guest's
-  `docs/termux-compat.md`).
+- `bridge.info` reports the transport and the allowlisted capability set;
+  `bridge.permissions` reports every permission's state plus the Settings
+  action that opens each missing grant; `permission.request` runs the
+  platform runtime dialog or the matching Settings screen through the
+  foreground host under a bounded 120 s wait.
+- The guest carries the full Termux:API client parity layer (ADR-0049): all
+  57 upstream `termux-*` commands are generated into `/usr/local/bin`, thin
+  scripts over a shared `termux_compat` runtime that translate Termux flags
+  into bridge calls and print the Termux JSON shape with upstream exit
+  codes. The Termux:API app cannot be used by this product (it is
+  signature/UID-locked to Termux), so this is the only Termux-compatible
+  surface; commands the hardware or platform cannot serve answer a typed
+  absence, never a fake success (documented in the guest's
+  `docs/termux-compat.md`, evidence in `tasks/termux-parity-matrix.md`).
 - `battery.status` reads Android's permission-free `BatteryManager` state.
-- `location.get` performs a foreground-only one-shot `LocationManager` request.
-  It never opens a permission Activity and returns explicit
-  `location-permission-required`, `location-permission-denied`,
-  `location-unavailable`, or `location-timeout` states. A successful fix is
-  bounded to finite coordinates, accuracy, provider, and timestamp; background
-  location and continuous GPS are not claimed.
-- `sensor.accelerometer` and `sensor.gyroscope` perform one-shot,
-  permission-free `SensorManager` reads with finite x/y/z values, bounded
-  accuracy text, platform timestamp, and explicit unavailable/timeout errors.
+- `location.get` performs a foreground-only one-shot `LocationManager`
+  request with a 30 s bounded window: it honours a forced provider and a
+  last-known-only request, picks the deliverable provider whose last-known
+  fix is freshest, and falls back to a stale-marked last-known fix before
+  reporting `location-timeout`. It never opens a permission Activity and
+  returns explicit `location-permission-required`,
+  `location-permission-denied`, `location-unavailable`, or
+  `location-timeout` states; background location and continuous GPS are not
+  claimed. A successful fix is bounded to finite coordinates, accuracy,
+  provider, and timestamp.
+- `sensor.list`, `sensor.read`, and `sensor.stream.*` cover the platform
+  `SensorManager` catalogue (42 sensors on the test device) with bounded
+  one-shot and sequential samples in the upstream `{SENSOR: {values: [..]}}`
+  shape and explicit unavailable/timeout errors.
 - `media.start`, `media.camera.start`, `media.microphone.start`, `media.status`,
   and `media.stop` control one live camera/microphone session per mode. Camera2
   and AudioRecord feed H.264 and AAC-LC hardware encoders; a loopback-only
@@ -267,19 +285,23 @@ The protocol is intentionally small and dependency-free:
   required grants, the foreground types, the SDP tracks, and the status fields
   (`mode`, plus `video_*` only for a video mode and `audio_codec` only for an
   audio mode). One session runs at a time — a start in another mode answers the
-  typed `media-mode-conflict`. NusaDesk writes no JPEG, M4A, MP4, or other
-  capture artifact; consumers save manually if desired. The user-visible
-  foreground service returns typed `media-*` errors for missing/denied grants,
-  background starts, busy hardware, unavailable devices, and encoder failures.
-- `contacts.list`, `calllog.list`, `sms.inbox`, `telephony.info`, and
-  `telephony.cellinfo` are bounded read-only methods. SMS send and phone call
-  remain typed `action-unsupported`.
+  typed `media-mode-conflict`. The RTSP slice itself writes no capture file;
+  the `camera.photo` and `microphone.record.*` methods are the bounded way to
+  produce a JPEG or audio artifact, written only to the guest staging path the
+  command asked for. The user-visible foreground service returns typed
+  `media-*` errors for missing/denied grants, background starts, busy
+  hardware, unavailable devices, and encoder failures.
+- `contacts.list`, `calllog.list`, `sms.inbox`, `sms.send`, `telephony.info`,
+  `telephony.cellinfo`, and `phone.call` are bounded comms methods with
+  per-method permission sets; a missing grant is a typed
+  `<capability>-permission-required`/`-permission-denied` result, never a
+  prompt from the bridge worker and never a fabricated read.
 - `location.stream.start`, `.poll`, and `.stop` provide a bounded
   foreground-only pull stream with a capped queue; background location and
   FGS startup are not wired.
-- The request is a flat JSON object with `v`, `id`, `token`, and `method`; the
-  response is a flat bounded JSON object. There is no arbitrary shell,
-  reflection, URI, Binder, or class dispatch.
+- The request is a flat JSON object with `v`, `id`, `token`, `method`, and an
+  optional bounded `params`; the response is a flat bounded JSON object.
+  There is no arbitrary shell, reflection, URI, Binder, or class dispatch.
 
 The battery capability also projects a best-effort Linux-shaped tree at the
 literal guest path `/sys/class/power_supply/battery`. `capacity`, `status`,
@@ -307,7 +329,7 @@ Physical passes (2026-09-16 to 2026-09-17):
   charging` from the projected sysfs tree. The normal notification Stop action
   removed the bridge config and projection files after the PRoot/guest process
   stopped; a fresh app-visible launch recreated them.
-- Samsung S7 Edge SM-G935F `ce0516054597102d05` (Android 10/API 29, arm64, 4
+- Samsung S7 Edge SM-G935F (Android 10/API 29, arm64, 4
   KB pages): the same guest probe returned `ok=true`, `available=true`,
   `capacity_percent=100`, `status=full`, `health=good`, and matching
   `SYSFS_CAPACITY=100`/`SYSFS_STATUS=Full`.
@@ -347,11 +369,17 @@ Physical passes (2026-09-16 to 2026-09-17):
 The manifest still declares the permission set a user-invoked
 automation surface may need: camera, microphone, location (foreground and
 background), sensors, activity recognition, Bluetooth, telephony and messaging
-reads, contacts, calendar, wake lock, battery-exemption, overlay, usage stats,
-and all-packages. **Battery and accelerometer/gyroscope do not use dangerous
-permissions**; no dangerous grant is requested at launch. Live media requires
-explicit camera and microphone grants managed through Android App Info, and a
-missing grant must produce a typed result rather than a prompt or fake value.
+reads and sends, phone calls, contacts, calendar, wake lock,
+battery-exemption, overlay, usage stats, all-packages, vibration, wallpaper,
+infrared transmit, NFC, biometric, wifi state, audio settings, media-read,
+and the notification-listener service behind `termux-notification-list` —
+each declared because a shipped capability needs it (the manifest comments
+name the command per grant). **Battery and the sensor catalogue do not use
+dangerous permissions**; no dangerous grant is requested at launch. Runtime
+grants are asked on first use through `permission.request`, special access
+(WRITE_SETTINGS, notification access, all-files, battery exemption) goes
+through the platform Settings screens, and a missing or refused grant is a
+typed result rather than a prompt loop or a fake value.
 
 Some users want to drive Android from inside their Linux workspace — for
 example a guest script that reads location, watches motion, reacts to a call,
@@ -377,14 +405,13 @@ Current capability status:
 | Capability | Status |
 | --- | --- |
 | Battery/status | Implemented best-effort through RPC plus `/sys/class/power_supply/battery` projection; no runtime grant. |
-| Accelerometer/gyroscope | Implemented one-shot through `sensor.accelerometer`/`sensor.gyroscope`; no runtime grant; streaming/backpressure remains future work. |
-| Other sensors | Limitation for now; Android `SensorManager` types and rate/backpressure need explicit contracts. |
-| Location | Implemented foreground one-shot `location.get` and bounded location stream with explicit permission/status errors; no background GPS contract. |
-| Live camera + microphone | Implemented live-only with three modes (`media.start` both, `media.camera.start`, `media.microphone.start`) over Camera2 + H.264/AAC and loopback RTSP-over-TCP; all three modes consumer-verified on Samsung S10e API 31, while wider OEM/API coverage remains open and no files are written. |
-| Contacts/call log/SMS/telephony | Implemented bounded read-only methods with per-method permissions, redaction, row/byte caps; real provider data verification remains pending. |
+| Sensors | Implemented through the `sensor.list`/`sensor.read`/`sensor.stream.*` catalogue (42 sensors listed on the S10e); samples are sequential bounded one-shot reads, so continuous streaming and backpressure remain future work. |
+| Location | Implemented foreground one-shot `location.get` (30 s window, provider and last-known params, stale-marked fallback) and bounded location stream with explicit permission/status errors; no background GPS contract. |
+| Live camera + microphone | Implemented live-only with three modes (`media.start` both, `media.camera.start`, `media.microphone.start`) over Camera2 + H.264/AAC and loopback RTSP-over-TCP; all three modes consumer-verified on Samsung S10e API 31, while wider OEM/API coverage remains open and the RTSP slice writes no files. |
+| Contacts/call log/SMS/telephony | Implemented bounded methods with per-method permissions, redaction, and row/byte caps; the reads are device-verified on the S10e (the call log returned an empty list because the device log is empty), while `sms.send` and `phone.call` are implemented with their typed permission errors verified and a success path that still needs the SIM device. |
 | Calendar | Implemented bounded read (`calendar.list`: fixed seven-day window, at most 50 rows, `truncated` flag, no description/attendee/organizer columns) and bounded writes (`calendar.insert`/`calendar.update`/`calendar.delete`) with per-method grants, validated fields, and typed errors; verified on Samsung S10e API 31. No attendee/invitation support, no calendar creation or listing, no guest-chosen window, and no reminder fields; wider OEM/API coverage remains open because the provider's instance/timezone shape is OEM-sensitive. |
 | Bluetooth, usage stats, overlay | Limitation for now; permission declarations alone do not implement or authorize these APIs. |
-| Notification listener/accessibility | Deliberately not declared; each is a special user-enabled service with a much broader data boundary. |
+| Notification listener | Implemented for `notification.list` only: the listener service is declared and inert until the user enables notification access in Settings, and the module reports a typed permission result until then. Accessibility stays deliberately undeclared — it is a special user-enabled service with a much broader data boundary. |
 
 `WRITE_EXTERNAL_STORAGE` is also left out: it grants nothing extra on API 30+
 alongside `MANAGE_EXTERNAL_STORAGE`, so it would be installer noise.
@@ -405,6 +432,55 @@ working bridge; a UDS does not remove the need for the token. Raw Android
 Binder, direct `/dev` hardware access, GPU/NPU paths, and kernel/SELinux
 changes remain limitations that require a different form or root-level
 support.
+
+### Termux:API parity surface is bounded by the platform and the hardware (ADR-0049)
+
+All 57 upstream `termux-*` client commands are installed in the guest and
+answered through the bridge; the limits below are contract, not polish:
+
+- **Wifi cannot be toggled.** Android 10/API 29+ reserves the wifi enable
+  switch to the system: `termux-wifi-enable` answers
+  `wifi-toggle-unsupported` (rc 1) and never claims a toggle happened.
+- **Infrared needs the emitter.** The S10e evidence device has no IR
+  hardware, so `termux-infrared-frequencies`/`termux-infrared-transmit`
+  answer `infrared-unavailable:this device has no IR emitter` (rc 1) there;
+  the implementation stays for a device that has one.
+- **Foreground operations are bounded.** Consent dialogs, `termux-dialog`,
+  SAF pickers, the share chooser, and speech recognition wait at most 120 s
+  for a result (fingerprint carries its own bounded wait); an unanswered
+  prompt times out typed instead of hanging the bridge, and a second
+  concurrent foreground operation is `<capability>-busy`. A platform refusal
+  to show the Activity answers `foreground-required` — the bridge never
+  silently waits.
+- **Jobs run only while the guest session is alive.** `termux-job-scheduler`
+  has no background executor of its own: a trigger that fires while the
+  session is down records a `session-down` outcome instead of pretending a
+  background run happened.
+- **`notification.list` needs notification access.** The listener service is
+  inert until the user enables notification access in Settings; before the
+  grant the command answers `notification-permission-required` with the
+  Settings hint.
+- **`media.scan` can only index what the media provider can read.** A path
+  inside the app-private rootfs scans as zero files; workspace-bound paths
+  (the user-picked `~/nusadesk` folder) index normally.
+- **Capture and recording artifacts go only to the guest staging path.** A
+  bridge method never receives a path the host cannot resolve inside the
+  active rootfs, and the guest script moves the result to the user's
+  destination (the bind-mounted workspace is a guest-side concept).
+
+Implemented but not yet device-verified (per `tasks/termux-parity-matrix.md`):
+
+- `termux-sms-send` and `termux-telephony-call`: typed permission errors
+  verified on the S10e; the success path needs the SIM device.
+- `termux-speech-to-text`: implemented; a transcription needs a real voice
+  input.
+- `termux-fingerprint`: implemented; an authentication run needs an
+  enrolled finger.
+- `termux-nfc`: adapter presence verified (`nfcPresent:true`); a tag
+  read/write needs a physical tag.
+- `termux-location`: the timeout/provider fix (30 s window, freshest
+  last-known provider, `-p`/`-r`) is implemented; a recorded fresh fix on
+  the fixed build is still pending.
 
 ### USB pass-through delivers a descriptor, not a device bus (ADR-0041)
 

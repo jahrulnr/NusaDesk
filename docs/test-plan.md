@@ -19,6 +19,10 @@ Evidence status:
   device (Samsung S10e) — see the *udocker compose verification* table below.
   This extends Compose evidence to API 31 only; it does not extend the core
   runtime's API-29 evidence boundary.
+- **Termux:API parity surface:** all 57 `termux-*` guest commands were
+  exercised on the Samsung S10e (Android 12/API 31) on 2026-09-22 — see the
+  *Termux:API parity verification* tables below for per-command results and
+  for the commands still honestly unverified.
 - **Presentation:** the launcher, non-ready status visibility, add/edit/remove web-app form,
   web-app surface states, terminal prompts, system screen, permission shortcut,
   light/dark themes, and font scaling are UX-verified on an x86_64 emulator
@@ -403,7 +407,7 @@ binds are covered by `GuestServiceBridgeTest` and `ProotBindMountTest`.
 | ACB-011 | Guest calls `sensor.accelerometer`/`sensor.gyroscope` from the active session | Physical device returns finite x/y/z values, bounded accuracy text, and platform timestamp, or an explicit unavailable/timeout result |
 | ACB-012 | Location grant missing, previously denied, provider disabled, or no fix | RPC returns `location-permission-required`, `location-permission-denied`, `location-unavailable`, or `location-timeout`; it never opens a permission UI |
 | ACB-013 | Foreground location grant and usable provider | Guest receives a bounded finite location fix when the provider actually delivers one; background/continuous location is not claimed |
-| ACB-014 | Camera/mic/messaging/telephony permission missing or side-effect method requested | Each read/action returns a typed permission/unavailable error; `sms.send` and `phone.call` return `action-unsupported` |
+| ACB-014 | Camera/mic/messaging/telephony permission missing or side-effect method requested | Each read/action returns a typed permission/unavailable error; an implemented method whose grant is missing answers `<capability>-permission-required`/`-permission-denied` (device-verified: `sms-permission-denied`, `call-permission-denied`) — `action-unsupported` is reserved for a documented absence |
 | ACB-015 | Unified live media control contract | `media.start`/`media.status`/`media.stop` return the documented explicit states and typed `media-*` errors; the media methods declare no request parameters — only the calendar writes do (ACB-023) — and no media bytes cross JSONL |
 | ACB-016 | Location stream start/poll/stop | Foreground-only bounded queue/poll works; stop/close removes listener; no FGS/background claim |
 | ACB-017 | Loopback RTSP server protocol | Server binds only IPv4 `127.0.0.1`, accepts RTSP-over-TCP interleaving only, advertises H.264/AAC SDP, replays a keyframe, caps clients, and drops slow consumers |
@@ -412,7 +416,7 @@ binds are covered by `GuestServiceBridgeTest` and `ProotBindMountTest`.
 | ACB-020 | Video RTP timestamp unit | A 1 s presentation time maps to 90 000 ticks on the H.264 90 kHz clock, so consecutive frames sit ~3000 ticks (33 ms) apart; a ×1000 unit error that made the stream look frozen is a regression-guarded failure |
 | ACB-021 | Camera-only and microphone-only modes | `media.camera.start` / `media.microphone.start` require only their own grant, claim only their own foreground-service type, advertise only their own SDP track (the other track's `SETUP` answers 404), report `mode` plus only their own status fields, and a start in a different mode while one is live answers `media-mode-conflict` |
 | ACB-022 | Interleaved channel pair requested by the client | The server honours the client's `interleaved=<rtp>-<rtcp>` per session (a single-track session's first advertised track asks for 0-1) and replays/RTCPs on that pair; a malformed pair (RTCP ≠ RTP+1) is still refused with 461 |
-| ACB-023 | Bounded request `params` | A flat object of at most 8 keys with safe short keys and bounded scalar values decodes; nested objects/arrays, oversized keys or strings, control characters, non-scalar values, and a `params` on a method that does not declare parameters are rejected (`unsupported-parameter`), and a fifth top-level field other than `params` fails closed at decode time |
+| ACB-023 | Bounded request `params` | A flat object of at most 16 keys, key ≤ 32 chars, one string value ≤ 8192 chars, frame ≤ 64 KiB (bridge v2 bounds) decodes; nested objects/arrays, oversized keys or strings, control characters, non-scalar values, and a `params` on a method that does not declare parameters are rejected (`unsupported-parameter`), a key the module does not declare fails closed as `invalid-argument` (`rejectUnknown`), and a fifth top-level field other than `params` fails closed at decode time |
 | ACB-024 | Calendar read and bounded write | `calendar.list` reads the fixed seven-day instance window, returns at most 50 rows with a `truncated` flag and no description/attendee/organizer columns, and maps permission/unavailable states to typed errors; `calendar.insert`/`update`/`delete` validate every field before a provider call (title/location length and control characters, `begin < end`, ≤ 24 h duration, start within −24 h…+366 d, all-day on whole UTC days and carrying its range), target only a writable calendar, carry a timezone on every write, and answer typed `calendar-*` errors with an audit line that carries ids only |
 
 JVM coverage implements ACB-001 through ACB-007, ACB-010, ACB-012, and ACB-014 through ACB-017, plus ACB-019 through ACB-024. ACB-007 cleanup is covered by
@@ -431,7 +435,7 @@ Physical ACB-008 and ACB-011 passes (2026-09-16), plus ACB-018 (2026-09-17):
   `/sys/class/power_supply/battery`. The notification Stop action stopped the
   session and the host-side bridge config/projection files disappeared; a
   fresh user-visible launch recreated them.
-- Samsung S7 Edge SM-G935F `ce0516054597102d05` (Android 10/API 29, arm64,
+- Samsung S7 Edge SM-G935F (Android 10/API 29, arm64,
   4 KB pages): the same guest probe received `ok=true`, `available=true`,
   `capacity_percent=100`, `status=full`, `health=good`, and matching
   `capacity=100`/`status=Full` from projected sysfs.
@@ -530,6 +534,104 @@ Physical ACB-008 and ACB-011 passes (2026-09-16), plus ACB-018 (2026-09-17):
 
 These are device evidence for API 29/API 31 on two Samsung arm64 devices, not a
 product-wide OEM/API claim.
+
+## Termux:API parity verification (ADR-0049)
+
+Device pass on the Samsung S10e (SM-G970F, Android 12/API 31, arm64) on
+2026-09-22 (rows carrying an earlier date say so), run from the live guest
+over SSH. Every upstream `termux-*` client command was installed and
+exercised; the per-command output lives in the ledger
+`tasks/termux-parity-matrix.md`. Commands whose ledger row is not DONE are
+listed at the end with their honest state.
+
+### Device state
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-001 | `termux-vibrate` | Ringer silent → `vibrated:false`; with `force` → `vibrated:true` |
+| TMX-002 | `termux-torch` | `enabled:true` then `enabled:false`, `camera_id:0` |
+| TMX-003 | `termux-volume` | Six streams with volume/max/min/muted; `music` set to 9; an invalid stream answers `volume-invalid-stream` |
+| TMX-004 | `termux-brightness` | `brightness-permission-required` first; `permission.request mode=settings` opened the system screen; after the toggle, `settings get system screen_brightness` reads 120 |
+| TMX-005 | `termux-audio-info` | 48000 Hz, frames-per-buffer 192, output/input latency 4/40 ms, 2 channels |
+
+### Text and notifications
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-006 | `termux-clipboard-set` / `termux-clipboard-get` | Round trip while the app was foreground |
+| TMX-007 | `termux-toast` | Toast rendered with the NusaDesk icon (screenshot) |
+| TMX-008 | `termux-notification`, `termux-notification-channel`, `termux-notification-remove` | Posted — `dumpsys notification` shows tag/title/content/channel; channel created (`"Created channel with id \"testchan\""`); remove OK |
+| TMX-009 | `termux-notification-list` | `notification-permission-required` before the grant; 6 rows incl. other apps after enabling the listener |
+
+### Speech and dialog
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-010 | `termux-tts-engines`, `termux-tts-speak` | Samsung SMT + Google TTS listed; spoke `-l en -n US` on both engines; the Samsung engine answers `tts-language-unsupported:ind_IDN` for the default locale |
+| TMX-011 | `termux-dialog` | Real dialog; OK → `{"code":-1,"text":"typed-text-ok"}`, Cancel → `{"code":-2,"text":""}` |
+
+### Capture
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-012 | `termux-camera-info` | 4 cameras with facing and JPEG size lists |
+| TMX-013 | `termux-camera-photo` | Front camera wrote a real 16.3 MB JPEG (scene visible); the rear capture was black because the phone lay face-down |
+| TMX-014 | `termux-microphone-record` | `-f /tmp/rec.m4a -l 8` then `-q` produced a 13 553-byte M4A; ffprobe duration 8.192 s |
+
+### Storage, share, and files
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-015 | `termux-saf-managedir` / `-dirs` / `-ls` / `-stat` / `-create` / `-mkdir` / `-read` / `-write` / `-rm` | Document tree picked and grant persisted; dirs listed; real Documents rows; stat fields; a created file visible at `/sdcard/Documents`; read-back exact bytes |
+| TMX-016 | `termux-storage-get` | Document picked; the guest received the exact content |
+| TMX-017 | `termux-share` | Chooser shown; Chrome displayed the shared text — two defects fixed on device (missing chooser read grant, no MIME guess) |
+| TMX-018 | `termux-wallpaper` | A 512x512 PNG and a 3 MB webp both applied (screenshots show the change) |
+| TMX-019 | `termux-download` | `/sdcard/Download/LICENSE` and `download-test.txt` (1068 B each) landed |
+| TMX-020 | `termux-media-scan` | PARTIAL — runs and reports "Finished scanning 0 file(s)" for a path inside the app-private rootfs (the media provider cannot read it); indexing works for workspace-bound paths |
+
+### Comms
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-021 | `termux-keystore` | RSA-2048 hardware-backed key listed; ECDSA sign produced a 71-byte DER signature; verify true for the same data, false for tampered |
+| TMX-022 | `termux-job-scheduler` | schedule + list + `cmd jobscheduler run -f` executed the guest script once (`/tmp/job-ran.txt`) |
+
+### Sensors, wifi, infrared
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-023 | `termux-sensor` | `-l` listed 42 sensors; light/proximity/magnetic_field samples read |
+| TMX-024 | `termux-wifi-connectioninfo` | Real SSID/BSSID/IP/RSSI/link speed |
+| TMX-025 | `termux-wifi-scaninfo` | 3 APs with band/capabilities |
+| TMX-026 | `termux-wifi-enable` | Typed-absent: `wifi-toggle-unsupported` rc 1 — API 29+ forbids third-party toggles; never claims success |
+| TMX-027 | `termux-infrared-frequencies`, `termux-infrared-transmit` | Typed-absent: `infrared-unavailable:this device has no IR emitter` rc 1 |
+
+### Media player, NFC, USB
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-028 | `termux-media-player` | info/play/pause/stop; position advanced 0 → 3.73 s of a 6 s WAV — a real defect was fixed on device (the FD data source stopped the track within 35 ms; the module now opens the staging path) |
+| TMX-029 | `termux-usb` | `-l` → `[]` with nothing attached; the fd path was verified 2026-09-20 with a device attached (USB-006..008) |
+
+### Core commands and the pre-existing set
+
+| ID | Command | Observed result |
+| --- | --- | --- |
+| TMX-030 | `termux-api-start`, `termux-api-stop` | No-op rc 0 with the stderr note that the bridge lives with the session |
+| TMX-031 | `termux-sms-inbox` | Deprecation note on stderr plus the same rows as `termux-sms-list` |
+| TMX-032 | `termux-call-log` | `[]` — the device call log is empty; the bridge read is verified |
+| TMX-033 | `termux-battery-status`, `termux-contact-list`, `termux-sms-list`, `termux-telephony-deviceinfo`, `termux-telephony-cellinfo` | Keep working through the refactored shared runtime (verified 2026-09-19) |
+
+### Implemented, not yet device-verified
+
+| ID | Command | Honest state |
+| --- | --- | --- |
+| TMX-034 | `termux-sms-send` | Typed `sms-permission-denied`, then `not delivered to unconfirmed` without a SIM; the success path needs the SIM device |
+| TMX-035 | `termux-telephony-call` | Typed `call-permission-denied`; the success path needs the SIM device |
+| TMX-036 | `termux-speech-to-text` | Foreground operation and recognizer path implemented; a transcription needs a real voice input |
+| TMX-037 | `termux-fingerprint` | Module, BiometricPrompt operation, and command land and compile; a run needs an enrolled finger |
+| TMX-038 | `termux-nfc` | Adapter present → `{"nfcPresent":true,"nfcActive":false}`; a tag read/write needs a physical tag |
+| TMX-039 | `termux-location` | Defect found and fixed (30 s window, freshest-provider pick, `-p`/`-r` params, stale-marked last-known fallback); a recorded fresh fix on the fixed build is pending |
 
 ## Device matrix
 
@@ -710,7 +812,7 @@ Lifecycle cases **not** completed, and why:
 
 ### Fixed-port and autostart run (2026-09-14, Samsung SM-G935F, Android 10)
 
-One run on the same arm64 device (`ce0516054597102d05`, API 29, 4 KB pages)
+One run on the same arm64 device (the S7 Edge, API 29, 4 KB pages)
 against `app-debug.apk` md5 `e99b8d8883895712d42fb8a49d653f11`, whose installed
 copy was byte-identical (`adb exec-out cat $(pm path …) | md5sum`). App-private
 storage already carried the activated Ubuntu Base rootfs and OpenSSH add-on.
@@ -1042,7 +1144,7 @@ once; recipe in ADR-0042).
 | USB-101 | `adb devices -l` with the driver active | `device 1-1 product:crownltexx model:SM_G935F device:crownlte` — the stock adb sees the attached phone; enumeration arrives through the shim's virtual hotplug |
 | USB-102 | `adb -s 1-1 shell getprop ro.product.model`, three consecutive runs | `SM-G935F` each time; the transport stays `device` |
 | USB-103 | Authorization | First contact: adb sent its public key and the transport sat `unauthorized`; after that key was authorized once (with "always allow"), later attaches authenticate silently through the signature path — no dialog |
-| USB-104 | Enumeration with an empty descriptor cache | the device still lists and opens; the descriptor is fabricated for enumeration and refreshed from the device at open (real serial `ce0516054597102d05` read through the wrapped handle) |
+| USB-104 | Enumeration with an empty descriptor cache | the device still lists and opens; the descriptor is fabricated for enumeration and refreshed from the device at open (the target's real serial read through the wrapped handle) |
 
 Run findings:
 

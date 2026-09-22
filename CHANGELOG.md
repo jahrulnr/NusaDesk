@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-22
+
+### Added
+
+- Add the full Termux:API client parity surface (ADR-0049): all 57 upstream
+  `termux-*` commands are generated into the guest's `/usr/local/bin` from a
+  domain-owned catalog over a shared `termux_compat` runtime, each one a thin
+  flag-to-bridge translation that prints the upstream JSON shape and keeps the
+  upstream exit codes (0 result, 1 typed bridge error, 2 usage). New domains:
+  device state (`termux-vibrate`, `termux-torch`, `termux-volume`,
+  `termux-brightness`, `termux-audio-info`), text and notifications
+  (`termux-clipboard-get/set`, `termux-toast`, `termux-notification`,
+  `termux-notification-channel`, `termux-notification-list`,
+  `termux-notification-remove`), speech and dialog (`termux-tts-engines`,
+  `termux-tts-speak`, `termux-speech-to-text`, `termux-dialog`), capture
+  (`termux-camera-info`, `termux-camera-photo`, `termux-microphone-record`),
+  storage (the nine `termux-saf-*` commands, `termux-storage-get`,
+  `termux-share`, `termux-media-scan`, `termux-wallpaper`, `termux-download`),
+  comms (`termux-sms-send`, `termux-telephony-call`, `termux-keystore`,
+  `termux-job-scheduler`), the full sensor catalogue (`termux-sensor -l`
+  lists 42 sensors on the test device), wifi (`termux-wifi-connectioninfo`,
+  `termux-wifi-scaninfo`, `termux-wifi-enable`), infrared
+  (`termux-infrared-frequencies`, `termux-infrared-transmit`), media and NFC
+  (`termux-media-player`, `termux-nfc`), `termux-usb`, `termux-fingerprint`,
+  the `termux-api-start`/`termux-api-stop` no-ops, and the deprecated
+  `termux-sms-inbox` alias. Commands the hardware or platform cannot serve
+  answer a typed absence — `wifi-toggle-unsupported` on API 29+ and
+  `infrared-unavailable` on a device with no IR emitter — never a fake
+  success.
+- Add the bridge v2 foundation (ADR-0049): the request handler dispatches to
+  registered `CapabilityModule`s behind a single `CapabilityModules`
+  registry; every module validates its `params` through `CapabilityParams`
+  typed getters and `rejectUnknown`, so a misspelled key fails closed as
+  `invalid-argument` instead of being silently ignored; the error taxonomy is
+  stable and typed (`<capability>-permission-required`/`-permission-denied`/
+  `-unavailable`/`-busy`/`-timeout`, `foreground-required`,
+  `invalid-argument`, `action-unsupported`) with a human hint after `:`; and
+  the request bounds grow to a 64 KiB frame, 16 parameter keys, and 8192-char
+  string values.
+- Add user-visible consent and special access: `bridge.permissions` reports
+  every permission's state plus the Settings action that opens each missing
+  grant, and `permission.request` runs either the platform runtime dialog or
+  the matching Settings screen through the foreground host with a bounded
+  wait. Device-verified on the Samsung S10e: the CAMERA runtime dialog
+  granted on tap (`dumpsys package` shows the grant), and the WRITE_SETTINGS
+  screen granted after the toggle, after which `termux-brightness` set the
+  real system value.
+- Add the foreground host (`CapabilityForegroundHost` +
+  `CapabilityForegroundActivity`): one transparent Activity runs the
+  operations the platform only allows a visible app — runtime consent,
+  `termux-dialog`, fingerprint, SAF pickers, the share chooser, speech
+  recognition, NFC reader mode, and the while-in-use camera/microphone
+  capture service — one operation at a time under a bounded wait, with typed
+  `foreground-required` and `<capability>-busy` refusals.
+- Add the guest-file staging rule: a bridge method that reads or writes a
+  guest file receives a path inside the active rootfs resolved by
+  `GuestFilePathResolver` (absolute, no traversal, symlinks refused), and the
+  guest script moves the result to the user's destination because only the
+  guest knows how a bind mount maps.
+- Declare the parity permission and component set: VIBRATE, SEND_SMS,
+  CALL_PHONE, SET_WALLPAPER, TRANSMIT_IR, NFC, WRITE_SETTINGS, USE_BIOMETRIC,
+  ACCESS_WIFI_STATE/CHANGE_WIFI_STATE/NEARBY_WIFI_DEVICES,
+  MODIFY_AUDIO_SETTINGS, FOREGROUND_SERVICE_MEDIA_PLAYBACK,
+  DOWNLOAD_WITHOUT_NOTIFICATION, READ_MEDIA_*; the notification-listener
+  service behind `termux-notification-list`, the capture and media-playback
+  foreground services, and the job-scheduler service.
+
+### Changed
+
+- The Termux compatibility layer grows from the seven ADR-0036 commands to
+  the full generated set; the previously installed commands keep their
+  behaviour through the same shared runtime, and `docs/termux-compat.md`
+  inside the guest is regenerated from the same command catalogue.
+- `termux-location` honours `-p provider` and `-r`, reads with a 30 s bounded
+  window (was 5 s), picks the deliverable provider whose last-known fix is
+  freshest instead of preferring GPS first, and falls back to a stale-marked
+  last-known fix (with its age) before reporting `location-timeout`.
+
+### Fixed
+
+- `termux-media-player` plays through to the end: the FD-based data source
+  made every track stop within ~35 ms on device, so the module opens the
+  resolved guest staging path instead — position advanced 0 → 3.73 s on a
+  6 s WAV.
+- `termux-share` grants the chooser read access to the shared content URI and
+  guesses the MIME type — the two defects the device run exposed; Chrome then
+  displayed the shared text.
+- `termux-job-scheduler` executes the scheduled guest script through the
+  session's own SSH path when the job fires; `cmd jobscheduler run -f`
+  produced `/tmp/job-ran.txt` on device.
+
+### Not yet device-verified
+
+Per `tasks/termux-parity-matrix.md` — implemented, but waiting on the
+physical input each command needs:
+
+- `termux-sms-send` and `termux-telephony-call`: typed permission errors
+  verified; the success path needs the SIM device.
+- `termux-speech-to-text`: needs a real voice input to prove transcription.
+- `termux-fingerprint`: needs an enrolled finger.
+- `termux-nfc`: adapter presence verified (`nfcPresent:true`); a tag
+  read/write needs a physical tag.
+- `termux-media-scan`: runs, but only indexes paths the platform media
+  provider can read — workspace-bound paths, not the app-private rootfs.
+- `termux-location`: the timeout/provider fix above is implemented; a
+  recorded fresh fix on the fixed build is still pending in the ledger.
+
 ## [0.6.4] - 2026-09-22
 
 ### Added

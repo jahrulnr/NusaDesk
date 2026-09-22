@@ -116,19 +116,24 @@ runtime requirements.
 - The Linux guest can call a small, authenticated capability bridge over a
   loopback-only JSON socket. The endpoint and a per-session token are pinned in
   `/run/nusadesk/android-bridge.env`; the CLI never prints the token, and no
-  LAN or wildcard bind exists (ADR-0030).
+  LAN or wildcard bind exists (ADR-0030). The bridge dispatches to registered
+  capability modules, each validating its own bounded parameters and answering
+  one typed error taxonomy (ADR-0049).
 - `nusadesk-android` wraps that contract with fixed commands only: `bridge info`
   for discovery, live media control (`media start [--camera|--microphone]`,
   `media status`, `media stop`), and bounded calendar access (`calendar list`,
   `calendar add`, `calendar update`, `calendar delete`). There is no generic
   `call <method>` passthrough (ADR-0031, ADR-0032).
-- A bounded set of Termux command names (`termux-battery-status`,
-  `termux-location`, `termux-sensor`, `termux-contact-list`, `termux-sms-list`,
-  `termux-telephony-deviceinfo`, `termux-telephony-cellinfo`) is installed in
-  `/usr/local/bin` and answered by the same bridge, so scripts written for the
-  Termux:API clients keep working. The Termux:API *app* cannot serve this
-  product — it only accepts callers sharing the Termux signing key and UID —
-  and no Termux app is required (ADR-0036).
+- All 57 upstream Termux:API client commands are installed in `/usr/local/bin`
+  and answered by the same bridge — sensors, wifi, SMS and contacts, camera
+  and microphone capture, SAF file access, keystore, notifications, TTS,
+  dialog, media playback, USB, and more — so scripts written for the
+  `termux-*` clients keep working. What the hardware or platform cannot do
+  answers a typed absence (wifi toggling on Android 10+, infrared without an
+  emitter) rather than a fake success, and the few commands waiting on a
+  physical input are listed honestly in the limitations. The Termux:API *app*
+  cannot serve this product — it only accepts callers sharing the Termux
+  signing key and UID — and no Termux app is required (ADR-0036, ADR-0049).
 - USB pass-through is host-mediated but guest-owned: `nusadesk-usb list`
   enumerates attached devices on the host's USB port, and
   `nusadesk-usb probe <vid>:<pid>` /
@@ -175,9 +180,15 @@ runtime requirements.
   50 rows, no description/attendee/organizer fields) and validated writes into a
   calendar the user can write. No attendee row is written and no invitation is
   sent.
-- Permission-aware calls never open a consent dialog. A missing or revoked grant
-  returns a typed result the script can report, and SMS send / phone call are
-  deliberately not implemented.
+- Consent is real, not assumed: a missing or revoked grant returns a typed
+  result the script can report, and `permission.request` runs the platform
+  runtime dialog or the matching Settings screen (write-settings,
+  notification access, all-files) through a foreground host — the same
+  bounded, one-at-a-time host that runs dialogs, SAF pickers, the share
+  chooser, fingerprint, speech recognition, NFC reader mode, and
+  while-in-use camera/microphone capture. `termux-sms-send` and
+  `termux-telephony-call` are implemented; their success paths stay
+  unverified until run on the SIM-equipped device.
 
 ### Your web apps, your workspace
 

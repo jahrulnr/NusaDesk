@@ -3,15 +3,20 @@
 ## Project status
 
 NusaDesk is an Android/Linux workspace. The current
-version is `0.6.4`. Runtime evidence covers the core runtime (Ubuntu Base
+version is `0.7.0`. Runtime evidence covers the core runtime (Ubuntu Base
 install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
 Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
 Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
-Android capability bridge (battery, one-shot sensors, foreground location and
-its bounded stream, read-only contacts/call-log/SMS/telephony, live media in
-three track modes, and the bounded calendar read/write slice), plus the USB
-pass-through slice and the guest adb driver that makes the stock guest `adb`
-operate a device attached to the host's USB port (ADR-0041, ADR-0042).
+Android capability bridge: the original slices (battery, sensors, foreground
+location and its bounded stream, read-only contacts/call-log/SMS/telephony,
+live media in three track modes, bounded calendar read/write, USB pass-through,
+the guest adb driver, ADR-0041/0042) and the Termux:API parity surface
+(ADR-0049), which exposes the device-capable share of the upstream `termux-*`
+command contract — device state, text/notifications, speech and dialog,
+capture, storage/SAF/share, comms (SMS send, telephony call, keystore, job
+scheduler), the sensor catalogue, wifi reads, infrared, media playback, NFC,
+USB, and fingerprint — each device-verified per
+`tasks/termux-parity-matrix.md`.
 Security behavior on other Android versions, OEMs, and 16 KB page-size devices
 is not yet covered by the same evidence.
 
@@ -66,20 +71,25 @@ The following are deliberate properties of the current design:
   pinned host keys, and the capability bridge requires its own per-session
   token; any sensitive service of its own must carry its own authentication.
 - **The capability bridge authenticates every request.** The guest-facing
-  Android capability bridge (battery, sensors, location, read-only
-  contacts/call-log/SMS/telephony, live media, calendar) binds loopback only and
+  Android capability bridge binds loopback only and
   requires the token generated for the active session, compared in constant
   time; the token is written into the session env file with owner-only
   permissions where the filesystem supports them and is never printed by the
-  CLI. Dispatch is a fixed method allowlist — no shell, reflection, URI, class,
-  or Binder path — permission-aware methods return typed states instead of
-  opening a consent dialog, and the reserved side-effecting methods
-  (`sms.send`, `phone.call`) always answer `action-unsupported`.
-- **Calendar writes are the one parameterized surface.** The calendar methods
-  accept a bounded, flat `params` object (declaring methods only; anything else
-  fails closed), validate every field before a provider call, target only a
-  calendar the user can write, and never write an attendee row or send an
-  invitation. Writes are audited with one line carrying the operation and ids,
+  CLI. Dispatch is a fixed method allowlist — the built-in methods plus the
+  registered `CapabilityModule`s of ADR-0049, no shell, reflection, URI, class,
+  or Binder path. Permission-aware methods return typed states instead of
+  assuming a grant, the user-visible consent and special-access flows run
+  through the single bounded foreground host, and side-effecting methods
+  (`sms.send`, `phone.call`, writes, posts) execute only inside that same
+  per-call permission check — never silently and never without the platform
+  grant.
+- **Parameters are a bounded, declared surface.** Only methods that declare
+  parameters may carry one flat `params` object (16 keys, 32-char keys,
+  8192-char strings, scalar values only; anything else fails closed at decode
+  or as `invalid-argument`), and each consumer validates every field before a
+  platform call. Calendar writes stay the narrowest case: they target only a
+  calendar the user can write, never write an attendee row or send an
+  invitation, and are audited with one line carrying the operation and ids —
   never the event title, location, or other content (ADR-0032).
 - **USB access is consent-gated and host-mediated.** `usb.list` / `usb.open`
   are the only USB bridge methods; there is no host-side transfer API. Opening
