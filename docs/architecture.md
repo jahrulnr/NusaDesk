@@ -420,7 +420,28 @@ flowchart LR
   conference-data support.
 - The location stream is foreground-only, pull-based, and queue-bounded. It
   does not start an FGS, request background permission, or wake the app.
-- Bluetooth, usage stats, overlay, notification-listener, accessibility, raw
+- The remaining capability declarations are wired too (ADR-0052): `usage.*`
+  reads bounded usage aggregates/events behind the usage-access special grant,
+  `packages.*` enumerates (through `QUERY_ALL_PACKAGES`) and launches apps
+  with a typed result when the platform refuses a background start, `overlay.*`
+  draws one text plate behind `SYSTEM_ALERT_WINDOW`, and
+  `location.background.*` follows location while the screen is off through a
+  visible `FOREGROUND_SERVICE_LOCATION` notification that requires "Allow all
+  the time". The dead declarations (`FOREGROUND_SERVICE_CONNECTED_DEVICE`,
+  `FOREGROUND_SERVICE_DATA_SYNC`, `DOWNLOAD_WITHOUT_NOTIFICATION`) are pruned:
+  no shipped path used them.
+- Wifi is no longer read-only (ADR-0051): `wifi.hotspot.*` creates a local-only
+  hotspot with no internet, `wifi.suggest.*` publishes advisory network
+  suggestions, `wifi.lock.*` keeps the radio awake for a long transfer, and the
+  generated guest `nusadesk-serve` HTTP file server (with `nusadesk-net` for
+  the LAN address) turns the session into a file server other machines on the
+  network can reach. Programmatic toggling and internet tethering stay typed
+  absences; Wi-Fi Direct and RTT remain separately scoped.
+- Bluetooth is implemented as a NusaDesk-native surface (ADR-0050): the `bt.*`
+  modules cover adapter state, bonded devices, discovery, pairing consent, BLE
+  scan/advertise, GATT client/server, and RFCOMM over the same bounded bridge
+  contract, with the hard platform limits answered as typed absences. Usage
+  stats, overlay, notification-listener, accessibility, raw
   `/dev` hardware, Binder, GPU/NPU, kernel, and SELinux operations remain
   separately scoped limitations.
 

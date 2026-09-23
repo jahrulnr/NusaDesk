@@ -256,8 +256,24 @@ Scope:
       path (ADR-0032).
 - [x] Generated guest docs and the `nusadesk-android` CLI, including the params
       rules and the calendar commands.
+- [x] The remaining capability declarations (ADR-0052): `usage.*`, `packages.*`
+      (enumeration + launch), `overlay.*`, and `location.background.*` with the
+      location foreground-service type, plus the prune of the three dead
+      declarations (`FOREGROUND_SERVICE_CONNECTED_DEVICE`,
+      `FOREGROUND_SERVICE_DATA_SYNC`, `DOWNLOAD_WITHOUT_NOTIFICATION`).
+      Unit-verified; the S10e device pass is the open acceptance gate.
+- [x] Wifi extras and the guest file-server toolkit (ADR-0051):
+      `wifi.hotspot.*` (local-only hotspot), `wifi.suggest.*`,
+      `wifi.lock.*`, and the generated `nusadesk-serve` / `nusadesk-net`
+      guest commands. Unit-verified; the S10e device pass is the open
+      acceptance gate. Wi-Fi Direct and RTT stay separately scoped.
+- [x] Bluetooth as a NusaDesk-native capability track (ADR-0050): `bt.*`
+      bridge modules for adapter state, bonded devices, discovery, pairing
+      consent, BLE scan/advertise, GATT client/server, and RFCOMM, plus the
+      generated guest `nusadesk-bt` CLI. Unit-verified; the S10e device pass
+      is the open acceptance gate.
 - [ ] The wider device matrix (other API levels, 16 KB pages, OEMs), continuous
-      sensor streaming, and additional capability tracks (Bluetooth, usage
+      sensor streaming, and additional capability tracks (usage
       stats, overlay) as separately scoped work.
 
 ## Host app UX — boot start, battery recommendation, and update check

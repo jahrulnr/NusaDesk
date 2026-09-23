@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-24
+
+### Added
+
+- Add the Bluetooth capability surface (ADR-0050), NusaDesk-native because
+  upstream Termux:API has no bluetooth client command: four bridge modules
+  (`BluetoothModule` for adapter state, bonded devices, discovery and pairing
+  consent; `BluetoothLeModule` for BLE scan and advertise;
+  `BluetoothGattModule` for GATT client and a fixed GATT server;
+  `BluetoothRfcommModule` for RFCOMM serial), the
+  `BLUETOOTH_ADVERTISE` declaration behind BLE advertise and classic
+  discoverability, the `BluetoothConsentForegroundOperation` that runs
+  `ACTION_REQUEST_ENABLE` / `ACTION_REQUEST_DISCOVERABLE` through the
+  foreground host, and the generated guest CLI `nusadesk-bt`. Every hard
+  platform limit (adapter MAC address, programmatic enable/disable on
+  target 33+, unpair, OBEX/PAN/HID host, bonded-device battery level) answers
+  a typed absence instead of a fake feature.
+- Add the wifi extras and the guest file-server toolkit (ADR-0051):
+  `wifi.hotspot.start|stop|status` (local-only hotspot through
+  `startLocalOnlyHotspot`, no internet), `wifi.suggest.add|remove|list`
+  (advisory `WifiNetworkSuggestion` entries), `wifi.lock.acquire|release`
+  (a `WIFI_MODE_FULL_HIGH_PERF` lock for long transfers), and the generated
+  guest commands `nusadesk-serve` (stdlib HTTP file server with bounded
+  upload, LAN URL output, best-effort wifi lock and notification) and
+  `nusadesk-net` (`lan-ip`, `bridge`). Programmatic wifi toggling stays a
+  typed absence; Wi-Fi Direct and RTT are documented as deferred.
+- Add the last four capability declarations as real surfaces (ADR-0052):
+  `usage.query` / `usage.events` / `usage.standby` (bounded usage reads behind
+  the usage-access special grant), `packages.list` / `packages.info` /
+  `packages.launch` (enumeration through `QUERY_ALL_PACKAGES`, with a typed
+  `packages-launch-blocked` when the platform refuses a background start),
+  `overlay.show` / `overlay.update` / `overlay.status` / `overlay.hide` (one
+  text plate behind `SYSTEM_ALERT_WINDOW`), and
+  `location.background.start` / `location.background.poll` /
+  `location.background.stop` (background fixes behind "Allow all the time",
+  served by a visible `LocationBackgroundService` with the location
+  foreground-service type and a Stop action).
+- Remove three declarations no shipped path used:
+  `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, and
+  `DOWNLOAD_WITHOUT_NOTIFICATION` (the visible download path needs no grant,
+  and the session's foreground service already keeps wireless capabilities
+  alive).
+- Gate the step-counter and step-detector sensors behind the
+  `ACTIVITY_RECOGNITION` grant: the sensor catalogue marks them and a missing
+  grant now answers a typed `sensor-permission-required` hint instead of a
+  generic `sensor-unavailable`, matching the platform rule for Android 10+.
+
+### Fixed
+
+- `wifi.suggest.remove` could not remove a suggestion it had just accepted: the
+  platform matches the whole suggestion object, and the method submitted a
+  freshly built one, so it always answered `wifi-suggest-failed:nothing to
+  remove`. It now submits the object stored in `getNetworkSuggestions()`, and
+  the add → list → remove round trip was re-verified on the S10e.
+- `bt.pair` reported `bt-pair-timeout` after a successful bond: the device
+  stack completed the bond without delivering the terminal
+  `ACTION_BOND_STATE_CHANGED` broadcast. The timeout branch now re-reads
+  `getBondState()` and reports `bonded` when the platform says so.
+- `bt.le.advertise.start` failed with `bt-advertise-failed:error 1` whenever a
+  128-bit service UUID and a device name were combined (the legacy advertise
+  payload is 31 bytes). The device name now stays out of the advertisement
+  when a 128-bit UUID is present, and the platform's advertise error codes map
+  to specific typed errors (`bt-advertise-data-too-large`,
+  `bt-advertise-too-many-advertisers`, `bt-advertise-already-running`,
+  `bt-advertise-internal-error`).
+
 ## [0.7.0] - 2026-09-23
 
 ### Added

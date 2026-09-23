@@ -3,7 +3,7 @@
 ## Project status
 
 NusaDesk is an Android/Linux workspace. The current
-version is `0.7.0`. Runtime evidence covers the core runtime (Ubuntu Base
+version is `0.8.0`. Runtime evidence covers the core runtime (Ubuntu Base
 install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
 Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
 Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
@@ -16,7 +16,14 @@ command contract — device state, text/notifications, speech and dialog,
 capture, storage/SAF/share, comms (SMS send, telephony call, keystore, job
 scheduler), the sensor catalogue, wifi reads, infrared, media playback, NFC,
 USB, and fingerprint — each device-verified per
-`docs/evidence/termux-parity-matrix.md`.
+`docs/evidence/termux-parity-matrix.md`. The 0.8.0 capability surface
+(ADR-0050/0051/0052) was verified with the S10e and the S7 Edge as each other's
+peer: the Bluetooth modules (BLE advertise/scan, GATT client against the other
+phone's GATT server, RFCOMM echo, discovery, pairing), the wifi extras (a real
+local-only hotspot, network suggestions, wifi lock), the guest file server
+reached from another machine over the LAN, usage stats, package enumeration and
+launch, the guest-driven overlay, and background location — recorded per row in
+`docs/evidence/capability-closure-matrix.md`.
 Security behavior on other Android versions, OEMs, and 16 KB page-size devices
 is not yet covered by the same evidence.
 

@@ -134,6 +134,36 @@ runtime requirements.
   physical input are listed honestly in the limitations. The Termux:API *app*
   cannot serve this product — it only accepts callers sharing the Termux
   signing key and UID — and no Termux app is required (ADR-0036, ADR-0049).
+- Bluetooth is a NusaDesk-native surface (ADR-0050) because upstream
+  Termux:API has no bluetooth command: the guest gets `nusadesk-bt` with
+  `status`, `devices`, `discover`, `pair`/`unpair` (unpair answers a typed
+  absence), `enable`/`discoverable` (through the platform's own consent
+  dialogs), `le-scan`, `advertise`, `gatt …` (client and a fixed server), and
+  `rfcomm …` for a serial link. Every call is bounded and every grant is
+  checked per call; the platform's hard limits (adapter MAC address,
+  programmatic enable/disable, OBEX/PAN/HID host) are reported as typed
+  absences rather than fake features.
+- Wifi gained the pieces the platform actually allows (ADR-0051):
+  `wifi.hotspot.start|stop|status` opens a local-only hotspot (no internet) for
+  device-to-device work, `wifi.suggest.add|remove|list` publishes advisory
+  network suggestions, and `wifi.lock.acquire|release` keeps the radio awake
+  for a transfer. The generated `nusadesk-serve` serves the workspace over HTTP
+  on the LAN (directory listing plus bounded upload, LAN warning, best-effort
+  wifi lock and a notification carrying the URL), and `nusadesk-net` reports
+  the LAN address and bridge status. Toggling wifi stays a typed absence
+  because the platform forbids it.
+- The last four declarations now back real capabilities (ADR-0052):
+  `usage.query|events|standby` (bounded usage reads behind the usage-access
+  special grant), `packages.list|info|launch` (enumeration through
+  `QUERY_ALL_PACKAGES`, with a typed `packages-launch-blocked` when the
+  platform refuses a background start), `overlay.show|update|status|hide` (one
+  text plate behind `SYSTEM_ALERT_WINDOW`), and
+  `location.background.start|poll|stop` (background fixes behind "Allow all the
+  time", with a visible `FOREGROUND_SERVICE_LOCATION` notification and a Stop
+  action, matching the shape upstream Termux:API is heading toward). Three
+  dead declarations are removed with this change:
+  `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, and
+  `DOWNLOAD_WITHOUT_NOTIFICATION`.
 - USB pass-through is host-mediated but guest-owned: `nusadesk-usb list`
   enumerates attached devices on the host's USB port, and
   `nusadesk-usb probe <vid>:<pid>` /
