@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Light-theme twin of NusaDeskDialogTheme: only the platform parent
+        flips (Theme.Material.Light.Dialog) so DatePicker/TimePicker internals
+        and inverse text colors resolve correctly on the light surface. All
+        other tokens come from the shared style in values/nusadesk_dialog.xml;
+        keep the item list in sync with the dark variant.
+    -->
+    <style name="NusaDeskDialogTheme" parent="android:style/Theme.Material.Light.Dialog">
+        <!-- The shell layout draws the rounded surface; the window itself is transparent. -->
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:colorAccent">@color/primary</item>
+        <item name="android:colorControlActivated">@color/primary</item>
+        <item name="android:colorControlNormal">@color/ink_muted</item>
+        <item name="android:colorControlHighlight">@color/primary_tint</item>
+        <item name="android:colorBackground">@color/surface_elevated</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:textColorSecondary">@color/ink_secondary</item>
+        <item name="android:textColorHint">@color/ink_muted</item>
+        <item name="android:windowSoftInputMode">adjustResize|stateHidden</item>
+    </style>
+</resources>

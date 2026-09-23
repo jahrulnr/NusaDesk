@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One row in the checkbox widget's multi-pick list. -->
+<CheckBox xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/Widget.LinuxWrapper.DialogChoice" />

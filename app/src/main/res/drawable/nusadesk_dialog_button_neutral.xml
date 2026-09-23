@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Outlined negative action: transparent fill with a border stroke at rest;
+     press fills with surface_subtle, focus adds the primary stroke. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/surface_subtle" />
+            <corners android:radius="@dimen/nusadesk_dialog_button_corner" />
+            <stroke android:width="1dp" android:color="@color/border" />
+        </shape>
+    </item>
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/surface_subtle" />
+            <corners android:radius="@dimen/nusadesk_dialog_button_corner" />
+            <stroke android:width="1dp" android:color="@color/primary" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <corners android:radius="@dimen/nusadesk_dialog_button_corner" />
+            <stroke android:width="1dp" android:color="@color/border" />
+        </shape>
+    </item>
+</selector>

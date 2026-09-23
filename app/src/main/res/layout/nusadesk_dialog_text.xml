@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Body of the text widget: the single input field. inputType is the code
+     path's job (password/numeric/multiline flags); the default here only
+     satisfies static analysis. -->
+<EditText xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/Widget.LinuxWrapper.DialogInput"
+    android:hint="@string/nusadesk_dialog_input_hint"
+    android:importantForAutofill="no"
+    android:inputType="text" />

@@ -2,9 +2,9 @@ package gh.nusashell.nusadesk.infrastructure.androidbridge.foreground;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.app.Application;
 import android.app.Dialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -14,9 +14,13 @@ import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.text.InputType;
+import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
-import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -26,7 +30,6 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
-import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.TimePicker;
@@ -40,6 +43,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.AndroidPermissionChecker;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.CapabilityPermission;
 
@@ -167,7 +171,8 @@ public final class DialogForegroundOperation implements ForegroundOperation {
     /** Text entry: hint, password, multiline, and numeric input types. */
     private static void showText(CapabilityForegroundActivity activity, Options options,
                                  Session session, ResultSink sink) {
-        EditText input = new EditText(activity);
+        Shell shell = new Shell(activity, options.title);
+        EditText input = (EditText) shell.inflate(R.layout.nusadesk_dialog_text);
         if (!options.hint.isEmpty()) {
             input.setHint(options.hint);
         }
@@ -180,6 +185,7 @@ public final class DialogForegroundOperation implements ForegroundOperation {
         if (options.multiline) {
             flags |= InputType.TYPE_TEXT_FLAG_MULTI_LINE;
             input.setLines(4);
+            input.setGravity(Gravity.TOP | Gravity.START);
         }
         if (options.numeric) {
             flags &= ~InputType.TYPE_CLASS_TEXT;
@@ -187,19 +193,25 @@ public final class DialogForegroundOperation implements ForegroundOperation {
                     | InputType.TYPE_NUMBER_FLAG_DECIMAL;
         }
         input.setInputType(flags);
-        showButtonDialog(activity, options, session, wrap(activity, input),
-                "OK", "Cancel", sink,
-                () -> positive(sink, session, input.getText().toString()));
+        // Float the window above the IME and open the keyboard with the field
+        // already focused, so the input is never hidden behind it.
+        Window window = shell.dialog.getWindow();
+        if (window != null) {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                    | WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        }
+        shell.dialog.setOnShowListener(d -> input.requestFocus());
+        showButtonDialog(shell, session, "OK", "Cancel", sink,
+                () -> positive(sink, session, input.getText().toString()), null);
     }
 
     /** Yes/No confirmation: positive {@code yes}, negative {@code no}. */
     private static void showConfirm(CapabilityForegroundActivity activity,
                                     Options options, Session session, ResultSink sink) {
-        TextView message = new TextView(activity);
+        Shell shell = new Shell(activity, options.title);
+        TextView message = (TextView) shell.inflate(R.layout.nusadesk_dialog_message);
         message.setText(options.hint.isEmpty() ? "Confirm" : options.hint);
-        message.setTextSize(20);
-        showButtonDialog(activity, options, session, wrap(activity, message),
-                "Yes", "No", sink,
+        showButtonDialog(shell, session, "Yes", "No", sink,
                 () -> {
                     Map<String, Object> fields = new LinkedHashMap<>();
                     fields.put("code", (long) DialogInterface.BUTTON_POSITIVE);
@@ -219,18 +231,19 @@ public final class DialogForegroundOperation implements ForegroundOperation {
     /** Multi-pick checkboxes over the values list. */
     private static void showCheckbox(CapabilityForegroundActivity activity,
                                      Options options, Session session, ResultSink sink) {
-        LinearLayout layout = verticalList(activity);
+        Shell shell = new Shell(activity, options.title);
+        LinearLayout layout = verticalList(shell.themeContext);
+        LayoutInflater inflater = LayoutInflater.from(shell.themeContext);
         List<CheckBox> boxes = new ArrayList<>();
         for (int i = 0; i < options.values.size(); i++) {
-            CheckBox box = new CheckBox(activity);
+            CheckBox box = (CheckBox) inflater.inflate(
+                    R.layout.nusadesk_dialog_checkbox_item, layout, false);
             box.setText(options.values.get(i));
-            box.setTextSize(18);
-            box.setPadding(16, 16, 16, 16);
             layout.addView(box);
             boxes.add(box);
         }
-        showButtonDialog(activity, options, session, wrap(activity, layout),
-                "OK", "Cancel", sink,
+        shell.content.addView(layout);
+        showButtonDialog(shell, session, "OK", "Cancel", sink,
                 () -> {
                     StringBuilder text = new StringBuilder("[");
                     StringBuilder json = new StringBuilder("[");
@@ -262,14 +275,11 @@ public final class DialogForegroundOperation implements ForegroundOperation {
     /** +/- counter bounded by the upstream default range. */
     private static void showCounter(CapabilityForegroundActivity activity,
                                     Options options, Session session, ResultSink sink) {
-        LinearLayout row = new LinearLayout(activity);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        TextView label = new TextView(activity);
-        label.setTextSize(20);
-        Button decrement = new Button(activity);
-        decrement.setText("-");
-        Button increment = new Button(activity);
-        increment.setText("+");
+        Shell shell = new Shell(activity, options.title);
+        View row = shell.inflate(R.layout.nusadesk_dialog_counter);
+        Button decrement = row.findViewById(R.id.nusadesk_dialog_counter_minus);
+        TextView label = row.findViewById(R.id.nusadesk_dialog_counter_value);
+        Button increment = row.findViewById(R.id.nusadesk_dialog_counter_plus);
         int[] counter = {(COUNTER_DEFAULT_MAX - COUNTER_DEFAULT_MIN) / 2};
         label.setText(String.valueOf(counter[0]));
         decrement.setOnClickListener(v -> {
@@ -282,20 +292,16 @@ public final class DialogForegroundOperation implements ForegroundOperation {
                 label.setText(String.valueOf(++counter[0]));
             }
         });
-        row.addView(decrement);
-        row.addView(label);
-        row.addView(increment);
-        showButtonDialog(activity, options, session, wrap(activity, row),
-                "OK", "Cancel", sink,
-                () -> positive(sink, session, label.getText().toString()));
+        showButtonDialog(shell, session, "OK", "Cancel", sink,
+                () -> positive(sink, session, label.getText().toString()), null);
     }
 
     /** Date picker; {@code date_format} or the upstream Date.toString text. */
     private static void showDate(CapabilityForegroundActivity activity, Options options,
                                  Session session, ResultSink sink) {
-        DatePicker picker = new DatePicker(activity);
-        showButtonDialog(activity, options, session, wrap(activity, picker),
-                "OK", "Cancel", sink,
+        Shell shell = new Shell(activity, options.title);
+        DatePicker picker = (DatePicker) shell.inflate(R.layout.nusadesk_dialog_date);
+        showButtonDialog(shell, session, "OK", "Cancel", sink,
                 () -> {
                     Calendar calendar = Calendar.getInstance();
                     calendar.set(picker.getYear(), picker.getMonth(),
@@ -316,20 +322,18 @@ public final class DialogForegroundOperation implements ForegroundOperation {
     /** Single-pick radio buttons; nothing checked answers empty text. */
     private static void showRadio(CapabilityForegroundActivity activity, Options options,
                                   Session session, ResultSink sink) {
-        RadioGroup group = new RadioGroup(activity);
-        group.setPadding(16, 16, 16, 16);
-        List<RadioButton> buttons = new ArrayList<>();
+        Shell shell = new Shell(activity, options.title);
+        RadioGroup group = new RadioGroup(shell.themeContext);
+        LayoutInflater inflater = LayoutInflater.from(shell.themeContext);
         for (int i = 0; i < options.values.size(); i++) {
-            RadioButton button = new RadioButton(activity);
+            RadioButton button = (RadioButton) inflater.inflate(
+                    R.layout.nusadesk_dialog_radio_item, group, false);
             button.setText(options.values.get(i));
             button.setId(i);
-            button.setTextSize(18);
-            button.setPadding(16, 16, 16, 16);
             group.addView(button);
-            buttons.add(button);
         }
-        showButtonDialog(activity, options, session, wrap(activity, group),
-                "OK", "Cancel", sink,
+        shell.content.addView(group);
+        showButtonDialog(shell, session, "OK", "Cancel", sink,
                 () -> {
                     int index = group.indexOfChild(
                             group.findViewById(group.getCheckedRadioButtonId()));
@@ -351,31 +355,40 @@ public final class DialogForegroundOperation implements ForegroundOperation {
      */
     private static void showSheet(CapabilityForegroundActivity activity, Options options,
                                   Session session, ResultSink sink) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(activity)
-                .setTitle(options.title)
-                .setItems(options.values.toArray(new String[0]),
-                        (dialog, which) -> {
-                            Map<String, Object> fields = new LinkedHashMap<>();
-                            fields.put("code", 0L);
-                            fields.put("text", options.values.get(which));
-                            fields.put("index", (long) which);
-                            sink.success(fields);
-                            session.cleanup();
-                        });
-        showDialog(session, builder.create(), sink);
+        Shell shell = new Shell(activity, options.title);
+        LinearLayout list = verticalList(shell.themeContext);
+        LayoutInflater inflater = LayoutInflater.from(shell.themeContext);
+        for (int i = 0; i < options.values.size(); i++) {
+            final int index = i;
+            TextView item = (TextView) inflater.inflate(
+                    R.layout.nusadesk_dialog_sheet_item, list, false);
+            item.setText(options.values.get(i));
+            item.setOnClickListener(v -> {
+                Map<String, Object> fields = new LinkedHashMap<>();
+                fields.put("code", 0L);
+                fields.put("text", options.values.get(index));
+                fields.put("index", (long) index);
+                sink.success(fields);
+                session.cleanup();
+            });
+            list.addView(item);
+        }
+        shell.content.addView(list);
+        shell.hideButtons();
+        present(session, shell, sink);
     }
 
     /** Dropdown spinner; always has a selection. */
     private static void showSpinner(CapabilityForegroundActivity activity,
                                     Options options, Session session, ResultSink sink) {
-        Spinner spinner = new Spinner(activity);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(activity,
-                android.R.layout.simple_spinner_item, options.values);
+        Shell shell = new Shell(activity, options.title);
+        Spinner spinner = (Spinner) shell.inflate(R.layout.nusadesk_dialog_spinner);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(shell.themeContext,
+                R.layout.nusadesk_dialog_spinner_item, options.values);
         adapter.setDropDownViewResource(
-                android.R.layout.simple_spinner_dropdown_item);
+                R.layout.nusadesk_dialog_spinner_dropdown_item);
         spinner.setAdapter(adapter);
-        showButtonDialog(activity, options, session, wrap(activity, spinner),
-                "OK", "Cancel", sink,
+        showButtonDialog(shell, session, "OK", "Cancel", sink,
                 () -> {
                     int index = spinner.getSelectedItemPosition();
                     Map<String, Object> fields = positiveFields(
@@ -507,19 +520,14 @@ public final class DialogForegroundOperation implements ForegroundOperation {
             public void onEvent(int eventType, Bundle params) {
             }
         });
-        TextView message = new TextView(activity);
+        Shell shell = new Shell(activity, options.title);
+        TextView message = (TextView) shell.inflate(R.layout.nusadesk_dialog_message);
         message.setText(options.hint.isEmpty() ? "Listening for speech..." : options.hint);
-        message.setTextSize(20);
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle(options.title)
-                .setView(wrap(activity, message))
-                .setNegativeButton("Cancel", (d, which) -> {
-                    sink.success(cancelledFields());
-                    session.cleanup();
-                })
-                .create();
-        dialog.setCanceledOnTouchOutside(false);
-        showDialog(session, dialog, sink);
+        shell.positive.setVisibility(View.GONE);
+        shell.negative.setText(R.string.nusadesk_dialog_cancel);
+        shell.negative.setOnClickListener(v -> cancel(sink, session));
+        shell.dialog.setCanceledOnTouchOutside(false);
+        present(session, shell, sink);
         Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                         RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -540,9 +548,9 @@ public final class DialogForegroundOperation implements ForegroundOperation {
     /** Time picker answering {@code HH:mm} like upstream. */
     private static void showTime(CapabilityForegroundActivity activity, Options options,
                                  Session session, ResultSink sink) {
-        TimePicker picker = new TimePicker(activity);
-        showButtonDialog(activity, options, session, wrap(activity, picker),
-                "OK", "Cancel", sink,
+        Shell shell = new Shell(activity, options.title);
+        TimePicker picker = (TimePicker) shell.inflate(R.layout.nusadesk_dialog_time);
+        showButtonDialog(shell, session, "OK", "Cancel", sink,
                 () -> positive(sink, session, String.format(Locale.getDefault(),
                         "%02d:%02d", picker.getHour(), picker.getMinute())));
     }
@@ -556,49 +564,45 @@ public final class DialogForegroundOperation implements ForegroundOperation {
     }
 
     /**
-     * Show a titled two-button dialog. The positive button settles through
-     * {@code onPositive}; the negative button and every other dismissal
-     * (back, outside touch, destroy cleanup) answer the upstream cancelled
-     * shape — with the sink's once-only guarantee absorbing the dismiss
-     * that follows a positive click.
+     * Wire a two-button shell and show it. The positive button settles
+     * through {@code onPositive}; the negative button and every other
+     * dismissal (back, outside touch, destroy cleanup) answer the upstream
+     * cancelled shape — with the sink's once-only guarantee absorbing the
+     * dismiss that follows a positive click.
      */
-    private static void showButtonDialog(CapabilityForegroundActivity activity,
-                                         Options options, Session session, View view,
+    private static void showButtonDialog(Shell shell, Session session,
                                          String positiveText, String negativeText,
                                          ResultSink sink, Positive onPositive) {
-        showButtonDialog(activity, options, session, view, positiveText,
-                negativeText, sink, onPositive, null);
+        showButtonDialog(shell, session, positiveText, negativeText, sink,
+                onPositive, null);
     }
 
-    private static void showButtonDialog(CapabilityForegroundActivity activity,
-                                         Options options, Session session, View view,
+    private static void showButtonDialog(Shell shell, Session session,
                                          String positiveText, String negativeText,
                                          ResultSink sink, Positive onPositive,
                                          Runnable onNegative) {
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle(options.title)
-                .setView(view)
-                .setPositiveButton(positiveText, (d, which) -> onPositive.onPositive())
-                .setNegativeButton(negativeText, (d, which) -> {
-                    if (onNegative != null) {
-                        onNegative.run();
-                    } else {
-                        sink.success(cancelledFields());
-                        session.cleanup();
-                    }
-                })
-                .create();
-        showDialog(session, dialog, sink);
+        shell.positive.setText(positiveText);
+        shell.positive.setOnClickListener(v -> onPositive.onPositive());
+        shell.negative.setText(negativeText);
+        shell.negative.setOnClickListener(v -> {
+            if (onNegative != null) {
+                onNegative.run();
+            } else {
+                cancel(sink, session);
+            }
+        });
+        present(session, shell, sink);
     }
 
-    private static void showDialog(Session session, Dialog dialog, ResultSink sink) {
-        session.dialog = dialog;
-        dialog.setOnDismissListener(d -> {
+    private static void present(Session session, Shell shell, ResultSink sink) {
+        session.dialog = shell.dialog;
+        shell.dialog.setOnDismissListener(d -> {
             session.cleanup();
             sink.success(cancelledFields());
         });
         try {
-            dialog.show();
+            sizeWindow(shell);
+            shell.dialog.show();
         } catch (RuntimeException e) {
             Log.w(TAG, "dialog show failed", e);
             sink.error("dialog-unavailable");
@@ -606,22 +610,38 @@ public final class DialogForegroundOperation implements ForegroundOperation {
         }
     }
 
-    /** Wrap the widget view in the upstream scrollable margin frame. */
-    private static View wrap(CapabilityForegroundActivity activity, View view) {
-        FrameLayout layout = new FrameLayout(activity);
-        int margin = (int) (24 * activity.getResources().getDisplayMetrics().density);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(margin, margin, margin, margin);
-        view.setLayoutParams(params);
-        layout.addView(view);
-        ScrollView scroll = new ScrollView(activity);
-        scroll.addView(layout);
-        return scroll;
+    /**
+     * Give the floating window the app dialog's size: nearly the screen width
+     * on a phone, capped on tablets. The height stays {@code WRAP_CONTENT} so
+     * every measure pass recomputes it — a fixed height measured before
+     * {@code show()} goes stale the moment the window is resized (e.g. the
+     * IME under {@code adjustResize}), and the shorter window then squeezes
+     * the action row. The shell's weighted content slot yields space instead,
+     * so the buttons keep their touch-target height whenever the dialog is
+     * shorter than its content.
+     */
+    private static void sizeWindow(Shell shell) {
+        Window window = shell.dialog.getWindow();
+        if (window == null) {
+            return;
+        }
+        DisplayMetrics metrics = shell.themeContext.getResources().getDisplayMetrics();
+        int margin = shell.themeContext.getResources()
+                .getDimensionPixelSize(R.dimen.nusadesk_dialog_screen_margin);
+        int maxWidth = shell.themeContext.getResources()
+                .getDimensionPixelSize(R.dimen.nusadesk_dialog_max_width);
+        int width = Math.min(metrics.widthPixels - 2 * margin, maxWidth);
+        window.setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT);
+        window.setGravity(Gravity.CENTER);
     }
 
-    private static LinearLayout verticalList(Activity activity) {
-        LinearLayout layout = new LinearLayout(activity);
+    private static void cancel(ResultSink sink, Session session) {
+        sink.success(cancelledFields());
+        session.cleanup();
+    }
+
+    private static LinearLayout verticalList(Context context) {
+        LinearLayout layout = new LinearLayout(context);
         layout.setOrientation(LinearLayout.VERTICAL);
         return layout;
     }
@@ -715,6 +735,57 @@ public final class DialogForegroundOperation implements ForegroundOperation {
         }
         out.append('"');
         return out.toString();
+    }
+
+    /**
+     * The shared app-styled dialog frame: a plain {@link Dialog} themed by
+     * {@code NusaDeskDialogTheme} carrying {@code nusadesk_dialog_shell} — a
+     * rounded elevated surface, an optional title, a scrolling content slot,
+     * a divider, and the action row. The themed context matters: the host
+     * activity is {@code Theme.Translucent.NoTitleBar}, so widget bodies and
+     * picker internals must inflate from {@link #themeContext}, never the
+     * activity, or they pick up the platform theme's look.
+     */
+    private static final class Shell {
+        final Dialog dialog;
+        final Context themeContext;
+        final FrameLayout content;
+        final View divider;
+        final LinearLayout buttons;
+        final Button positive;
+        final Button negative;
+
+        Shell(Activity activity, String title) {
+            dialog = new Dialog(activity, R.style.NusaDeskDialogTheme);
+            themeContext = dialog.getContext();
+            dialog.setContentView(R.layout.nusadesk_dialog_shell);
+            TextView titleView = dialog.findViewById(R.id.nusadesk_dialog_title);
+            if (title == null || title.isEmpty()) {
+                titleView.setVisibility(View.GONE);
+            } else {
+                titleView.setText(title);
+            }
+            content = dialog.findViewById(R.id.nusadesk_dialog_content);
+            divider = dialog.findViewById(R.id.nusadesk_dialog_divider);
+            buttons = dialog.findViewById(R.id.nusadesk_dialog_buttons);
+            positive = dialog.findViewById(R.id.nusadesk_dialog_positive);
+            negative = dialog.findViewById(R.id.nusadesk_dialog_negative);
+            dialog.setCanceledOnTouchOutside(true);
+        }
+
+        /** Inflate a widget body into the content slot; returns it for binding. */
+        View inflate(int layoutRes) {
+            View view = LayoutInflater.from(themeContext)
+                    .inflate(layoutRes, content, false);
+            content.addView(view);
+            return view;
+        }
+
+        /** Sheet-style: no action row — the option rows settle the dialog. */
+        void hideButtons() {
+            divider.setVisibility(View.GONE);
+            buttons.setVisibility(View.GONE);
+        }
     }
 
     /**

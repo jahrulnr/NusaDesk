@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Shared shell for every capability-bridge dialog widget: rounded elevated
+    surface, an optional title, a scrolling content slot, a hairline divider,
+    and the action row. DialogForegroundOperation fills the content slot and
+    wires the buttons; the sheet widget hides the row entirely.
+
+    The content slot carries layout_weight="1" on purpose: it must stay
+    wrap_content (not 0dp) so the pre-show measure and WRAP_CONTENT windows
+    still see its natural height — a 0dp+weight child is skipped under
+    AT_MOST parents and measures 0 there — while the weight makes it, never
+    the action row, yield when the window is resized shorter than its
+    content (the IME under adjustResize shrank the fixed window and
+    collapsed the buttons to a sliver before the weight existed). The
+    InefficientWeight lint wants exactly that 0dp, so it is suppressed on
+    this element.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nusadesk_dialog_shell"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/nusadesk_dialog_surface"
+    android:orientation="vertical"
+    android:paddingTop="@dimen/nusadesk_dialog_padding">
+
+    <TextView
+        android:id="@+id/nusadesk_dialog_title"
+        style="@style/Widget.LinuxWrapper.DialogTitle" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        tools:ignore="InefficientWeight"
+        android:clipToPadding="false"
+        android:scrollbars="vertical">
+
+        <FrameLayout
+            android:id="@+id/nusadesk_dialog_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="@dimen/nusadesk_dialog_padding"
+            android:paddingEnd="@dimen/nusadesk_dialog_padding"
+            android:paddingBottom="16dp" />
+    </ScrollView>
+
+    <View
+        android:id="@+id/nusadesk_dialog_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/border"
+        android:importantForAccessibility="no" />
+
+    <LinearLayout
+        android:id="@+id/nusadesk_dialog_buttons"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="end"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+
+        <Button
+            android:id="@+id/nusadesk_dialog_negative"
+            style="@style/Widget.LinuxWrapper.DialogButtonNeutral"
+            android:layout_marginEnd="@dimen/nusadesk_dialog_button_gap" />
+
+        <Button
+            android:id="@+id/nusadesk_dialog_positive"
+            style="@style/Widget.LinuxWrapper.DialogButtonPrimary" />
+    </LinearLayout>
+</LinearLayout>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rounded elevated surface the bridge dialogs draw inside the transparent
+     dialog window; a hairline border keeps the edge visible on dark content. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/surface_elevated" />
+    <corners android:radius="@dimen/nusadesk_dialog_corner" />
+    <stroke android:width="1dp" android:color="@color/border" />
+</shape>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One row in the spinner's open dropdown: a platform single-choice
+     indicator (shape, not color) plus the option text. -->
+<CheckedTextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="@dimen/touch_target"
+    android:gravity="center_vertical"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:checkMark="?android:attr/listChoiceIndicatorSingle"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:textColor="@color/ink"
+    android:textSize="16sp" />

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Counter widget body: decrement, the current value, increment. The value
+     is a plain text readout; editing happens only through the +/- buttons. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <Button
+        android:id="@+id/nusadesk_dialog_counter_minus"
+        style="@style/Widget.LinuxWrapper.DialogButtonNeutral"
+        android:layout_width="@dimen/nusadesk_dialog_counter_button_width"
+        android:contentDescription="@string/nusadesk_dialog_counter_decrease"
+        android:text="@string/nusadesk_dialog_counter_minus_sign"
+        android:textSize="20sp" />
+
+    <TextView
+        android:id="@+id/nusadesk_dialog_counter_value"
+        style="@style/Widget.LinuxWrapper.DialogCounterValue" />
+
+    <Button
+        android:id="@+id/nusadesk_dialog_counter_plus"
+        style="@style/Widget.LinuxWrapper.DialogButtonNeutral"
+        android:layout_width="@dimen/nusadesk_dialog_counter_button_width"
+        android:contentDescription="@string/nusadesk_dialog_counter_increase"
+        android:text="@string/nusadesk_dialog_counter_plus_sign"
+        android:textSize="20sp" />
+</LinearLayout>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Spinner widget body: the closed dropdown renders on the same filled
+     field surface as the text input; the popup uses the dialog surface. -->
+<Spinner xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/nusadesk_dialog_input"
+    android:minHeight="@dimen/touch_target"
+    android:popupBackground="@drawable/nusadesk_dialog_surface" />

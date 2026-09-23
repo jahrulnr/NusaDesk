@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shared message body for the confirm and speech widgets. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/Widget.LinuxWrapper.DialogMessage" />
