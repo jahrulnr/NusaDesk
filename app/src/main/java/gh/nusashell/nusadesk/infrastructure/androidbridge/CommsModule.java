@@ -89,6 +89,15 @@ public final class CommsModule implements CapabilityModule {
     private static final int MAX_SMS_TEXT_CHARS = 8192;
     private static final int MAX_SIM_SLOT = 32;
     private static final long SMS_RESULT_WAIT_MS = 10_000L;
+    /**
+     * Window used to confirm a dispatched SMS against the platform's sent
+     * box when the per-part result broadcast never arrives. Device-observed
+     * on the S7 Edge (Android 10, 2026-09-23): the message was stored in
+     * {@code content://sms/sent} while no result broadcast reached the app
+     * within {@link #SMS_RESULT_WAIT_MS}, so the bridge reported a false
+     * "unconfirmed" for a message that had actually gone out.
+     */
+    private static final long SMS_SENTBOX_WINDOW_MS = 120_000L;
     private static final long CALL_FOREGROUND_TIMEOUT_MS = 60_000L;
 
     private static final int MAX_ALIAS_CHARS = 256;
@@ -247,7 +256,7 @@ public final class CommsModule implements CapabilityModule {
         if (parts == null || parts.isEmpty()) {
             throw new CapabilityParams.Invalid("empty parameter: text");
         }
-        return sendParts(request, smsManager, recipients, parts);
+        return sendParts(request, smsManager, recipients, parts, text);
     }
 
     private SmsManager resolveSmsManager(boolean slotGiven, long slot) {
@@ -293,7 +302,7 @@ public final class CommsModule implements CapabilityModule {
     private AndroidCapabilityProtocol.Response sendParts(
             AndroidCapabilityProtocol.Request request,
             SmsManager smsManager, List<String> recipients,
-            ArrayList<String> parts) {
+            ArrayList<String> parts, String body) {
         String requestTag = Long.toHexString(System.nanoTime());
         Map<String, Integer> results = new ConcurrentHashMap<>();
         CountDownLatch pending =
@@ -375,11 +384,60 @@ public final class CommsModule implements CapabilityModule {
                 unconfirmed.add(recipients.get(r));
             }
         }
+        if (!unconfirmed.isEmpty()) {
+            // No result broadcast: ask the platform's own sent box before
+            // calling a dispatched message unsent.
+            long since = System.currentTimeMillis() - SMS_SENTBOX_WINDOW_MS;
+            List<String> stillUnconfirmed = new ArrayList<>();
+            for (String recipient : unconfirmed) {
+                if (sentBoxHasRecent(recipient, body, since)) {
+                    sent.add(recipient);
+                } else {
+                    stillUnconfirmed.add(recipient);
+                }
+            }
+            unconfirmed = stillUnconfirmed;
+        }
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("sent", String.join(",", sent));
         fields.put("failed", String.join(",", failed));
         fields.put("unconfirmed", String.join(",", unconfirmed));
         return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
+    }
+
+    /**
+     * Whether the platform recorded a recent outgoing message to this
+     * recipient with this body. Numbers are compared by their digits so a
+     * local-form recipient still matches the operator's normalised row.
+     */
+    private boolean sentBoxHasRecent(String recipient, String body, long sinceMillis) {
+        String digits = recipient == null ? "" : recipient.replaceAll("[^0-9]", "");
+        try (android.database.Cursor cursor = context.getContentResolver().query(
+                Uri.parse("content://sms/sent"),
+                new String[] {"address", "body", "date"},
+                "date >= ?", new String[] {String.valueOf(sinceMillis)},
+                "date DESC")) {
+            if (cursor == null) {
+                return false;
+            }
+            int addressColumn = cursor.getColumnIndex("address");
+            int bodyColumn = cursor.getColumnIndex("body");
+            while (cursor.moveToNext()) {
+                String address = addressColumn < 0 ? null : cursor.getString(addressColumn);
+                String rowBody = bodyColumn < 0 ? null : cursor.getString(bodyColumn);
+                if (rowBody == null || !rowBody.equals(body)) {
+                    continue;
+                }
+                String rowDigits = address == null ? "" : address.replaceAll("[^0-9]", "");
+                if (!digits.isEmpty() && (rowDigits.equals(digits)
+                        || rowDigits.endsWith(digits) || digits.endsWith(rowDigits))) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "sms.send: sent-box confirmation unavailable", e);
+        }
+        return false;
     }
 
     private void registerReceiver(BroadcastReceiver receiver, String action) {
