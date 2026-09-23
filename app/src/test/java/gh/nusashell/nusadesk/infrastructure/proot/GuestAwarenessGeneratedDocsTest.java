@@ -40,8 +40,10 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(index.contains("nusadesk-android calendar list"));
         assertTrue(index.contains("nusadesk-android calendar add --title"));
         assertTrue(index.contains("nusadesk-android calendar delete EVENT_ID"));
-        assertTrue(index.contains(
-                "nusadesk-android media start [--camera|--microphone]"));
+        assertTrue(index.contains("nusadesk-android media start [--camera|--microphone]"));
+        assertTrue(index.contains("nusadesk-android media outputs|route DEVICE_ID|route clear"));
+        assertTrue(index.contains("nusadesk-bt hid start|status|connect|type|key|mouse|stop"));
+        assertTrue(index.contains("nusadesk-bt audio status|voice start|voice stop"));
         assertTrue(index.contains("nusadesk-android bridge info"));
     }
 
@@ -59,6 +61,13 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(bridge.contains("media.start"));
         assertTrue(bridge.contains("media.status"));
         assertTrue(bridge.contains("media.stop"));
+        assertTrue(bridge.contains("mediaplayer.outputs"));
+        assertTrue(bridge.contains("mediaplayer.route.clear"));
+        assertTrue(bridge.contains("bt.hid.start"));
+        assertTrue(bridge.contains("keyboard/mouse HID device"));
+        assertTrue(bridge.contains("bt.audio.voice.start|stop"));
+        assertTrue(bridge.contains("voice-recognition control"));
+        assertTrue(bridge.contains("output device ids are temporary"));
         assertTrue(bridge.contains("token is never"));
         assertTrue(bridge.contains("64 KiB"));
         // The envelope is no longer param-free: the methods that declare

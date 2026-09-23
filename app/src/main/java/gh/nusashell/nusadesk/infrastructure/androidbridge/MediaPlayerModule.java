@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.Intent;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -24,6 +26,17 @@ import gh.nusashell.nusadesk.infrastructure.service.MediaPlaybackService;
  * validates params, resolves the guest staging path (contract §8.1), maps
  * outcomes onto upstream's message texts, and reports typed errors. Platform
  * exceptions are logged inside the service and never reach the wire.</p>
+ *
+ * <p>The routing methods ({@code mediaplayer.outputs},
+ * {@code mediaplayer.route}, {@code mediaplayer.route.clear}) expose the
+ * public per-player {@code AudioRouting} surface only: the guest can list the
+ * current output sinks as {@code outputs_json} rows of {@code device_id},
+ * {@code type}, {@code name}, {@code is_sink} (bounded to
+ * {@value #MAX_OUTPUT_ROWS}), pin this app's own playback to one sink, and
+ * clear the pin. Device ids are ephemeral and never persisted; a remembered
+ * route is revalidated against a fresh device list when a track begins and a
+ * stale id surfaces as {@code mediaplayer-route-failed}. This is not global
+ * route control and does not connect audio profiles.</p>
  */
 public final class MediaPlayerModule implements CapabilityModule {
 
@@ -31,9 +44,13 @@ public final class MediaPlayerModule implements CapabilityModule {
     private static final String METHOD_PAUSE = "mediaplayer.pause";
     private static final String METHOD_STOP = "mediaplayer.stop";
     private static final String METHOD_INFO = "mediaplayer.info";
+    private static final String METHOD_OUTPUTS = "mediaplayer.outputs";
+    private static final String METHOD_ROUTE = "mediaplayer.route";
+    private static final String METHOD_ROUTE_CLEAR = "mediaplayer.route.clear";
 
     private static final int PATH_MAX_CHARS = 4096;
     private static final int NAME_MAX_CHARS = 512;
+    private static final int MAX_OUTPUT_ROWS = 32;
 
     private final Context context;
     private final GuestFilePathResolver paths;
@@ -49,12 +66,13 @@ public final class MediaPlayerModule implements CapabilityModule {
 
     @Override
     public List<String> methods() {
-        return List.of(METHOD_PLAY, METHOD_PAUSE, METHOD_STOP, METHOD_INFO);
+        return List.of(METHOD_PLAY, METHOD_PAUSE, METHOD_STOP, METHOD_INFO,
+                METHOD_OUTPUTS, METHOD_ROUTE, METHOD_ROUTE_CLEAR);
     }
 
     @Override
     public Set<String> parameterMethods() {
-        return Set.of(METHOD_PLAY);
+        return Set.of(METHOD_PLAY, METHOD_ROUTE);
     }
 
     @Override
@@ -73,6 +91,12 @@ public final class MediaPlayerModule implements CapabilityModule {
                     return stop(request);
                 case METHOD_INFO:
                     return info(request);
+                case METHOD_OUTPUTS:
+                    return outputs(request);
+                case METHOD_ROUTE:
+                    return route(request);
+                case METHOD_ROUTE_CLEAR:
+                    return routeClear(request);
                 default:
                     return AndroidCapabilityProtocol.Response.error(
                             request.getId(), "unsupported-method");
@@ -119,7 +143,8 @@ public final class MediaPlayerModule implements CapabilityModule {
         }
         MediaPlaybackService.PlaybackResult result =
                 MediaPlaybackService.play(hostPath, display);
-        if (result.getOutcome() == MediaPlaybackService.Outcome.FAILED) {
+        if (result.getOutcome() == MediaPlaybackService.Outcome.FAILED
+                || result.getOutcome() == MediaPlaybackService.Outcome.ROUTE_FAILED) {
             // Nothing loaded: drop the foreground slot the start created.
             try {
                 context.stopService(
@@ -128,7 +153,9 @@ public final class MediaPlayerModule implements CapabilityModule {
                 // The service settles itself; nothing else to clean up.
             }
             return AndroidCapabilityProtocol.Response.error(
-                    request.getId(), "mediaplayer-play-failed");
+                    request.getId(),
+                    result.getOutcome() == MediaPlaybackService.Outcome.ROUTE_FAILED
+                            ? "mediaplayer-route-failed" : "mediaplayer-play-failed");
         }
         return AndroidCapabilityProtocol.Response.success(
                 request.getId(), fields(result,
@@ -218,6 +245,101 @@ public final class MediaPlayerModule implements CapabilityModule {
                 request.getId(), fields(result, message));
     }
 
+    /**
+     * {@code mediaplayer.outputs} — no params; the current output sinks as
+     * {@code outputs_json} rows {@code {device_id,type,name,is_sink}} sorted
+     * by id, bounded to {@value #MAX_OUTPUT_ROWS} with {@code count} and a
+     * {@code truncated} flag. The ids are transient and valid only against a
+     * fresh list.
+     */
+    private AndroidCapabilityProtocol.Response outputs(
+            AndroidCapabilityProtocol.Request request) {
+        List<MediaPlaybackService.AudioOutput> devices =
+                new ArrayList<>(MediaPlaybackService.outputs(context));
+        devices.sort(Comparator.comparingInt(MediaPlaybackService.AudioOutput::getId));
+        int count = Math.min(devices.size(), MAX_OUTPUT_ROWS);
+        StringBuilder json = new StringBuilder(count * 96);
+        json.append('[');
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                json.append(',');
+            }
+            MediaPlaybackService.AudioOutput device = devices.get(i);
+            json.append("{\"device_id\":").append(device.getId())
+                    .append(",\"type\":")
+                    .append(AndroidCapabilityProtocol.encodeStringValue(device.getType()))
+                    .append(",\"name\":")
+                    .append(AndroidCapabilityProtocol.encodeStringValue(device.getName()))
+                    .append(",\"is_sink\":").append(device.isSink())
+                    .append('}');
+        }
+        json.append(']');
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("outputs_json", json.toString());
+        fields.put("count", (long) count);
+        if (devices.size() > MAX_OUTPUT_ROWS) {
+            fields.put("truncated", true);
+        }
+        return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
+    }
+
+    /**
+     * {@code mediaplayer.route} — params {@code device_id} (required
+     * integer). The id must name a current output sink; the choice is applied
+     * to the live player or remembered process-locally for the next one.
+     */
+    private AndroidCapabilityProtocol.Response route(
+            AndroidCapabilityProtocol.Request request) {
+        String id = request.getId();
+        CapabilityParams params = CapabilityParams.of(request);
+        params.rejectUnknown(Set.of("device_id"));
+        if (!params.has("device_id")) {
+            throw new CapabilityParams.Invalid("missing integer parameter: device_id");
+        }
+        long deviceId = params.optionalLong("device_id", 0, Integer.MAX_VALUE, -1);
+        MediaPlaybackService.RouteResult result =
+                MediaPlaybackService.routeTo(context, (int) deviceId);
+        switch (result.getStatus()) {
+            case DEVICE_UNKNOWN:
+                return AndroidCapabilityProtocol.Response.error(
+                        id, "mediaplayer-route-device-unknown");
+            case DEVICE_NOT_OUTPUT:
+                return AndroidCapabilityProtocol.Response.error(
+                        id, "mediaplayer-route-device-not-output");
+            case FAILED:
+                return AndroidCapabilityProtocol.Response.error(
+                        id, "mediaplayer-route-failed");
+            default:
+                break;
+        }
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("device_id", (long) result.getDeviceId());
+        if (result.getName() != null) {
+            fields.put("name", result.getName());
+        }
+        if (result.getType() != null) {
+            fields.put("type", result.getType());
+        }
+        fields.put("applied", result.isApplied());
+        return AndroidCapabilityProtocol.Response.success(id, fields);
+    }
+
+    /**
+     * {@code mediaplayer.route.clear} — no params; clears the preferred
+     * output on the live player and the remembered choice. Idempotent:
+     * {@code cleared} reports whether anything was dropped, {@code applied}
+     * whether the clear reached a live player.
+     */
+    private AndroidCapabilityProtocol.Response routeClear(
+            AndroidCapabilityProtocol.Request request) {
+        MediaPlaybackService.RouteClearResult result =
+                MediaPlaybackService.clearRoute();
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("cleared", result.isCleared());
+        fields.put("applied", result.isApplied());
+        return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
+    }
+
     /** Shared response fields: upstream message text plus typed state. */
     private static Map<String, Object> fields(
             MediaPlaybackService.PlaybackResult result, String message) {
@@ -233,6 +355,13 @@ public final class MediaPlayerModule implements CapabilityModule {
         }
         if (result.getDurationMs() >= 0) {
             fields.put("duration_ms", result.getDurationMs());
+        }
+        if (result.getPreferredOutputId() != null) {
+            fields.put("preferred_output_id",
+                    (long) result.getPreferredOutputId());
+        }
+        if (result.getRoutedOutputId() != null) {
+            fields.put("routed_output_id", (long) result.getRoutedOutputId());
         }
         return fields;
     }

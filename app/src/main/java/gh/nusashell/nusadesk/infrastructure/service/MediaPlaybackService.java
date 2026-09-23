@@ -9,6 +9,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.os.Build;
 import android.os.IBinder;
@@ -17,6 +19,8 @@ import android.util.Log;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -58,12 +62,25 @@ public final class MediaPlaybackService extends Service {
 
     private static final Object PLAYER_LOCK = new Object();
     private static MediaPlayer player;
+    /** Routing view of {@link #player}; null exactly when the player is. */
+    private static AudioRoutingPlayer routing;
+    /**
+     * The guest's preferred output id while it has not been applied to a live
+     * player (or the platform refused it). Process-local only — audio device
+     * ids are ephemeral, so the choice is never persisted and is revalidated
+     * against a fresh {@code AudioManager.getDevices} list every time a track
+     * begins.
+     */
+    private static Integer pendingRouteId;
     /** Stream backing the loaded track; open while the track exists. */
     private static boolean hasTrack;
     private static String trackName;
     private static volatile boolean foregroundActive;
     private static volatile CountDownLatch foregroundLatch;
     private static volatile Context appContext;
+    /** Test seams; null selects the platform implementations. */
+    private static volatile AudioOutputProvider outputProviderOverride;
+    private static volatile AudioRoutingFactory routingFactoryOverride;
 
     /** Outcome of one static playback operation, mapped by the module. */
     public enum Outcome {
@@ -80,6 +97,12 @@ public final class MediaPlaybackService extends Service {
         NO_TRACK,
         /** The platform refused the load/start. */
         FAILED,
+        /**
+         * A pending preferred output could not be revalidated or applied when
+         * the track began — the play is refused instead of silently reporting
+         * success on the default route.
+         */
+        ROUTE_FAILED,
         /** Snapshot answer for {@code mediaplayer.info}. */
         INFO
     }
@@ -92,15 +115,20 @@ public final class MediaPlaybackService extends Service {
         private final long positionMs;
         private final long durationMs;
         private final String track;
+        private final Integer preferredOutputId;
+        private final Integer routedOutputId;
 
         PlaybackResult(Outcome outcome, boolean trackLoaded, boolean playing,
-                       long positionMs, long durationMs, String track) {
+                       long positionMs, long durationMs, String track,
+                       Integer preferredOutputId, Integer routedOutputId) {
             this.outcome = outcome;
             this.trackLoaded = trackLoaded;
             this.playing = playing;
             this.positionMs = positionMs;
             this.durationMs = durationMs;
             this.track = track;
+            this.preferredOutputId = preferredOutputId;
+            this.routedOutputId = routedOutputId;
         }
 
         public Outcome getOutcome() {
@@ -128,6 +156,23 @@ public final class MediaPlaybackService extends Service {
         /** Display name of the loaded track; {@code null} when none. */
         public String getTrack() {
             return track;
+        }
+
+        /**
+         * Id of the preferred output the player was given, or the pending
+         * choice when no player exists; {@code null} when neither applies.
+         */
+        public Integer getPreferredOutputId() {
+            return preferredOutputId;
+        }
+
+        /**
+         * Id of the device the player is actually routed to; {@code null}
+         * whenever the platform reports none (e.g. not playing), never
+         * guessed.
+         */
+        public Integer getRoutedOutputId() {
+            return routedOutputId;
         }
     }
 
@@ -196,6 +241,18 @@ public final class MediaPlaybackService extends Service {
         synchronized (PLAYER_LOCK) {
             ensurePlayerLocked();
             clearTrackLocked();
+            if (pendingRouteId != null) {
+                AudioOutput target = findOutputLocked(
+                        freshOutputsLocked(), pendingRouteId);
+                if (target == null || !target.isSink()) {
+                    return result(Outcome.ROUTE_FAILED);
+                }
+            }
+            // A pending preferred output is revalidated against a fresh
+            // device list and applied after prepare() has created the media
+            // output track, but before start() can emit audio. A stale or
+            // refused route fails the play instead of silently falling back
+            // to the default device while claiming the route was honored.
             // Play by path, not by file descriptor: the descriptor form
             // shares our stream's offset with the player and was measured on
             // the S10e (2026-09-22) to start and then stop the track within
@@ -204,6 +261,10 @@ public final class MediaPlaybackService extends Service {
             try {
                 player.setDataSource(file.toAbsolutePath().toString());
                 player.prepare();
+                if (applyPendingRouteLocked() != null) {
+                    player.reset();
+                    return result(Outcome.ROUTE_FAILED);
+                }
                 player.start();
             } catch (IOException | RuntimeException e) {
                 Log.w(TAG, "mediaplayer load/start failed", e);
@@ -287,6 +348,10 @@ public final class MediaPlaybackService extends Service {
         Context app = context.getApplicationContext();
         synchronized (PLAYER_LOCK) {
             releasePlayerLocked();
+            // Output ids belong to this bridge/process view only. Drop the
+            // pending choice with the owning capability session so a later
+            // session cannot reuse a stale or recycled platform id.
+            pendingRouteId = null;
         }
         try {
             app.stopService(new Intent(app, MediaPlaybackService.class));
@@ -367,6 +432,9 @@ public final class MediaPlaybackService extends Service {
             return;
         }
         player = new MediaPlayer();
+        AudioRoutingFactory factory = routingFactoryOverride;
+        routing = factory != null
+                ? factory.attach(player) : new MediaPlayerRouting(player);
         if (appContext != null) {
             player.setWakeMode(appContext, PowerManager.PARTIAL_WAKE_LOCK);
         }
@@ -422,6 +490,7 @@ public final class MediaPlaybackService extends Service {
             }
             player = null;
         }
+        routing = null;
     }
 
     private static boolean isPlayingLocked() {
@@ -446,8 +515,517 @@ public final class MediaPlaybackService extends Service {
                 duration = -1;
             }
         }
+        Integer preferred = null;
+        Integer routed = null;
+        AudioRoutingPlayer current = routing;
+        if (current != null) {
+            preferred = current.preferredOutputId();
+            routed = current.routedOutputId();
+        }
+        if (preferred == null) {
+            // No live preferred device: report the remembered choice so a
+            // pending route is visible before any player exists.
+            preferred = pendingRouteId;
+        }
         return new PlaybackResult(outcome, hasTrack, playing,
-                position, duration, trackName);
+                position, duration, trackName, preferred, routed);
+    }
+
+    // --- audio output routing ---------------------------------------------------
+    //
+    // Public-API routing for this app's own MediaPlayer only: the bridge may
+    // enumerate the current output sinks, pin the player to one of them via
+    // AudioRouting.setPreferredDevice, and clear that pin. It is not global
+    // route control and it does not connect audio profiles. Device ids are
+    // ephemeral — every decision is made from a fresh
+    // AudioManager.getDevices(GET_DEVICES_OUTPUTS) list and the remembered
+    // choice lives only for this process.
+
+    /** Max device-name length kept on the wire and in the pending choice. */
+    static final int OUTPUT_NAME_MAX_CHARS = 128;
+
+    /** One current output device: wire data plus the platform handle. */
+    public static final class AudioOutput {
+        private final int id;
+        private final String type;
+        private final String name;
+        private final boolean sink;
+        /** The platform device used to apply the route; null under fakes. */
+        private final AudioDeviceInfo device;
+
+        AudioOutput(int id, String type, String name, boolean sink,
+                    AudioDeviceInfo device) {
+            this.id = id;
+            this.type = type == null ? "unknown" : type;
+            this.name = sanitizeOutputName(name);
+            this.sink = sink;
+            this.device = device;
+        }
+
+        /** Ephemeral platform device id; never persisted. */
+        public int getId() {
+            return id;
+        }
+
+        /** Stable type string such as {@code bluetooth_a2dp}. */
+        public String getType() {
+            return type;
+        }
+
+        /** Bounded product name, control characters stripped. */
+        public String getName() {
+            return name;
+        }
+
+        /** Whether the device can be an output sink. */
+        public boolean isSink() {
+            return sink;
+        }
+
+        AudioDeviceInfo device() {
+            return device;
+        }
+    }
+
+    /** Fresh snapshot of the current output devices. */
+    interface AudioOutputProvider {
+        List<AudioOutput> outputs();
+    }
+
+    /** The routing calls of the one player, isolated for tests. */
+    interface AudioRoutingPlayer {
+        /** Pin the preferred output ({@code null} clears); false when refused. */
+        boolean setPreferredOutput(AudioOutput output);
+
+        /** Id of the player's preferred output, or null when none is set. */
+        Integer preferredOutputId();
+
+        /** Id of the device actually routed to, or null when the platform reports none. */
+        Integer routedOutputId();
+    }
+
+    /** Builds the routing view for a freshly constructed player. */
+    interface AudioRoutingFactory {
+        AudioRoutingPlayer attach(MediaPlayer player);
+    }
+
+    /** Wire status of one {@code mediaplayer.route} call. */
+    public enum RouteStatus {
+        /** Applied to the live player. */
+        ROUTED,
+        /** No player exists; remembered for the next one. */
+        PENDING,
+        /** The id is absent from the fresh output list. */
+        DEVICE_UNKNOWN,
+        /** The id exists but is not an output sink. */
+        DEVICE_NOT_OUTPUT,
+        /** The platform refused to apply the preferred device. */
+        FAILED
+    }
+
+    /** Immutable result of {@code mediaplayer.route} for wire formatting. */
+    public static final class RouteResult {
+        private final RouteStatus status;
+        private final int deviceId;
+        private final String name;
+        private final String type;
+        private final boolean applied;
+
+        private RouteResult(RouteStatus status, int deviceId,
+                            String name, String type, boolean applied) {
+            this.status = status;
+            this.deviceId = deviceId;
+            this.name = name;
+            this.type = type;
+            this.applied = applied;
+        }
+
+        static RouteResult routed(AudioOutput output) {
+            return new RouteResult(RouteStatus.ROUTED, output.getId(),
+                    output.getName(), output.getType(), true);
+        }
+
+        static RouteResult pending(AudioOutput output) {
+            return new RouteResult(RouteStatus.PENDING, output.getId(),
+                    output.getName(), output.getType(), false);
+        }
+
+        static RouteResult deviceUnknown(int deviceId) {
+            return new RouteResult(RouteStatus.DEVICE_UNKNOWN, deviceId,
+                    null, null, false);
+        }
+
+        static RouteResult notOutput(AudioOutput output) {
+            return new RouteResult(RouteStatus.DEVICE_NOT_OUTPUT, output.getId(),
+                    output.getName(), output.getType(), false);
+        }
+
+        static RouteResult failed(AudioOutput output) {
+            return new RouteResult(RouteStatus.FAILED, output.getId(),
+                    output.getName(), output.getType(), false);
+        }
+
+        public RouteStatus getStatus() {
+            return status;
+        }
+
+        public int getDeviceId() {
+            return deviceId;
+        }
+
+        /** Sanitized device name; null when the id was not found. */
+        public String getName() {
+            return name;
+        }
+
+        /** Stable device type string; null when the id was not found. */
+        public String getType() {
+            return type;
+        }
+
+        /** Whether the route was applied to a live player. */
+        public boolean isApplied() {
+            return applied;
+        }
+    }
+
+    /** Immutable result of {@code mediaplayer.route.clear}. */
+    public static final class RouteClearResult {
+        private final boolean cleared;
+        private final boolean applied;
+
+        private RouteClearResult(boolean cleared, boolean applied) {
+            this.cleared = cleared;
+            this.applied = applied;
+        }
+
+        /** Whether any remembered or live preferred route was dropped. */
+        public boolean isCleared() {
+            return cleared;
+        }
+
+        /** Whether the clear reached a live player. */
+        public boolean isApplied() {
+            return applied;
+        }
+    }
+
+    /** Fresh list of the current output sinks for {@code mediaplayer.outputs}. */
+    public static List<AudioOutput> outputs(Context context) {
+        appContext = context.getApplicationContext();
+        synchronized (PLAYER_LOCK) {
+            return freshOutputsLocked();
+        }
+    }
+
+    /**
+     * {@code mediaplayer.route}: pin the shared player to the output whose id
+     * is {@code deviceId}, or remember the choice process-locally when no
+     * player exists yet. The id must exist in a fresh output list and be a
+     * sink; a refused live apply keeps the pending choice so the next play
+     * still surfaces the failure instead of silently rerouting.
+     */
+    public static RouteResult routeTo(Context context, int deviceId) {
+        appContext = context.getApplicationContext();
+        synchronized (PLAYER_LOCK) {
+            AudioOutput target = findOutputLocked(freshOutputsLocked(), deviceId);
+            if (target == null) {
+                return RouteResult.deviceUnknown(deviceId);
+            }
+            if (!target.isSink()) {
+                return RouteResult.notOutput(target);
+            }
+            pendingRouteId = deviceId;
+            if (routing == null || !hasTrack) {
+                return RouteResult.pending(target);
+            }
+            return applyRouteLocked(target)
+                    ? RouteResult.routed(target) : RouteResult.failed(target);
+        }
+    }
+
+    /**
+     * {@code mediaplayer.route.clear}: drop the remembered choice and clear
+     * the preferred device on the live player. Idempotent — a second call
+     * reports {@code cleared=false} and never errors.
+     */
+    public static RouteClearResult clearRoute() {
+        synchronized (PLAYER_LOCK) {
+            boolean cleared = pendingRouteId != null;
+            pendingRouteId = null;
+            boolean applied = false;
+            if (routing != null) {
+                cleared = cleared || routing.preferredOutputId() != null;
+                applied = applyRouteLocked(null);
+            }
+            return new RouteClearResult(cleared, applied);
+        }
+    }
+
+    /**
+     * Revalidate the remembered output id against a fresh device list and
+     * apply it to the (idle) player. Returns {@link Outcome#ROUTE_FAILED}
+     * when a choice exists but is no longer a sink or the platform refuses
+     * it; {@code null} when nothing is pending or the apply succeeded.
+     */
+    private static Outcome applyPendingRouteLocked() {
+        Integer id = pendingRouteId;
+        if (id == null) {
+            return null;
+        }
+        AudioOutput target = findOutputLocked(freshOutputsLocked(), id);
+        if (target == null || !target.isSink()) {
+            return Outcome.ROUTE_FAILED;
+        }
+        return applyRouteLocked(target) ? null : Outcome.ROUTE_FAILED;
+    }
+
+    /** {@code setPreferredDevice} on the live player; false when refused. */
+    private static boolean applyRouteLocked(AudioOutput target) {
+        AudioRoutingPlayer current = routing;
+        if (current == null) {
+            return false;
+        }
+        try {
+            return current.setPreferredOutput(target);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "mediaplayer route apply failed", e);
+            return false;
+        }
+    }
+
+    private static AudioOutput findOutputLocked(List<AudioOutput> outputs, int id) {
+        for (AudioOutput output : outputs) {
+            if (output != null && output.getId() == id) {
+                return output;
+            }
+        }
+        return null;
+    }
+
+    private static List<AudioOutput> freshOutputsLocked() {
+        AudioOutputProvider provider = outputProviderOverride;
+        if (provider == null) {
+            Context app = appContext;
+            provider = app == null ? null : new PlatformAudioOutputProvider(app);
+        }
+        if (provider == null) {
+            return List.of();
+        }
+        try {
+            List<AudioOutput> outputs = provider.outputs();
+            return outputs == null ? List.of() : outputs;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "mediaplayer output list failed", e);
+            return List.of();
+        }
+    }
+
+    /**
+     * Package-private test seam: substitutes the device list and the routing
+     * view of every subsequently constructed player (and re-attaches to a
+     * live one), so the route policy is testable without a platform
+     * {@link AudioDeviceInfo}.
+     */
+    static void setAudioRoutingForTest(AudioOutputProvider provider,
+                                       AudioRoutingFactory factory) {
+        synchronized (PLAYER_LOCK) {
+            outputProviderOverride = provider;
+            routingFactoryOverride = factory;
+            if (player != null) {
+                routing = factory != null
+                        ? factory.attach(player) : new MediaPlayerRouting(player);
+            }
+        }
+    }
+
+    /** Package-private test reset: release the player and drop every seam. */
+    static void resetForTest(Context context) {
+        releaseAll(context);
+        synchronized (PLAYER_LOCK) {
+            pendingRouteId = null;
+            outputProviderOverride = null;
+            routingFactoryOverride = null;
+        }
+    }
+
+    /** Platform provider: {@code AudioManager.getDevices(GET_DEVICES_OUTPUTS)}. */
+    private static final class PlatformAudioOutputProvider implements AudioOutputProvider {
+        private final Context context;
+
+        PlatformAudioOutputProvider(Context context) {
+            this.context = context;
+        }
+
+        @Override
+        public List<AudioOutput> outputs() {
+            AudioManager manager = context.getSystemService(AudioManager.class);
+            if (manager == null) {
+                return List.of();
+            }
+            AudioDeviceInfo[] devices;
+            try {
+                devices = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+            } catch (RuntimeException e) {
+                return List.of();
+            }
+            if (devices == null) {
+                return List.of();
+            }
+            List<AudioOutput> outputs = new ArrayList<>(devices.length);
+            for (AudioDeviceInfo device : devices) {
+                if (device == null) {
+                    continue;
+                }
+                CharSequence product;
+                try {
+                    product = device.getProductName();
+                } catch (RuntimeException e) {
+                    product = null;
+                }
+                outputs.add(new AudioOutput(device.getId(),
+                        deviceTypeName(device.getType()),
+                        product == null ? null : product.toString(),
+                        device.isSink(), device));
+            }
+            return outputs;
+        }
+    }
+
+    /** Production routing view: delegates to the player's AudioRouting surface. */
+    private static final class MediaPlayerRouting implements AudioRoutingPlayer {
+        private final MediaPlayer player;
+
+        MediaPlayerRouting(MediaPlayer player) {
+            this.player = player;
+        }
+
+        @Override
+        public boolean setPreferredOutput(AudioOutput output) {
+            try {
+                return player.setPreferredDevice(
+                        output == null ? null : output.device());
+            } catch (RuntimeException e) {
+                return false;
+            }
+        }
+
+        @Override
+        public Integer preferredOutputId() {
+            try {
+                AudioDeviceInfo device = player.getPreferredDevice();
+                return device == null ? null : device.getId();
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+
+        @Override
+        public Integer routedOutputId() {
+            try {
+                AudioDeviceInfo device = player.getRoutedDevice();
+                return device == null ? null : device.getId();
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Stable device-type names for the wire. Unknown platform values degrade
+     * to {@code unknown_<n>} so the field stays a string and still carries
+     * the raw type code.
+     */
+    @SuppressWarnings("deprecation") // legacy TYPE_* constants still report real devices
+    static String deviceTypeName(int type) {
+        switch (type) {
+            case AudioDeviceInfo.TYPE_BUILTIN_EARPIECE:
+                return "built_in_earpiece";
+            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER:
+                return "built_in_speaker";
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+                return "wired_headset";
+            case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+                return "wired_headphones";
+            case AudioDeviceInfo.TYPE_LINE_ANALOG:
+                return "line_analog";
+            case AudioDeviceInfo.TYPE_LINE_DIGITAL:
+                return "line_digital";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+                return "bluetooth_sco";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                return "bluetooth_a2dp";
+            case AudioDeviceInfo.TYPE_HDMI:
+                return "hdmi";
+            case AudioDeviceInfo.TYPE_HDMI_ARC:
+                return "hdmi_arc";
+            case AudioDeviceInfo.TYPE_HDMI_EARC:
+                return "hdmi_earc";
+            case AudioDeviceInfo.TYPE_USB_DEVICE:
+                return "usb_device";
+            case AudioDeviceInfo.TYPE_USB_ACCESSORY:
+                return "usb_accessory";
+            case AudioDeviceInfo.TYPE_USB_HEADSET:
+                return "usb_headset";
+            case AudioDeviceInfo.TYPE_DOCK:
+                return "dock";
+            case AudioDeviceInfo.TYPE_DOCK_ANALOG:
+                return "dock_analog";
+            case AudioDeviceInfo.TYPE_FM:
+                return "fm";
+            case AudioDeviceInfo.TYPE_BUILTIN_MIC:
+                return "built_in_mic";
+            case AudioDeviceInfo.TYPE_FM_TUNER:
+                return "fm_tuner";
+            case AudioDeviceInfo.TYPE_TV_TUNER:
+                return "tv_tuner";
+            case AudioDeviceInfo.TYPE_TELEPHONY:
+                return "telephony";
+            case AudioDeviceInfo.TYPE_AUX_LINE:
+                return "aux_line";
+            case AudioDeviceInfo.TYPE_IP:
+                return "ip";
+            case AudioDeviceInfo.TYPE_BUS:
+                return "bus";
+            case AudioDeviceInfo.TYPE_HEARING_AID:
+                return "hearing_aid";
+            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE:
+                return "built_in_speaker_safe";
+            case AudioDeviceInfo.TYPE_REMOTE_SUBMIX:
+                return "remote_submix";
+            case AudioDeviceInfo.TYPE_BLE_HEADSET:
+                return "ble_headset";
+            case AudioDeviceInfo.TYPE_BLE_SPEAKER:
+                return "ble_speaker";
+            case AudioDeviceInfo.TYPE_BLE_BROADCAST:
+                return "ble_broadcast";
+            case AudioDeviceInfo.TYPE_BLE_HEARING_AID:
+                return "ble_hearing_aid";
+            case AudioDeviceInfo.TYPE_BLE_CENTRAL:
+                return "ble_central";
+            case AudioDeviceInfo.TYPE_BLE_CENTRAL_BROADCAST:
+                return "ble_central_broadcast";
+            case AudioDeviceInfo.TYPE_MULTICHANNEL_GROUP:
+                return "multichannel_group";
+            case AudioDeviceInfo.TYPE_UNKNOWN:
+            default:
+                return "unknown_" + type;
+        }
+    }
+
+    /** Bounded display name: control characters stripped, length capped. */
+    static String sanitizeOutputName(String name) {
+        if (name == null) {
+            return "";
+        }
+        StringBuilder clean = new StringBuilder(
+                Math.min(name.length(), OUTPUT_NAME_MAX_CHARS));
+        for (int i = 0; i < name.length()
+                && clean.length() < OUTPUT_NAME_MAX_CHARS; i++) {
+            char c = name.charAt(i);
+            clean.append(Character.isISOControl(c) ? ' ' : c);
+        }
+        return clean.toString().trim();
     }
 
     // --- notification ---------------------------------------------------------

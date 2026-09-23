@@ -50,7 +50,8 @@ public class GuestAwarenessCliTest {
         assertTrue(content.contains("secrets.token_urlsafe(8)"));
         assertTrue(content.contains(
                 "usage: nusadesk-android media start [--camera|--microphone]"
-                        + " | media status | media stop | bridge info"
+                        + " | media status | media stop | media outputs"
+                        + " | media route DEVICE_ID | media route clear | bridge info"
                         + " | calendar list"
                         + " | calendar add --title TITLE --begin-ms EPOCH_MS"
                         + " --end-ms EPOCH_MS [--all-day] [--location LOCATION]"
@@ -67,6 +68,8 @@ public class GuestAwarenessCliTest {
         expected.put("media start --microphone", "media.microphone.start");
         expected.put("media status", "media.status");
         expected.put("media stop", "media.stop");
+        expected.put("media outputs", "mediaplayer.outputs");
+        expected.put("media route clear", "mediaplayer.route.clear");
         expected.put("bridge info", "bridge.info");
         expected.put("calendar list", "calendar.list");
         assertEquals(expected, commandMapping(content));
@@ -176,7 +179,9 @@ public class GuestAwarenessCliTest {
                 "TOKEN = 'test_token_0123456789ABCDEF_inv'",
                 "PROTOCOL = '1'",
                 "USAGE = ('usage: nusadesk-android media start [--camera|--microphone]'",
-                "         + ' | media status | media stop | bridge info | calendar list'",
+                "         + ' | media status | media stop | media outputs'",
+                "         + ' | media route DEVICE_ID | media route clear | bridge info'",
+                "         + ' | calendar list'",
                 "         + ' | calendar add --title TITLE --begin-ms EPOCH_MS'",
                 "         + ' --end-ms EPOCH_MS [--all-day] [--location LOCATION]'",
                 "         + ' | calendar update EVENT_ID [--title TITLE]'",
@@ -319,6 +324,17 @@ public class GuestAwarenessCliTest {
                 "run_case(module, 'stop-stopped', ['media', 'stop'],",
                 "         {'v': 1, 'id': 'srv', 'ok': True, 'state': 'stopped'}, 0,",
                 "         'media.stop')",
+                "run_case(module, 'media-outputs', ['media', 'outputs'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'count': 1,",
+                "          'outputs_json': '[]'}, 0, 'mediaplayer.outputs')",
+                "run_case(module, 'media-route', ['media', 'route', '7'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'device_id': 7,",
+                "          'applied': False}, 0, 'mediaplayer.route',",
+                "         {'device_id': 7})",
+                "run_case(module, 'media-route-clear',",
+                "         ['media', 'route', 'clear'],",
+                "         {'v': 1, 'id': 'srv', 'ok': True, 'cleared': True,",
+                "          'applied': True}, 0, 'mediaplayer.route.clear')",
                 "run_case(module, 'bridge-info', ['bridge', 'info'],",
                 "         {'v': 1, 'id': 'srv', 'ok': True, 'transport': 'tcp-loopback',",
                 "          'capabilities': 'media.start,media.status,media.stop',",
@@ -380,6 +396,16 @@ public class GuestAwarenessCliTest {
                 "usage_expects(module, 'unknown-subcommand', ['media', 'bogus'])",
                 "usage_expects(module, 'missing-subcommand', ['media'])",
                 "usage_expects(module, 'no-args', [])",
+                "usage_expects(module, 'media-route-missing-id',",
+                "              ['media', 'route'])",
+                "usage_expects(module, 'media-route-invalid-id',",
+                "              ['media', 'route', 'speaker'])",
+                "usage_expects(module, 'media-route-negative-id',",
+                "              ['media', 'route', '-1'])",
+                "usage_expects(module, 'media-route-overflow-id',",
+                "              ['media', 'route', '2147483648'])",
+                "usage_expects(module, 'media-route-extra-token',",
+                "              ['media', 'route', '7', 'extra'])",
                 "usage_expects(module, 'unknown-mode-flag', ['media', 'start', '--bogus'])",
                 "usage_expects(module, 'mode-flag-on-status',",
                 "              ['media', 'status', '--camera'])",

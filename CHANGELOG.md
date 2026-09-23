@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-24
+
+### Added
+
+- Extend the native Bluetooth surface (ADR-0053) with a bounded HID keyboard/mouse
+  peripheral, public audio-profile status and HFP voice-recognition controls,
+  plus per-player output routing for NusaDesk guest media. Android's app-owned
+  `MediaPlayer` route is not system-wide; profile connect/disconnect, A2DP sink,
+  Bluetooth PAN tethering, HID host, and raw arbitrary HID reports remain outside
+  the public platform/API boundary.
+
 ## [0.8.0] - 2026-09-24
 
 ### Added

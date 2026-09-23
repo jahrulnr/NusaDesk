@@ -134,15 +134,15 @@ runtime requirements.
   physical input are listed honestly in the limitations. The Termux:API *app*
   cannot serve this product — it only accepts callers sharing the Termux
   signing key and UID — and no Termux app is required (ADR-0036, ADR-0049).
-- Bluetooth is a NusaDesk-native surface (ADR-0050) because upstream
-  Termux:API has no bluetooth command: the guest gets `nusadesk-bt` with
-  `status`, `devices`, `discover`, `pair`/`unpair` (unpair answers a typed
-  absence), `enable`/`discoverable` (through the platform's own consent
-  dialogs), `le-scan`, `advertise`, `gatt …` (client and a fixed server), and
-  `rfcomm …` for a serial link. Every call is bounded and every grant is
-  checked per call; the platform's hard limits (adapter MAC address,
-  programmatic enable/disable, OBEX/PAN/HID host) are reported as typed
-  absences rather than fake features.
+- Bluetooth is a NusaDesk-native surface (ADR-0050, extended by ADR-0053)
+  because upstream Termux:API has no bluetooth command: `nusadesk-bt` covers
+  adapter/discovery/pairing, BLE, GATT, RFCOMM, the phone-as-keyboard/mouse HID
+  device role, and public audio-profile status plus HFP voice recognition for
+  an already-connected headset. `nusadesk-android media outputs|route` controls
+  only NusaDesk's own guest MediaPlayer. Calls are bounded and permission
+  checked; hard limits include adapter MAC access, programmatic enable/disable
+  on target 33+, unpair, OBEX, HID host, A2DP profile connect/disconnect and
+  sink, PAN/tethering, global routing, and arbitrary HID report injection.
 - Wifi gained the pieces the platform actually allows (ADR-0051):
   `wifi.hotspot.start|stop|status` opens a local-only hotspot (no internet) for
   device-to-device work, `wifi.suggest.add|remove|list` publishes advisory
@@ -205,7 +205,9 @@ runtime requirements.
 - Live media is the camera and/or microphone streamed as H.264/AAC over RTSP on
   loopback while the guest session and the visible media notification are
   active. No capture file is ever written — save one yourself from the stream if
-  you need it.
+  you need it. `nusadesk-android media outputs|route` can select an available
+  audio sink for the guest's own `MediaPlayer`; the device id is temporary and
+  this does not change routing for other apps.
 - Calendar access is bounded in both directions: a fixed seven-day read (at most
   50 rows, no description/attendee/organizer fields) and validated writes into a
   calendar the user can write. No attendee row is written and no invitation is

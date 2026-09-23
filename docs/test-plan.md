@@ -622,6 +622,22 @@ listed at the end with their honest state.
 | TMX-032 | `termux-call-log` | `[]` — the device call log is empty; the bridge read is verified |
 | TMX-033 | `termux-battery-status`, `termux-contact-list`, `termux-sms-list`, `termux-telephony-deviceinfo`, `termux-telephony-cellinfo` | Keep working through the refactored shared runtime (verified 2026-09-19) |
 
+### NusaDesk-native Bluetooth HID and audio routing (ADR-0053)
+
+| ID | Command / action | Observed result |
+| --- | --- | --- |
+| BTX-001 | `nusadesk-bt hid start|status` on S10e foreground | Registered fixed composite keyboard/mouse descriptor; status true |
+| BTX-002 | `nusadesk-bt hid connect` to bonded S7 Edge | Connected after waiting for terminal `CONNECTED` callback; both devices stayed bonded |
+| BTX-003 | `nusadesk-bt hid type`, `key BACKSPACE`, `key ENTER` in S7 Settings search | Exact harmless test string appeared; appended `x` was removed with Backspace; Enter submitted an empty-result search |
+| BTX-004 | `nusadesk-bt hid mouse move 10 10 --wheel 1` | Request/report accepted; pointer not visible in S7 screenshot, no click attempted |
+| BTX-005 | HID stop/status | App unregistered and reported disconnected |
+| BTX-006 | `nusadesk-bt audio status` and `audio voice start|stop` with WH-CH520 | A2DP and HFP connected rows reported; voice start selected the sole connected HFP headset and stopped cleanly; no mic capture or call |
+| BTX-007 | `nusadesk-android media outputs|route` with WH-CH520 | Fresh A2DP output ID 421; route accepted and Android playback config reported active `MediaPlayer` on device 421 |
+| BTX-008 | `mediaplayer.route.clear`, cleanup | Playback stopped, route cleared, headset disconnected in Settings (not unpaired), no HID registration or ADB forward remained |
+| BTX-009 | Built-in speaker route / audible result | Route was accepted as pending but playback drained too quickly to observe on this S10e ROM; audibility and sustained built-in route remain unverified |
+
+Full device details and limits: [`evidence/bluetooth-hid-audio-matrix.md`](evidence/bluetooth-hid-audio-matrix.md).
+
 ### Implemented, not yet device-verified
 
 | ID | Command | Honest state |

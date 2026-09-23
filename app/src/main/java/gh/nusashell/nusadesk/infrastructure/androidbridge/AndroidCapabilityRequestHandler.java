@@ -11,10 +11,12 @@ import java.util.Map;
  * methods. There is deliberately no command, URI, class, or shell dispatch and
  * no guest-supplied method name, so every call is one fixed allowlist string
  * with host-owned defaults. The envelope ({@code v}, {@code id}, {@code token},
- * {@code method}) is param-free except for the declaring calendar writes, which
- * may carry one bounded flat {@code params} object: a method that does not
- * declare parameters answers {@link #ERROR_UNSUPPORTED_PARAMETER} when one is
- * sent, an unknown or malformed parameter inside a declaring method is
+ * {@code method}) is param-free except for capability-module methods that
+ * declare a bounded flat {@code params} object (including calendar writes,
+ * fixed Bluetooth HID inputs, optional voice-address selectors, and guest
+ * media output selection): a method that does not declare parameters answers
+ * {@link #ERROR_UNSUPPORTED_PARAMETER} when one is sent, an unknown or
+ * malformed parameter inside a declaring method is
  * {@link CalendarWriteRequest#ERROR_INVALID_ARGUMENT}, and a top-level field
  * other than {@code params} is rejected while decoding.
  *

@@ -43,6 +43,8 @@ final class CapabilityModules {
         modules.add(new BluetoothLeModule(context));
         modules.add(new BluetoothGattModule(context));
         modules.add(new BluetoothRfcommModule(context));
+        modules.add(new BluetoothHidModule(context));
+        modules.add(new BluetoothAudioModule(context));
         modules.add(new UsageModule(context));
         modules.add(new PackagesModule(context));
         modules.add(new OverlayModule(context));

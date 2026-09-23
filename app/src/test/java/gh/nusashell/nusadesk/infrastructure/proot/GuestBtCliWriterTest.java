@@ -76,6 +76,14 @@ public class GuestBtCliWriterTest {
                 "rfcomm connect <address> [--uuid U] [--seconds N]",
                 "rfcomm read [--seconds N]",
                 "rfcomm write (--hex H|--text T) | rfcomm close",
+                "hid start [--name NAME] | hid status",
+                "hid connect <address>",
+                "hid disconnect [<address>] | hid type <text>",
+                "hid key KEY [--shift]",
+                "hid mouse move DX DY [--wheel W]",
+                "hid mouse click BUTTON | hid stop",
+                "audio status | audio voice start [<address>]",
+                "audio voice stop [<address>]",
         }) {
             assertTrue("missing usage fragment: " + needle,
                     content.contains(needle));
@@ -96,6 +104,12 @@ public class GuestBtCliWriterTest {
                 "'bt.rfcomm.listen'", "'bt.rfcomm.accept'",
                 "'bt.rfcomm.connect'", "'bt.rfcomm.read'",
                 "'bt.rfcomm.write'", "'bt.rfcomm.close'",
+                "'bt.hid.start'", "'bt.hid.status'", "'bt.hid.connect'",
+                "'bt.hid.disconnect'", "'bt.hid.type'", "'bt.hid.key'",
+                "'bt.hid.mouse.move'", "'bt.hid.mouse.click'",
+                "'bt.hid.stop'",
+                "'bt.audio.status'", "'bt.audio.voice.start'",
+                "'bt.audio.voice.stop'",
                 "prefix + '.start'", "prefix + '.poll'", "prefix + '.stop'",
         }) {
             assertTrue("missing method fragment: " + needle,
@@ -106,7 +120,9 @@ public class GuestBtCliWriterTest {
         for (String needle : new String[] {
                 "'service_uuid'", "'char_uuid'", "'name_prefix'",
                 "'timeout_ms'", "'value_hex'", "'value_utf8'",
-                "'seconds'", "'address'", "'name'",
+                "'seconds'", "'address'", "'name'", "'text'",
+                "'key'", "'shift'", "'dx'", "'dy'", "'wheel'",
+                "'button'",
         }) {
             assertTrue("missing param: " + needle, content.contains(needle));
         }
@@ -294,6 +310,174 @@ public class GuestBtCliWriterTest {
                     "\"method\":\"bt.gatt.server.notify\""));
             assertTrue(bridge.lastRequest().contains(
                     "\"value_utf8\":\"hi\""));
+
+            // hid start: optional --name param.
+            result = runCli(cli, moduleDir, env,
+                    "hid", "start", "--name", "DeskKeys");
+            assertEquals("hid start rc: " + result.err, 0, result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.hid.start\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"name\":\"DeskKeys\""));
+
+            // hid status: payload fields pass through on stdout.
+            result = runCli(cli, moduleDir, env, "hid", "status");
+            assertEquals("hid status rc: " + result.err, 0, result.code);
+            assertEquals("bt.hid.status", bridge.lastMethod());
+            assertTrue(result.out.contains("\"registered\":true"));
+
+            // hid connect: uppercased address param.
+            result = runCli(cli, moduleDir, env,
+                    "hid", "connect", "aa:bb:cc:dd:ee:ff");
+            assertEquals("hid connect rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.hid.connect\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"address\":\"AA:BB:CC:DD:EE:FF\""));
+
+            // hid disconnect without an address sends no params object.
+            result = runCli(cli, moduleDir, env, "hid", "disconnect");
+            assertEquals("hid disconnect rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.hid.disconnect\""));
+            assertFalse(bridge.lastRequest().contains("\"params\""));
+
+            // hid disconnect with an address sends it.
+            result = runCli(cli, moduleDir, env,
+                    "hid", "disconnect", "aa:bb:cc:dd:ee:ff");
+            assertEquals("hid disconnect addr rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"address\":\"AA:BB:CC:DD:EE:FF\""));
+
+            // hid type: bounded text param, spaces survive.
+            result = runCli(cli, moduleDir, env,
+                    "hid", "type", "hello world");
+            assertEquals("hid type rc: " + result.err, 0, result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.hid.type\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"text\":\"hello world\""));
+
+            // hid key: --shift is a valueless boolean switch.
+            result = runCli(cli, moduleDir, env,
+                    "hid", "key", "ENTER", "--shift");
+            assertEquals("hid key rc: " + result.err, 0, result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.hid.key\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"key\":\"ENTER\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"shift\":true"));
+
+            // hid key without --shift still sends the shift bool.
+            result = runCli(cli, moduleDir, env, "hid", "key", "UP");
+            assertEquals("hid key noshift rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"key\":\"UP\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"shift\":false"));
+
+            // hid mouse move: signed dx/dy ints + optional --wheel.
+            result = runCli(cli, moduleDir, env,
+                    "hid", "mouse", "move", "10", "-5",
+                    "--wheel", "3");
+            assertEquals("hid mouse move rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.hid.mouse.move\""));
+            assertTrue(bridge.lastRequest().contains("\"dx\":10"));
+            assertTrue(bridge.lastRequest().contains("\"dy\":-5"));
+            assertTrue(bridge.lastRequest().contains("\"wheel\":3"));
+
+            // hid mouse click: fixed button enum.
+            result = runCli(cli, moduleDir, env,
+                    "hid", "mouse", "click", "LEFT");
+            assertEquals("hid mouse click rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.hid.mouse.click\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"button\":\"LEFT\""));
+
+            // hid stop: no params.
+            result = runCli(cli, moduleDir, env, "hid", "stop");
+            assertEquals("hid stop rc: " + result.err, 0, result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.hid.stop\""));
+
+            // audio status.
+            result = runCli(cli, moduleDir, env, "audio", "status");
+            assertEquals("audio status rc: " + result.err, 0,
+                    result.code);
+            assertEquals("bt.audio.status", bridge.lastMethod());
+            assertTrue(result.out.contains("\"hfp_connected\":false"));
+
+            // audio voice start: required address.
+            result = runCli(cli, moduleDir, env,
+                    "audio", "voice", "start", "aa:bb:cc:dd:ee:ff");
+            assertEquals("voice start rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.audio.voice.start\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"address\":\"AA:BB:CC:DD:EE:FF\""));
+            result = runCli(cli, moduleDir, env,
+                    "audio", "voice", "start");
+            assertEquals("voice start auto rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.audio.voice.start\""));
+            assertFalse(bridge.lastRequest().contains("\"params\""));
+
+            // audio voice stop: address optional both ways.
+            result = runCli(cli, moduleDir, env,
+                    "audio", "voice", "stop");
+            assertEquals("voice stop rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.audio.voice.stop\""));
+            assertFalse(bridge.lastRequest().contains("\"params\""));
+            result = runCli(cli, moduleDir, env,
+                    "audio", "voice", "stop", "aa:bb:cc:dd:ee:ff");
+            assertEquals("voice stop addr rc: " + result.err, 0,
+                    result.code);
+            assertTrue(bridge.lastRequest().contains(
+                    "\"method\":\"bt.audio.voice.stop\""));
+            assertTrue(bridge.lastRequest().contains(
+                    "\"address\":\"AA:BB:CC:DD:EE:FF\""));
+
+            // Bad new-verb inputs: usage exit 2, nothing sent.
+            before = bridge.requestCount();
+            result = runCli(cli, moduleDir, env, "hid", "key", "F1");
+            assertEquals("bad key rc", 2, result.code);
+            assertTrue(result.err.contains("bad key"));
+            result = runCli(cli, moduleDir, env,
+                    "hid", "key", "ENTER", "--shift", "--shift");
+            assertEquals("dup shift rc", 2, result.code);
+            result = runCli(cli, moduleDir, env,
+                    "hid", "mouse", "move", "x", "5");
+            assertEquals("bad move rc", 2, result.code);
+            assertTrue(result.err.contains("bad integer"));
+            result = runCli(cli, moduleDir, env,
+                    "hid", "mouse", "move", "200", "0");
+            assertEquals("range move rc", 2, result.code);
+            assertTrue(result.err.contains("integer must be"));
+            result = runCli(cli, moduleDir, env,
+                    "hid", "mouse", "click", "DOWN");
+            assertEquals("bad click rc", 2, result.code);
+            assertTrue(result.err.contains("bad button"));
+            result = runCli(cli, moduleDir, env,
+                    "audio", "voice", "start", "not-an-address");
+            assertEquals("bad voice addr rc", 2, result.code);
+            assertTrue(result.err.contains("bad bluetooth address"));
+            result = runCli(cli, moduleDir, env,
+                    "hid", "disconnect", "zz");
+            assertEquals("bad disconnect addr rc", 2, result.code);
+            assertEquals(before, bridge.requestCount());
 
             // Dead bridge: honest unreachable message, exit 5.
             result = runCli(cli, moduleDir, deadEnv, "status");
@@ -508,6 +692,12 @@ public class GuestBtCliWriterTest {
                             + "\"address\":\"AA:BB:CC:DD:EE:FF\"}";
                 case "bt.gatt.server.notify":
                     return ok + ",\"delivered\":1,\"subscribers\":1}";
+                case "bt.hid.status":
+                    return ok + ",\"registered\":true,"
+                            + "\"connected\":false}";
+                case "bt.audio.status":
+                    return ok + ",\"a2dp_connected\":true,"
+                            + "\"hfp_connected\":false}";
                 default:
                     return ok + "}";
             }

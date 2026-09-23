@@ -437,11 +437,15 @@ flowchart LR
   the LAN address) turns the session into a file server other machines on the
   network can reach. Programmatic toggling and internet tethering stay typed
   absences; Wi-Fi Direct and RTT remain separately scoped.
-- Bluetooth is implemented as a NusaDesk-native surface (ADR-0050): the `bt.*`
-  modules cover adapter state, bonded devices, discovery, pairing consent, BLE
-  scan/advertise, GATT client/server, and RFCOMM over the same bounded bridge
-  contract, with the hard platform limits answered as typed absences. Usage
-  stats, overlay, notification-listener, accessibility, raw
+- Bluetooth is implemented as a NusaDesk-native surface (ADR-0050/0053): the
+  `bt.*` modules cover adapter state, bonded devices, discovery, pairing
+  consent, BLE scan/advertise, GATT, RFCOMM, a fixed keyboard/mouse HID Device
+  role, public A2DP/HFP/LE Audio status, and HFP voice recognition for an
+  already-connected headset. `mediaplayer.outputs`/`route`/`route.clear` select
+  a current output for the app-owned guest `MediaPlayer` only. Profile
+  connect/disconnect, HID host, A2DP sink, PAN tethering, and arbitrary HID
+  reports stay typed absences or outside the surface; no hidden APIs are used.
+  Usage stats, overlay, notification-listener, accessibility, raw
   `/dev` hardware, Binder, GPU/NPU, kernel, and SELinux operations remain
   separately scoped limitations.
 
