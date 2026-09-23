@@ -102,7 +102,9 @@ public class GuestTermuxCompatWriterTest {
         assertTrue(moduleText.contains(
                 "ENV_FILE = '/run/nusadesk/android-bridge.env'"));
         assertTrue(moduleText.contains("PROTOCOL_VERSION = 1"));
-        assertTrue(moduleText.contains("MAX_RESPONSE_BYTES = 16384"));
+        // The client cap must cover any frame the host may encode (64 KiB),
+        // or a legal large read fails in the guest as `response too large`.
+        assertTrue(moduleText.contains("MAX_RESPONSE_BYTES = 65536"));
         assertTrue(moduleText.contains("secrets.token_urlsafe(8)"));
         assertTrue(moduleText.contains("def bridge_call(method, params=None,"));
         assertTrue(moduleText.contains("request['params'] = params"));
