@@ -9,6 +9,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.PersistableBundle;
@@ -204,11 +205,13 @@ public final class CommsModule implements CapabilityModule {
      * {@code text} (required, ≤8192 chars), optional {@code slot} (SIM slot
      * index; requires {@code READ_PHONE_STATE} on top of {@code SEND_SMS}).
      * Success fields are {@code sent}, {@code failed}, {@code unconfirmed}
-     * comma lists in recipient order, plus {@code parts} sent per request.
-     * A recipient is {@code sent} only when every part's platform result is
-     * {@code RESULT_OK}; a part that reports an error code fails it; parts
-     * that never report within {@link #SMS_RESULT_WAIT_MS} leave it
-     * {@code unconfirmed}. Permission gaps answer the typed
+     * comma lists in recipient order. A recipient is {@code sent} only when
+     * every part's platform result is {@code RESULT_OK}; a part that reports
+     * an error code fails it; a part that never reports within
+     * {@link #SMS_RESULT_WAIT_MS} is confirmed against the platform sent box
+     * when {@code READ_SMS} happens to be granted (see
+     * {@link #sentBoxReadable()}) and otherwise stays {@code unconfirmed}.
+     * Permission gaps answer the typed
      * {@code sms-permission-required}/{@code sms-permission-denied}; a
      * missing telephony stack or subscription answers
      * {@code sms-unavailable}.
@@ -384,9 +387,13 @@ public final class CommsModule implements CapabilityModule {
                 unconfirmed.add(recipients.get(r));
             }
         }
-        if (!unconfirmed.isEmpty()) {
+        if (!unconfirmed.isEmpty() && sentBoxReadable()) {
             // No result broadcast: ask the platform's own sent box before
-            // calling a dispatched message unsent.
+            // calling a dispatched message unsent. The confirmation reads
+            // content://sms/sent, which needs READ_SMS; that grant is not
+            // part of this method's required set, because sending an SMS must
+            // never demand read access. Without it a dispatched part stays
+            // honestly `unconfirmed`.
             long since = System.currentTimeMillis() - SMS_SENTBOX_WINDOW_MS;
             List<String> stillUnconfirmed = new ArrayList<>();
             for (String recipient : unconfirmed) {
@@ -403,6 +410,20 @@ public final class CommsModule implements CapabilityModule {
         fields.put("failed", String.join(",", failed));
         fields.put("unconfirmed", String.join(",", unconfirmed));
         return AndroidCapabilityProtocol.Response.success(request.getId(), fields);
+    }
+
+    /**
+     * Whether the sent-box confirmation can run at all: it reads
+     * {@code content://sms/sent}, which needs {@code READ_SMS}. That grant is
+     * deliberately not part of {@code sms.send}'s required set (sending must
+     * not demand read access), so the confirmation is opportunistic — it only
+     * turns a dispatched-but-unreported part into {@code sent} when the user
+     * already granted the read, and never turns a missing grant into a
+     * permission error on the send path.
+     */
+    private boolean sentBoxReadable() {
+        return context.checkSelfPermission(Manifest.permission.READ_SMS)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     /**
