@@ -16,7 +16,7 @@ command contract — device state, text/notifications, speech and dialog,
 capture, storage/SAF/share, comms (SMS send, telephony call, keystore, job
 scheduler), the sensor catalogue, wifi reads, infrared, media playback, NFC,
 USB, and fingerprint — each device-verified per
-`tasks/termux-parity-matrix.md`.
+`docs/evidence/termux-parity-matrix.md`.
 Security behavior on other Android versions, OEMs, and 16 KB page-size devices
 is not yet covered by the same evidence.
 

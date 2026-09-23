@@ -187,8 +187,10 @@ runtime requirements.
   bounded, one-at-a-time host that runs dialogs, SAF pickers, the share
   chooser, fingerprint, speech recognition, NFC reader mode, and
   while-in-use camera/microphone capture. `termux-sms-send` and
-  `termux-telephony-call` are implemented; their success paths stay
-  unverified until run on the SIM-equipped device.
+  `termux-telephony-call` are implemented and device-verified on the
+  SIM-equipped S7 Edge; what still waits on hardware or a platform backend is
+  listed honestly in the limitations (`termux-speech-to-text`, an NDEF tag for
+  `termux-nfc`, and media-provider reach for `termux-media-scan`).
 
 ### Your web apps, your workspace
 

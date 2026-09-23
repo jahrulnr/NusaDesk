@@ -88,8 +88,9 @@ shapes, and exit codes that community scripts depend on.
 All 57 commands are installed and were exercised from the live guest on the
 Samsung S10e (SM-G970F, Android 12/API 31, arm64) on 2026-09-22 (plus the
 earlier 2026-09-19/2026-09-20 passes noted per row). Recorded per command in
-`tasks/termux-parity-matrix.md` — the ledger: a row reads `DONE` only after its
-output was observed on a device — with the run details in `docs/test-plan.md`.
+`docs/evidence/termux-parity-matrix.md` — the ledger: a row reads `DONE` only
+after its output was observed on a device — with the run details in
+`docs/test-plan.md`.
 
 That pass verified 50 commands including the three deliberate typed absences
 (`termux-infrared-frequencies`/`termux-infrared-transmit` on a device with no IR
@@ -100,9 +101,11 @@ replaced by a staging-path read, the share chooser's missing read grant and
 MIME guess, the `termux-location` timeout/provider fix, and job-scheduler
 script execution through the session's own SSH path.
 
-Still not device-verified, honestly open in the ledger: `termux-sms-send` and
-`termux-telephony-call` success paths (they need the SIM device),
-`termux-speech-to-text` (a real voice input), `termux-fingerprint` (an enrolled
-finger), `termux-nfc` tag read/write (a physical tag), `termux-media-scan`
-beyond paths the media provider can read, and a recorded fresh
-`termux-location` fix on the fixed build.
+A later pass on 2026-09-23 closed the SIM-dependent rows: `termux-sms-send`
+(two real SMS landed in the platform sent box, one on the fixed sent-box
+confirmation path) and `termux-telephony-call` (a real call reached
+`mCallState=2`) on the S7 Edge, plus `termux-fingerprint` (an enrolled finger
+authenticated) and a fresh `termux-location` fix on the S10e. Still honestly
+open in the ledger: `termux-speech-to-text` (no usable recognizer backend on
+either project device), `termux-nfc` NDEF read/write (the detected tag is not
+NDEF), and `termux-media-scan` beyond paths the media provider can read.

@@ -237,7 +237,7 @@
         tools:ignore="QueryAllPackagesPermission" />
 
     <!--
-        Termux:API parity surface (tasks/termux-parity-matrix.md). Every entry
+        Termux:API parity surface (docs/evidence/termux-parity-matrix.md). Every entry
         here exists because a `termux-*` client command needs it and the user
         asked for the full Android capability surface to be reachable from the
         guest. The pattern is unchanged from ADR-0030: one method = one

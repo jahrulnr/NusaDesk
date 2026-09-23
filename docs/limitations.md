@@ -259,7 +259,7 @@ typed getters plus `rejectUnknown` make a misspelled key fail closed as
   signature/UID-locked to Termux), so this is the only Termux-compatible
   surface; commands the hardware or platform cannot serve answer a typed
   absence, never a fake success (documented in the guest's
-  `docs/termux-compat.md`, evidence in `tasks/termux-parity-matrix.md`).
+  `docs/termux-compat.md`, evidence in `docs/evidence/termux-parity-matrix.md`).
 - `battery.status` reads Android's permission-free `BatteryManager` state.
 - `location.get` performs a foreground-only one-shot `LocationManager`
   request with a 30 s bounded window: it honours a forced provider and a
@@ -408,7 +408,7 @@ Current capability status:
 | Sensors | Implemented through the `sensor.list`/`sensor.read`/`sensor.stream.*` catalogue (42 sensors listed on the S10e); samples are sequential bounded one-shot reads, so continuous streaming and backpressure remain future work. |
 | Location | Implemented foreground one-shot `location.get` (30 s window, provider and last-known params, stale-marked fallback) and bounded location stream with explicit permission/status errors; no background GPS contract. |
 | Live camera + microphone | Implemented live-only with three modes (`media.start` both, `media.camera.start`, `media.microphone.start`) over Camera2 + H.264/AAC and loopback RTSP-over-TCP; all three modes consumer-verified on Samsung S10e API 31, while wider OEM/API coverage remains open and the RTSP slice writes no files. |
-| Contacts/call log/SMS/telephony | Implemented bounded methods with per-method permissions, redaction, and row/byte caps; the reads are device-verified on the S10e (the call log returned an empty list because the device log is empty), while `sms.send` and `phone.call` are implemented with their typed permission errors verified and a success path that still needs the SIM device. |
+| Contacts/call log/SMS/telephony | Implemented bounded methods with per-method permissions, redaction, and row/byte caps; the reads are device-verified on the S10e (the call log returned an empty list because the device log is empty) and the non-empty inbox/deviceinfo paths on the S7 Edge, and `sms.send`/`phone.call` were device-verified on the SIM-equipped S7 Edge on 2026-09-23 (a real SMS landed in the platform sent box, a real call reached `mCallState=2`). |
 | Calendar | Implemented bounded read (`calendar.list`: fixed seven-day window, at most 50 rows, `truncated` flag, no description/attendee/organizer columns) and bounded writes (`calendar.insert`/`calendar.update`/`calendar.delete`) with per-method grants, validated fields, and typed errors; verified on Samsung S10e API 31. No attendee/invitation support, no calendar creation or listing, no guest-chosen window, and no reminder fields; wider OEM/API coverage remains open because the provider's instance/timezone shape is OEM-sensitive. |
 | Bluetooth, usage stats, overlay | Limitation for now; permission declarations alone do not implement or authorize these APIs. |
 | Notification listener | Implemented for `notification.list` only: the listener service is declared and inert until the user enables notification access in Settings, and the module reports a typed permission result until then. Accessibility stays deliberately undeclared — it is a special user-enabled service with a much broader data boundary. |
@@ -468,19 +468,19 @@ answered through the bridge; the limits below are contract, not polish:
   active rootfs, and the guest script moves the result to the user's
   destination (the bind-mounted workspace is a guest-side concept).
 
-Implemented but not yet device-verified (per `tasks/termux-parity-matrix.md`):
+Still open in the ledger (per `docs/evidence/termux-parity-matrix.md`):
 
-- `termux-sms-send` and `termux-telephony-call`: typed permission errors
-  verified on the S10e; the success path needs the SIM device.
-- `termux-speech-to-text`: implemented; a transcription needs a real voice
-  input.
-- `termux-fingerprint`: implemented; an authentication run needs an
-  enrolled finger.
-- `termux-nfc`: adapter presence verified (`nfcPresent:true`); a tag
-  read/write needs a physical tag.
-- `termux-location`: the timeout/provider fix (30 s window, freshest
-  last-known provider, `-p`/`-r`) is implemented; a recorded fresh fix on
-  the fixed build is still pending.
+- `termux-speech-to-text` (WIP): implemented, but neither project device has a
+  usable recognizer backend; the command fails typed instead of pretending.
+- `termux-nfc` (PARTIAL): a real tag was detected in reader mode, but it is not
+  NDEF, so an NDEF read/write still needs an NDEF tag.
+- `termux-media-scan` (PARTIAL): only indexes paths the platform media
+  provider can read, not the app-private rootfs.
+
+Closed since the first pass: `termux-sms-send` and `termux-telephony-call`
+(S7 Edge with SIM, 2026-09-23), `termux-fingerprint` (S10e enrolled finger),
+and `termux-location` (a fresh fix with the 30 s window and the
+freshest-provider pick).
 
 ### USB pass-through delivers a descriptor, not a device bus (ADR-0041)
 

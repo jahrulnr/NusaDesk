@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.0] - 2026-09-22
+## [0.7.0] - 2026-09-23
 
 ### Added
 
@@ -70,9 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CALL_PHONE, SET_WALLPAPER, TRANSMIT_IR, NFC, WRITE_SETTINGS, USE_BIOMETRIC,
   ACCESS_WIFI_STATE/CHANGE_WIFI_STATE/NEARBY_WIFI_DEVICES,
   MODIFY_AUDIO_SETTINGS, FOREGROUND_SERVICE_MEDIA_PLAYBACK,
-  DOWNLOAD_WITHOUT_NOTIFICATION, READ_MEDIA_*; the notification-listener
-  service behind `termux-notification-list`, the capture and media-playback
-  foreground services, and the job-scheduler service.
+  DOWNLOAD_WITHOUT_NOTIFICATION; the notification-listener service behind
+  `termux-notification-list`, the capture and media-playback foreground
+  services, and the job-scheduler service. `READ_MEDIA_*` stays undeclared:
+  nothing queries MediaStore image/video/audio.
 
 ### Changed
 
@@ -84,9 +85,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window (was 5 s), picks the deliverable provider whose last-known fix is
   freshest instead of preferring GPS first, and falls back to a stale-marked
   last-known fix (with its age) before reporting `location-timeout`.
+- The capability dialogs render in the app's own surface: the foreground host
+  is pinned to `Theme.Translucent.NoTitleBar`, so every widget now builds a
+  plain `android.app.Dialog` on `NusaDeskDialogTheme` with the launcher's dark,
+  teal-accented shell instead of the pre-Material platform look, and the window
+  height is `WRAP_CONTENT` so the action row keeps its 48 dp touch target when
+  the IME resizes the dialog. The result contract (`code`, `text`,
+  `values_json`) is unchanged.
 
 ### Fixed
 
+- `termux-sms-send` no longer reports a false "unconfirmed" for a message that
+  actually went out: when the platform never delivers the per-part result
+  broadcast, the module confirms the dispatch against `content://sms/sent`
+  before calling it unsent. That confirmation reads the sent box, so it runs
+  only when `READ_SMS` is granted — the send path itself never demands read
+  access, and without the grant a dispatched part stays honestly
+  `unconfirmed`.
+- `termux-dialog` no longer collapses its action row when the keyboard opens:
+  the height was a fixed pre-show measurement, so an IME resize squeezed the
+  buttons to a sliver; the window is `WRAP_CONTENT` with the content slot
+  yielding instead — verified on the S7 Edge with the keyboard open (every
+  widget reports 48 dp button bounds).
 - `termux-media-player` plays through to the end: the FD-based data source
   made every track stop within ~35 ms on device, so the module opens the
   resolved guest staging path instead — position advanced 0 → 3.73 s on a
@@ -98,21 +118,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session's own SSH path when the job fires; `cmd jobscheduler run -f`
   produced `/tmp/job-ran.txt` on device.
 
-### Not yet device-verified
+### Still open in the ledger
 
-Per `tasks/termux-parity-matrix.md` — implemented, but waiting on the
-physical input each command needs:
+Per `docs/evidence/termux-parity-matrix.md` — implemented, with the honest
+state recorded there. The S7 Edge pass on 2026-09-23 closed `termux-sms-send`,
+`termux-telephony-call`, and the non-empty `termux-sms-list` /
+`termux-telephony-deviceinfo` paths; the S10e closed `termux-fingerprint` and
+recorded a fresh `termux-location` fix:
 
-- `termux-sms-send` and `termux-telephony-call`: typed permission errors
-  verified; the success path needs the SIM device.
-- `termux-speech-to-text`: needs a real voice input to prove transcription.
-- `termux-fingerprint`: needs an enrolled finger.
-- `termux-nfc`: adapter presence verified (`nfcPresent:true`); a tag
-  read/write needs a physical tag.
-- `termux-media-scan`: runs, but only indexes paths the platform media
-  provider can read — workspace-bound paths, not the app-private rootfs.
-- `termux-location`: the timeout/provider fix above is implemented; a
-  recorded fresh fix on the fixed build is still pending in the ledger.
+- `termux-speech-to-text` (WIP): neither project device has a usable
+  recognizer backend (the S10e answers `speech-unavailable:network error`, the
+  S7 Edge has no `voice_recognition_service`); the command fails typed instead
+  of pretending.
+- `termux-nfc` (PARTIAL): a real tag was detected in reader mode on the S7 Edge
+  and answered the upstream "Wrong Technology" shape — that tag is not NDEF, so
+  an NDEF read/write still needs an NDEF tag.
+- `termux-media-scan` (PARTIAL): runs, but only indexes paths the platform
+  media provider can read — workspace-bound paths, not the app-private rootfs.
 
 ## [0.6.4] - 2026-09-22
 

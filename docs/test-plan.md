@@ -541,7 +541,7 @@ Device pass on the Samsung S10e (SM-G970F, Android 12/API 31, arm64) on
 2026-09-22 (rows carrying an earlier date say so), run from the live guest
 over SSH. Every upstream `termux-*` client command was installed and
 exercised; the per-command output lives in the ledger
-`tasks/termux-parity-matrix.md`. Commands whose ledger row is not DONE are
+`docs/evidence/termux-parity-matrix.md`. Commands whose ledger row is not DONE are
 listed at the end with their honest state.
 
 ### Device state
@@ -626,12 +626,12 @@ listed at the end with their honest state.
 
 | ID | Command | Honest state |
 | --- | --- | --- |
-| TMX-034 | `termux-sms-send` | Typed `sms-permission-denied`, then `not delivered to unconfirmed` without a SIM; the success path needs the SIM device |
-| TMX-035 | `termux-telephony-call` | Typed `call-permission-denied`; the success path needs the SIM device |
-| TMX-036 | `termux-speech-to-text` | Foreground operation and recognizer path implemented; a transcription needs a real voice input |
-| TMX-037 | `termux-fingerprint` | Module, BiometricPrompt operation, and command land and compile; a run needs an enrolled finger |
-| TMX-038 | `termux-nfc` | Adapter present → `{"nfcPresent":true,"nfcActive":false}`; a tag read/write needs a physical tag |
-| TMX-039 | `termux-location` | Defect found and fixed (30 s window, freshest-provider pick, `-p`/`-r` params, stale-marked last-known fallback); a recorded fresh fix on the fixed build is pending |
+| TMX-034 | `termux-sms-send` | DONE (2026-09-23, S7 Edge with SIM): typed `sms-permission-denied` first, then two real SMS landed in the platform sent box and the command exited 0. The fixed path confirms a dispatched part against `content://sms/sent` when the per-part broadcast never arrives; that confirmation runs only with `READ_SMS` granted |
+| TMX-035 | `termux-telephony-call` | DONE (2026-09-23, S7 Edge with SIM): a real call was placed, `mCallState=2` + InCallActivity while ringing, hung up cleanly |
+| TMX-036 | `termux-speech-to-text` | WIP (2026-09-23): neither project device has a usable recognizer backend (the S10e answers `speech-unavailable:network error`, the S7 Edge has no `voice_recognition_service`); the command fails typed |
+| TMX-037 | `termux-fingerprint` | DONE (2026-09-23, S10e): BiometricPrompt shown, the enrolled finger authenticated → `{"auth_result":true,...}`; an untouched prompt answers `ERROR_TIMEOUT` |
+| TMX-038 | `termux-nfc` | PARTIAL (2026-09-23, S7 Edge): a real tag was detected in reader mode and answered the upstream "Wrong Technology" shape — that tag is not NDEF, so an NDEF read/write needs an NDEF tag |
+| TMX-039 | `termux-location` | DONE (2026-09-22, S10e): the 30 s window + freshest-provider pick returned a fresh network fix; `-r last` answered instantly with a stale marker |
 
 ## Device matrix
 

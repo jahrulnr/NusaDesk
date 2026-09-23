@@ -246,8 +246,9 @@ Scope:
       projection, one-shot accelerometer/gyroscope reads, and a bounded
       foreground location stream.
 - [x] Read-only, redacted, row/byte-bounded contacts, call-log, SMS, and
-      telephony reads; `sms.send` and `phone.call` stay typed
-      `action-unsupported`.
+      telephony reads. (`sms.send`/`phone.call` stayed typed
+      `action-unsupported` at this stage; ADR-0049 later served both from the
+      comms module with per-call grants.)
 - [x] Live-only camera and/or microphone in three track modes over loopback RTSP
       (H.264/AAC) with no capture artifact (ADR-0031).
 - [x] Bounded calendar read plus validated `insert`/`update`/`delete` writes
