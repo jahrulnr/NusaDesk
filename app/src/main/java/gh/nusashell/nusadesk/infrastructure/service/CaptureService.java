@@ -82,6 +82,16 @@ public final class CaptureService extends Service {
     private volatile long photoTaskSeq = -1;
     private volatile MicrophoneRecorderSource recorder;
     private volatile long recorderSeq = -1;
+    /**
+     * Types promoted for a start whose task/recorder has not been assigned
+     * yet. They keep {@link #activeTypes()} non-empty in the window between
+     * the foreground promotion and the field assignment: without them a task
+     * that finishes inside that window sees every field null, stops the
+     * service, and tears down the capture that is still being started (the
+     * start then publishes a result against a dying service).
+     */
+    private volatile boolean photoStarting;
+    private volatile boolean recorderStarting;
 
     public static Intent photoIntent(Context context, long seq,
                                      String cameraId, String hostPath) {
@@ -171,7 +181,9 @@ public final class CaptureService extends Service {
             stopSelfIfIdle();
             return;
         }
+        photoStarting = true;
         if (!promote(TYPE_CAMERA | activeTypes())) {
+            photoStarting = false;
             registry.failPhoto(seq,
                     "camera-foreground-required:open the NusaDesk app and retry");
             stopSelfIfIdle();
@@ -183,6 +195,9 @@ public final class CaptureService extends Service {
                     requestedCamera, Paths.get(hostPath));
             photoTask = task;
             photoTaskSeq = seq;
+            // The field owns the camera type from here; the in-flight marker
+            // only covers promote -> assignment.
+            photoStarting = false;
             try {
                 long bytes = task.capture();
                 registry.publishPhoto(seq, bytes);
@@ -194,6 +209,7 @@ public final class CaptureService extends Service {
             } finally {
                 photoTask = null;
                 photoTaskSeq = -1;
+                photoStarting = false;
                 refreshForeground();
             }
         });
@@ -224,7 +240,9 @@ public final class CaptureService extends Service {
             stopSelfIfIdle();
             return;
         }
+        recorderStarting = true;
         if (!promote(TYPE_MICROPHONE | activeTypes())) {
+            recorderStarting = false;
             registry.failRecording(seq,
                     "microphone-foreground-required:open the NusaDesk app and retry");
             stopSelfIfIdle();
@@ -252,18 +270,23 @@ public final class CaptureService extends Service {
                 next.start();
             } catch (MicrophoneRecorderSource.RecorderException e) {
                 next.release();
+                recorderStarting = false;
                 registry.failRecording(seq, e.code());
                 refreshForeground();
                 return;
             } catch (RuntimeException e) {
                 Log.w(TAG, "recorder start failed", e);
                 next.release();
+                recorderStarting = false;
                 registry.failRecording(seq, "microphone-unavailable");
                 refreshForeground();
                 return;
             }
             recorder = next;
             recorderSeq = seq;
+            // The field owns the microphone type from here; the in-flight
+            // marker only covers promote -> assignment.
+            recorderStarting = false;
             if (!registry.publishRecording(seq)) {
                 // The caller abandoned this start (a bounded wait expired);
                 // stop the orphan so it never holds the microphone.
@@ -314,8 +337,8 @@ public final class CaptureService extends Service {
 
     /** The device types owned by tasks the service is currently running. */
     private int activeTypes() {
-        return (photoTask != null ? TYPE_CAMERA : TYPE_NONE)
-                | (recorder != null ? TYPE_MICROPHONE : TYPE_NONE);
+        return ((photoTask != null || photoStarting) ? TYPE_CAMERA : TYPE_NONE)
+                | ((recorder != null || recorderStarting) ? TYPE_MICROPHONE : TYPE_NONE);
     }
 
     /**
@@ -354,7 +377,7 @@ public final class CaptureService extends Service {
     }
 
     private void stopSelfIfIdle() {
-        if (photoTask == null && recorder == null) {
+        if (activeTypes() == TYPE_NONE) {
             stopSelf();
         }
     }

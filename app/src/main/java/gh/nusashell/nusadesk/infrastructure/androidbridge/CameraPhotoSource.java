@@ -208,11 +208,13 @@ public final class CameraPhotoSource {
 
                 @Override public void onDisconnected(CameraDevice device) {
                     failure.compareAndSet(null, "camera-unavailable");
+                    closeQuietly(device);
                     latch.countDown();
                 }
 
                 @Override public void onError(CameraDevice device, int error) {
                     failure.compareAndSet(null, openErrorCode(error));
+                    closeQuietly(device);
                     latch.countDown();
                 }
             }, handler);
@@ -417,6 +419,23 @@ public final class CameraPhotoSource {
             } catch (RuntimeException ignored) {
             }
             camera = null;
+        }
+    }
+
+    /**
+     * Close a device the platform handed to a failed-open callback. The
+     * Camera2 contract makes the app responsible for releasing that device;
+     * leaving it open keeps the camera busy for the whole process, so every
+     * later open answers `camera-in-use` until the app restarts.
+     */
+    private static void closeQuietly(CameraDevice device) {
+        if (device == null) {
+            return;
+        }
+        try {
+            device.close();
+        } catch (RuntimeException ignored) {
+            // The platform already tore the device down.
         }
     }
 
