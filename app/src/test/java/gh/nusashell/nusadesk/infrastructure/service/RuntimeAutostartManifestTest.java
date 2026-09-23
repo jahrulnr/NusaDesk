@@ -123,8 +123,10 @@ public class RuntimeAutostartManifestTest {
         assertTrue("the host service must not be startable by other apps",
                 manifest.contains("android:exported=\"false\""));
         assertTrue(manifest.contains("android:foregroundServiceType=\"specialUse\""));
+        // Comments may name the type (the manifest documents that it is
+        // deliberately absent); only a real declaration counts.
         assertFalse("dataSync must not be used as an indefinite server type",
-                manifest.contains("dataSync"));
+                manifest.replaceAll("(?s)<!--.*?-->", "").contains("dataSync"));
     }
 
     @Test

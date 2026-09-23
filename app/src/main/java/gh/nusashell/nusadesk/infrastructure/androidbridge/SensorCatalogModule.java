@@ -1,5 +1,6 @@
 package gh.nusashell.nusadesk.infrastructure.androidbridge;
 
+import android.Manifest;
 import android.content.Context;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -34,6 +35,20 @@ import java.util.concurrent.TimeUnit;
  * {@code _3}. Unlike upstream, which keys its JSON on the device-reported
  * sensor name, these names are device-independent and are the lookup keys for
  * {@code sensor.read} and {@code sensor.stream.start}.</p>
+ *
+ * <p>Two catalog rows carry a runtime-permission gate: {@code step_counter}
+ * ({@link Sensor#TYPE_STEP_COUNTER}) and {@code step_detector}
+ * ({@link Sensor#TYPE_STEP_DETECTOR}). The platform docs require the
+ * {@code ACTIVITY_RECOGNITION} grant for both on Android 10+ (the manifest
+ * declares it); without it {@code registerListener} refuses the sensor and a
+ * read would surface only a generic {@code sensor-unavailable}.
+ * {@code sensor.list} therefore marks those rows with
+ * {@code "requires":"activity_recognition"}, and {@code sensor.read} /
+ * {@code sensor.stream.start} answer the typed
+ * {@code sensor-permission-required} (no grant, no recorded refusal) or
+ * {@code sensor-permission-denied} (recorded refusal) when a selection
+ * touches a gated sensor without the grant. Listing stays ungated —
+ * {@code getSensorList} needs no permission.</p>
  *
  * <p>{@code sensor.read} takes {@code sensor} (a comma-separated list of
  * canonical names, numeric types, or substrings — resolved in that order,
@@ -90,6 +105,7 @@ public final class SensorCatalogModule implements CapabilityModule {
     private static final String THREAD_NAME = "android-capability-sensor-catalog";
 
     private final Context context;
+    private final AndroidPermissionChecker permissions;
     private final Object lock = new Object();
 
     private HandlerThread thread;
@@ -102,6 +118,7 @@ public final class SensorCatalogModule implements CapabilityModule {
             throw new IllegalArgumentException("context must not be null");
         }
         this.context = context.getApplicationContext();
+        this.permissions = new AndroidPermissionChecker(this.context);
     }
 
     @Override
@@ -191,8 +208,11 @@ public final class SensorCatalogModule implements CapabilityModule {
                     .append(",\"vendor\":").append(encodeNullable(entry.sensor.getVendor()))
                     .append(",\"max_range\":").append(finiteOrNull(entry.sensor.getMaximumRange()))
                     .append(",\"resolution\":").append(finiteOrNull(entry.sensor.getResolution()))
-                    .append(",\"power\":").append(finiteOrNull(entry.sensor.getPower()))
-                    .append('}');
+                    .append(",\"power\":").append(finiteOrNull(entry.sensor.getPower()));
+            if (needsActivityRecognition(entry.sensor)) {
+                json.append(",\"requires\":\"activity_recognition\"");
+            }
+            json.append('}');
         }
         json.append(']');
         Map<String, Object> fields = new LinkedHashMap<>();
@@ -238,6 +258,11 @@ public final class SensorCatalogModule implements CapabilityModule {
         if (selection.entries.isEmpty()) {
             return AndroidCapabilityProtocol.Response.error(
                     request.getId(), "sensor-unavailable:no matching sensor");
+        }
+        AndroidCapabilityProtocol.Response permissionError =
+                activityRecognitionGate(request, selection);
+        if (permissionError != null) {
+            return permissionError;
         }
         Handler handler = sensorHandler();
         if (handler == null) {
@@ -333,6 +358,11 @@ public final class SensorCatalogModule implements CapabilityModule {
         if (selection.entries.isEmpty()) {
             return AndroidCapabilityProtocol.Response.error(
                     request.getId(), "sensor-unavailable:no matching sensor");
+        }
+        AndroidCapabilityProtocol.Response permissionError =
+                activityRecognitionGate(request, selection);
+        if (permissionError != null) {
+            return permissionError;
         }
         int samplingUs = delayMs <= 0
                 ? SensorManager.SENSOR_DELAY_GAME
@@ -652,6 +682,51 @@ public final class SensorCatalogModule implements CapabilityModule {
             names.append(entry.name);
         }
         return names.toString();
+    }
+
+    /**
+     * The typed error when a selection touches a sensor gated by
+     * {@code ACTIVITY_RECOGNITION} and the grant is missing, or null when the
+     * path may proceed. The platform docs require the runtime grant for
+     * {@link Sensor#TYPE_STEP_COUNTER} and {@link Sensor#TYPE_STEP_DETECTOR}
+     * on Android 10+; without it {@code registerListener} refuses the sensor,
+     * so the gate answers before a listener set can surface only a generic
+     * {@code sensor-unavailable}.
+     */
+    private AndroidCapabilityProtocol.Response activityRecognitionGate(
+            AndroidCapabilityProtocol.Request request, Selection selection) {
+        boolean gated = false;
+        for (CatalogEntry entry : selection.entries) {
+            if (needsActivityRecognition(entry.sensor)) {
+                gated = true;
+                break;
+            }
+        }
+        if (!gated) {
+            return null;
+        }
+        CapabilityPermission state =
+                permissions.check(Manifest.permission.ACTIVITY_RECOGNITION);
+        if (state == CapabilityPermission.GRANTED) {
+            return null;
+        }
+        return AndroidCapabilityProtocol.Response.error(request.getId(),
+                state == CapabilityPermission.DENIED
+                        ? "sensor-permission-denied:grant "
+                                + Manifest.permission.ACTIVITY_RECOGNITION
+                                + " in app settings"
+                        : "sensor-permission-required:grant "
+                                + Manifest.permission.ACTIVITY_RECOGNITION
+                                + " (permission.request mode=runtime)");
+    }
+
+    /**
+     * Whether one platform sensor is gated by {@code ACTIVITY_RECOGNITION}:
+     * the documented pair is the step counter and the step detector.
+     */
+    private static boolean needsActivityRecognition(Sensor sensor) {
+        int type = sensor.getType();
+        return type == Sensor.TYPE_STEP_COUNTER || type == Sensor.TYPE_STEP_DETECTOR;
     }
 
     /** JSON literal for one nullable metadata number; non-finite is null, never 0. */

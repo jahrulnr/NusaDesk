@@ -22,7 +22,9 @@ final class ForegroundOperationCatalog {
             DialogForegroundOperation.KIND, new DialogForegroundOperation(),
             CaptureForegroundOperation.KIND, new CaptureForegroundOperation(),
             NfcForegroundOperation.KIND, new NfcForegroundOperation(),
-            FingerprintForegroundOperation.KIND, new FingerprintForegroundOperation());
+            FingerprintForegroundOperation.KIND, new FingerprintForegroundOperation(),
+            BluetoothConsentForegroundOperation.KIND,
+            new BluetoothConsentForegroundOperation());
 
     private ForegroundOperationCatalog() {
     }

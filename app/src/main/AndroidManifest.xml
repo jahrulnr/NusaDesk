@@ -154,6 +154,10 @@
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
+    <!-- Advertising and classic discoverability (termux-less, NusaDesk-native
+         bluetooth surface): BLUETOOTH_ADVERTISE is the API 31+ runtime grant
+         behind BleAdvertiser and ACTION_REQUEST_DISCOVERABLE. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <!-- API 30 and below instead use the install-granted legacy pair. -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"
@@ -161,15 +165,14 @@
     <uses-permission
         android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
-    <!-- Foreground-service types the capabilities will declare at runtime. -->
+    <!-- Foreground-service types the capabilities declare at runtime. The
+         connected-device and data-sync types are deliberately absent: no
+         shipped service declares them (the Linux session keeps the process
+         alive for every wireless capability), and AGENTS.md forbids dataSync
+         as an indefinite server process. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <!-- Bounded data-processing work for a user-invoked automation run. The
-         AGENTS.md rule still stands: this type must never be used as an
-         indefinite server process. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!--
         User-invoked automation surface.
@@ -278,9 +281,9 @@
     <!-- termux-media-player: a foreground service with the media-playback type
          keeps audio alive while the guest session owns playback. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- termux-download: lets DownloadManager post its own progress without a
-         second notification path. -->
-    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
+    <!-- No DOWNLOAD_WITHOUT_NOTIFICATION: it is only required for
+         VISIBILITY_HIDDEN, and termux-download uses
+         VISIBILITY_VISIBLE_NOTIFY_COMPLETED (the visible progress path). -->
     <!-- No READ_MEDIA_*: nothing queries MediaStore image/video/audio —
          media.scan feeds resolved guest paths to MediaScannerConnection and
          storage reads go through MANAGE_EXTERNAL_STORAGE + SAF. -->
@@ -432,6 +435,21 @@
             android:name=".infrastructure.service.MediaPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!--
+            Background location foreground service (location.background.start/
+            poll/stop). Started only by a guest command through the bridge,
+            and only after the user has granted "Allow all the time" for
+            location: the module answers a typed permission-required result
+            otherwise. It posts a user-visible notification with a Stop action,
+            registers the requested provider/interval/distance, and releases
+            the updates on stop. This is the one capability that uses the
+            FOREGROUND_SERVICE_LOCATION type.
+        -->
+        <service
+            android:name=".infrastructure.service.LocationBackgroundService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!--
             Job scheduler bridge (termux-job-scheduler). The job can only run

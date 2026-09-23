@@ -147,6 +147,30 @@ public final class GuestAwarenessReadmeWriter {
         updated |= ensureFile(bin.resolve(GuestAndroidCliWriter.CLI_FILE_NAME),
                 GuestAndroidCliWriter.scriptContent(version)
                         .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestBtCliWriter.CLI_FILE_NAME),
+                GuestBtCliWriter.scriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestServeCliWriter.SERVE_CLI_FILE_NAME),
+                GuestServeCliWriter.serveScriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestServeCliWriter.NET_CLI_FILE_NAME),
+                GuestServeCliWriter.netScriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestNativeCliWriter.WIFI_CLI_FILE_NAME),
+                GuestNativeCliWriter.wifiScriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestNativeCliWriter.PKG_CLI_FILE_NAME),
+                GuestNativeCliWriter.pkgScriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestNativeCliWriter.USAGE_CLI_FILE_NAME),
+                GuestNativeCliWriter.usageScriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestNativeCliWriter.OVERLAY_CLI_FILE_NAME),
+                GuestNativeCliWriter.overlayScriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
+        updated |= ensureFile(bin.resolve(GuestNativeCliWriter.LOC_CLI_FILE_NAME),
+                GuestNativeCliWriter.locScriptContent(version)
+                        .getBytes(StandardCharsets.UTF_8), CLI_PERMISSIONS);
         updated |= ensureTermuxCompat(activeRootfs, version);
         return updated ? Result.UPDATED : Result.UNCHANGED;
     }
@@ -236,6 +260,16 @@ public final class GuestAwarenessReadmeWriter {
                 "  [--location LOCATION]` - change one event",
                 "- `nusadesk-android calendar delete EVENT_ID` - remove one event",
                 "- `nusadesk-android bridge info` - bridge discovery",
+                "- `nusadesk-bt status|devices|discover|pair|le-scan|advertise|",
+                "  gatt|rfcomm ...` - Bluetooth control, BLE, GATT, and serial",
+                "- `nusadesk-serve start [--port N] [--dir PATH]` - serve the",
+                "  workspace over HTTP on the LAN; `nusadesk-net lan-ip` finds the",
+                "  address to hand out",
+                "- `nusadesk-wifi hotspot|suggest|lock ...`, `nusadesk-pkg",
+                "  list|info|launch`, `nusadesk-usage query|events|standby`,",
+                "  `nusadesk-overlay show|update|status|hide`, and `nusadesk-loc",
+                "  start|poll|stop` - the native wifi extras, app enumeration,",
+                "  usage reads, overlay, and background location",
                 "",
                 "See [media.md](media.md) for the live stream contract,",
                 "[calendar.md](calendar.md) for the calendar contract,",

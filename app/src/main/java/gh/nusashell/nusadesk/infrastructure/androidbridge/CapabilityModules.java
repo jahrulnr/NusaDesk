@@ -38,6 +38,15 @@ final class CapabilityModules {
         modules.add(new SensorCatalogModule(context));
         modules.add(new WifiModule(context));
         modules.add(new InfraredModule(context));
+        modules.add(new WifiExtrasModule(context));
+        modules.add(new BluetoothModule(context));
+        modules.add(new BluetoothLeModule(context));
+        modules.add(new BluetoothGattModule(context));
+        modules.add(new BluetoothRfcommModule(context));
+        modules.add(new UsageModule(context));
+        modules.add(new PackagesModule(context));
+        modules.add(new OverlayModule(context));
+        modules.add(new LocationBackgroundModule(context));
         return List.copyOf(modules);
     }
 }

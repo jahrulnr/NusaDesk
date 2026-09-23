@@ -81,14 +81,15 @@ public class BridgePermissionsManifestTest {
             // Bluetooth capability (modern pair plus the capped legacy pair).
             "android.permission.BLUETOOTH_CONNECT",
             "android.permission.BLUETOOTH_SCAN",
+            // NusaDesk-native bluetooth surface: BLE advertising and classic
+            // discoverability behind BleAdvertiser / ACTION_REQUEST_DISCOVERABLE.
+            "android.permission.BLUETOOTH_ADVERTISE",
             "android.permission.BLUETOOTH",
             "android.permission.BLUETOOTH_ADMIN",
             // Foreground-service types a capability declares at runtime.
             "android.permission.FOREGROUND_SERVICE_CAMERA",
             "android.permission.FOREGROUND_SERVICE_LOCATION",
             "android.permission.FOREGROUND_SERVICE_MICROPHONE",
-            "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
-            "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
             // Telephony / messaging / personal-data inputs for automation.
             "android.permission.READ_PHONE_STATE",
             "android.permission.READ_CALL_LOG",
@@ -122,7 +123,6 @@ public class BridgePermissionsManifestTest {
             "android.permission.NEARBY_WIFI_DEVICES",
             "android.permission.MODIFY_AUDIO_SETTINGS",
             "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
-            "android.permission.DOWNLOAD_WITHOUT_NOTIFICATION",
 
     };
 

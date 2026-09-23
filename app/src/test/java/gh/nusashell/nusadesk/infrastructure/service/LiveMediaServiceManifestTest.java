@@ -37,8 +37,10 @@ public class LiveMediaServiceManifestTest {
                 manifest.contains("android:exported=\"false\""));
         assertTrue("the service must carry the camera|microphone foreground type",
                 manifest.contains("android:foregroundServiceType=\"camera|microphone\""));
+        // Comments may name the type (the manifest documents that it is
+        // deliberately absent); only a real declaration counts.
         assertFalse("dataSync must not be used as an indefinite server type",
-                manifest.contains("dataSync"));
+                manifest.replaceAll("(?s)<!--.*?-->", "").contains("dataSync"));
     }
 
     @Test
