@@ -60,13 +60,13 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(bridge.contains("media.status"));
         assertTrue(bridge.contains("media.stop"));
         assertTrue(bridge.contains("token is never"));
-        assertTrue(bridge.contains("16 KiB"));
-        // The envelope is no longer param-free: the calendar writes declare one
-        // bounded params object, and the doc must state that instead of the
-        // retired "no method takes request parameters" claim.
+        assertTrue(bridge.contains("64 KiB"));
+        // The envelope is no longer param-free: the methods that declare
+        // parameters carry one bounded params object, and the doc must state
+        // the v2 bounds instead of the retired claims.
         assertTrue(bridge.contains("## Bounded params"));
-        assertTrue(bridge.contains("Only `calendar.insert`, `calendar.update`, and `calendar.delete`"));
-        assertTrue(bridge.contains("calendar-invalid-argument"));
+        assertTrue(bridge.contains("at most 16 keys"));
+        assertTrue(bridge.contains("`invalid-argument`"));
         assertFalse("the retired param-free claim must not come back",
                 bridge.contains("no method takes request parameters"));
     }
@@ -151,7 +151,7 @@ public class GuestAwarenessGeneratedDocsTest {
     }
 
     @Test
-    public void messagingTelephonyDocCoversReadSurfacesAndRetiredSideEffects() {
+    public void messagingTelephonyDocCoversReadsAndSideEffectingGrants() {
         String doc = GuestAwarenessReadmeWriter.messagingTelephonyDocContent("0.1.0");
         for (String method : new String[]{
                 "contacts.list", "calllog.list", "sms.inbox",
@@ -160,7 +160,14 @@ public class GuestAwarenessGeneratedDocsTest {
         }
         assertTrue(doc.contains("sms.send"));
         assertTrue(doc.contains("phone.call"));
-        assertTrue(doc.contains("never dispatched"));
+        // The side-effecting methods are served with their own per-call
+        // grants; the retired "never dispatched" claim must not come back.
+        assertFalse("the retired never-dispatched claim must not come back",
+                doc.contains("never dispatched"));
+        assertTrue(doc.contains("per-call grant"));
+        assertTrue(doc.contains("SEND_SMS"));
+        assertTrue(doc.contains("CALL_PHONE"));
+        assertTrue(doc.contains("unconfirmed"));
         assertTrue(doc.contains("count"));
         assertTrue(doc.contains("truncated"));
         assertTrue(doc.contains("Read-only"));
