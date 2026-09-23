@@ -41,6 +41,15 @@ Guest commands shipped with the same work (not permission-bound):
 `nusadesk-net` (`GuestServeCliWriterTest` 6, including a real fork + HTTP
 round trip).
 
+## Release verification (0.8.0)
+
+CI published the release from tag `v0.8.0` (asset `NusaDesk-v0.8.0.apk`,
+`sha256 183e97bcdb59965080a7abfab75cf0a1808c21e94055a29ca01feab01ce32a56`).
+Both project devices took it through the app's own updater: the banner offered
+`v0.8.0`, the Install action staged the published APK, the platform installer
+confirmed, and the installed `base.apk` on each device hashed to that same
+digest (S10e SM-G970F/API 31 and S7 Edge SM-G935F/API 29, 2026-09-24).
+
 ## Device evidence
 
 Recorded 2026-09-23/24 on the S10e (SM-G970F, Android 12/API 31, QA build
