@@ -18,6 +18,7 @@ import android.widget.TextView;
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
@@ -85,6 +86,7 @@ public final class DesktopHomeView extends ScrollView
     private Button updateDismiss;
 
     private List<WebAppDefinition> webApps = Collections.emptyList();
+    private List<TerminalCommandApp> terminalApps = Collections.emptyList();
     private Map<String, Bitmap> favicons = Collections.emptyMap();
 
     private RuntimeSnapshot runtimeSnapshot;
@@ -168,7 +170,10 @@ public final class DesktopHomeView extends ScrollView
         this.entryOpenListener = listener;
     }
 
-    /** Receives a long press on a web app tile, which opens its edit form. */
+    /**
+     * Receives a long press on a registered app tile — a web app or a terminal
+     * command — which opens its edit form.
+     */
     public void setOnEntryEditListener(LauncherGridView.OpenListener listener) {
         this.entryEditListener = listener;
     }
@@ -202,9 +207,14 @@ public final class DesktopHomeView extends ScrollView
         wizard.setStorageRequirement(totalBytes);
     }
 
-    /** Replaces the registered web apps the grid renders. */
-    public void setWebApps(List<WebAppDefinition> definitions) {
-        this.webApps = definitions == null ? Collections.emptyList() : definitions;
+    /**
+     * Replaces the registered user apps the grid renders: the web apps and the
+     * terminal commands, each in its own store's launcher order.
+     */
+    public void setApps(
+            List<WebAppDefinition> webApps, List<TerminalCommandApp> commandApps) {
+        this.webApps = webApps == null ? Collections.emptyList() : webApps;
+        this.terminalApps = commandApps == null ? Collections.emptyList() : commandApps;
         render();
     }
 
@@ -311,7 +321,7 @@ public final class DesktopHomeView extends ScrollView
         boolean showApps = LauncherModel.shouldShowApps(systemReady, serviceReady);
         boolean filtering = showApps && LauncherModel.isFiltering(query());
 
-        List<LauncherEntry> entries = LauncherModel.entries(webApps);
+        List<LauncherEntry> entries = LauncherModel.entries(webApps, terminalApps);
         List<LauncherEntry> visible = LauncherModel.filter(entries, query(), this::labelOf);
 
         // One installer surface while either component is missing. Hiding (and

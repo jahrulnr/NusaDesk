@@ -94,6 +94,22 @@
     <string name="terminal_failed_unknown">unknown reason</string>
     <string name="terminal_dropped_banner">The terminal disconnected. Linux is still running.</string>
     <string name="terminal_reconnect">Reconnect terminal</string>
+    <!-- Multi-tab terminal: an initial shell plus every tab opened from the
+         ⋮ options menu or from a terminal-command launcher app. The initial
+         shell can be closed like any other tab; if none remain, the options
+         menu still lets the user open a new one. -->
+    <string name="terminal_tab_numbered">Terminal %1$d</string>
+    <string name="terminal_menu_new">New</string>
+    <string name="terminal_menu_open">Open</string>
+    <string name="terminal_menu_close">Close</string>
+    <string name="terminal_no_tabs_title">No open terminals</string>
+    <string name="terminal_no_tabs_body">Open a new terminal from the options menu.</string>
+    <!-- The number here is the tab cap, a build constant, so the noun is
+         always plural and a plural resource would resolve to this same
+         string. PluralsCandidate is the heuristic this deliberately
+         contradicts. -->
+    <string name="terminal_tab_limit" tools:ignore="PluralsCandidate">NusaDesk keeps %1$d terminals at a time. Close one first.</string>
+    <string name="terminal_app_open_failed">Could not open the terminal app: %1$s</string>
 
     <!-- Logs app surface: the guest's own log files, split the way a real -->
     <!-- Linux box keeps them — the boot/session stream separately from each -->
@@ -172,6 +188,25 @@
     <string name="webapp_tab_current">Current: %1$s</string>
     <string name="webapp_tab_open">Open %1$s</string>
     <string name="webapp_tab_close">Close %1$s</string>
+
+    <!-- Add / edit a terminal-command app: the same form, one kind richer. A
+         terminal app names a command that runs inside Linux when its tile is
+         opened; the command travels over the app's own pinned loopback SSH
+         session and is never executed by Android. -->
+    <string name="app_form_type_label">Type</string>
+    <string name="app_form_type_web">Web app</string>
+    <string name="app_form_type_command">Terminal command</string>
+    <string name="terminal_app_tile_open_desc">%1$s. Double tap to open it in the terminal, long press to edit.</string>
+    <string name="terminal_app_tile_locked_desc">%1$s. Finish Linux setup to open it.</string>
+    <string name="terminal_form_body">Name the app and give the command it runs inside Linux. Opening the app starts that command in its own terminal.</string>
+    <string name="terminal_field_command">Command</string>
+    <string name="terminal_field_command_hint">docker exec -it notebook bash</string>
+    <string name="terminal_command_note">The command runs inside Linux as the same guest user the terminal uses — exactly as if you typed it there.</string>
+    <!-- The argument is TerminalCommand.MAX_LENGTH, a build constant, so the
+         noun is always plural; see terminal_tab_limit above. -->
+    <string name="terminal_error_command" tools:ignore="PluralsCandidate">Enter a command on one line, at most %1$d characters.</string>
+    <string name="terminal_error_unknown_app">This app is no longer registered.</string>
+    <string name="terminal_error_storage">Could not save the app: %1$s</string>
 
     <!-- Web app surface: the app's own page, loaded only after its loopback
          endpoint answers, with honest loading and unreachable states. -->

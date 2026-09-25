@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 
 import org.apache.sshd.client.SshClient;
-import org.apache.sshd.client.channel.ChannelShell;
+import org.apache.sshd.client.channel.PtyCapableChannelSession;
 import org.apache.sshd.client.future.ConnectFuture;
 import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.common.NamedResource;
@@ -41,8 +41,9 @@ import org.apache.sshd.core.CoreModuleProperties;
  * {@code HostKeyTrustPolicy} and a caller-provided
  * {@link FirstHostKeyTrustCallback}), authenticates using credentials sourced
  * <em>only</em> as {@code char[]}/{@code byte[]} from a
- * {@link SshCredentialProvider}, opens a PTY shell channel, streams stdin/stdout,
- * resizes the PTY, and reconnects with a bounded {@link SshReconnectPolicy}.
+ * {@link SshCredentialProvider}, opens a PTY shell or exec channel, streams
+ * stdin/stdout, resizes the PTY, and reconnects with a bounded
+ * {@link SshReconnectPolicy}.
  * Sensitive credential buffers are zeroed immediately after authentication.</p>
  *
  * <h2>Documented limitations</h2>
@@ -68,6 +69,13 @@ import org.apache.sshd.core.CoreModuleProperties;
  *       with a null {@link FilePasswordProvider}; encrypted private keys are not
  *       supported in this slice. A future slice can route a passphrase through
  *       the vault adapter.</li>
+ *   <li><b>Exec channel for command tabs.</b> A non-null {@code command} to
+ *       {@link #start} opens {@code ChannelExec} instead of
+ *       {@code ChannelShell}; both are {@code PtyCapableChannelSession}, so
+ *       stdin/stdout streaming and window-change are identical. The command
+ *       string is passed verbatim to the remote {@code sshd} — never parsed
+ *       or executed on the host — and the exec request carries no extra
+ *       environment (ADR-0054).</li>
  *   <li><b>slf4j backend.</b> MINA uses slf4j-api; debug builds route it to
  *       logcat through {@code org.slf4j.impl.StaticLoggerBinder} under
  *       {@code app/src/debug}; release builds keep slf4j unbound (no-op).</li>
@@ -109,8 +117,9 @@ public final class SshClientBridge {
 
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean hostKeyRejected = new AtomicBoolean();
-    private final AtomicReference<ChannelShell> activeChannel = new AtomicReference<>();
+    private final AtomicReference<PtyCapableChannelSession> activeChannel = new AtomicReference<>();
     private volatile SshSessionConfig config;
+    private volatile String command;
     private volatile SshSessionListener listener;
 
     /**
@@ -152,8 +161,14 @@ public final class SshClientBridge {
      * Begin a session. Runs asynchronously; returns immediately. The listener
      * receives state transitions and streamed output. Calling start twice
      * without {@link #close()} is not allowed.
+     *
+     * @param command {@code null} opens an interactive shell channel; a
+     *                non-null command opens an exec channel with a PTY that
+     *                runs the command on the remote side, and every bounded
+     *                reconnect re-runs it. The command is opaque here — it is
+     *                never parsed or executed on the host (ADR-0054).
      */
-    public void start(SshSessionConfig sessionConfig, SshSessionListener sessionListener) {
+    public void start(SshSessionConfig sessionConfig, String command, SshSessionListener sessionListener) {
         if (sessionConfig == null) {
             throw new IllegalArgumentException("sessionConfig must not be null");
         }
@@ -164,6 +179,7 @@ public final class SshClientBridge {
             throw new IllegalStateException("bridge is closed");
         }
         this.config = sessionConfig;
+        this.command = command;
         this.listener = sessionListener;
         lifecycle.submit(this::runSession);
     }
@@ -213,7 +229,7 @@ public final class SshClientBridge {
     }
 
     private void writeOnIo(byte[] frame) {
-        ChannelShell channel = activeChannel.get();
+        PtyCapableChannelSession channel = activeChannel.get();
         if (channel == null || !channel.isOpen()) {
             return;
         }
@@ -229,7 +245,7 @@ public final class SshClientBridge {
     }
 
     private void resizeOnIo(int cols, int rows) {
-        ChannelShell channel = activeChannel.get();
+        PtyCapableChannelSession channel = activeChannel.get();
         if (channel == null || !channel.isOpen()) {
             return;
         }
@@ -249,7 +265,7 @@ public final class SshClientBridge {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        ChannelShell channel = activeChannel.getAndSet(null);
+        PtyCapableChannelSession channel = activeChannel.getAndSet(null);
         try {
             io.execute(() -> closeQuietly(channel));
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
@@ -332,10 +348,28 @@ public final class SshClientBridge {
                 pty.setPtyType(cfg.getTerminalType());
                 pty.setPtyColumns(cfg.getInitialCols());
                 pty.setPtyLines(cfg.getInitialRows());
-                ChannelShell channel = session.createShellChannel(pty, Collections.emptyMap());
+                // A command tab opens an exec channel with the same PTY as the
+                // shell channel; the command goes to the remote verbatim and
+                // each reconnect attempt re-runs it (ADR-0054).
+                PtyCapableChannelSession channel = command == null
+                        ? session.createShellChannel(pty, Collections.emptyMap())
+                        : session.createExecChannel(command, pty, Collections.emptyMap());
+                if (command != null) {
+                    // The exec constructor copies the PTY *configuration* but
+                    // hard-codes the use-pty flag to false (it is that
+                    // constructor's first argument), so the request has to be
+                    // armed explicitly. Without it the guest runs the command
+                    // with no TTY at all: an interactive command such as
+                    // `docker exec -it … bash` or `top` then fails and exits
+                    // immediately, which is exactly what the S10e showed (the
+                    // guest sshd logged "Starting session: command" and the
+                    // session closed two seconds later with no output).
+                    channel.setUsePty(true);
+                }
                 channel.open().verify(cfg.getChannelOpenTimeoutMillis());
                 activeChannel.set(channel);
-                l.onState(SshSessionState.RUNNING, "shell open");
+                l.onState(SshSessionState.RUNNING,
+                        command == null ? "shell open" : "command channel open");
                 streamUntilClosed(channel, l);
             } finally {
                 activeChannel.set(null);
@@ -390,7 +424,7 @@ public final class SshClientBridge {
         }
     }
 
-    private void streamUntilClosed(ChannelShell channel, SshSessionListener l) throws Exception {
+    private void streamUntilClosed(PtyCapableChannelSession channel, SshSessionListener l) throws Exception {
         CountDownLatch done = new CountDownLatch(2);
         AtomicReference<Exception> error = new AtomicReference<>();
         pump("ssh-stdout", channel.getInvertedOut(), l::onStdout, done, error);

@@ -18,19 +18,22 @@ import gh.nusashell.nusadesk.R;
  * One launcher tile: a single focusable accessibility node with an icon plate, a
  * label, and — only when it applies — a status line.
  *
- * <p>Three kinds of entry share this tile, and the differences are stated in
+ * <p>Four kinds of entry share this tile, and the differences are stated in
  * words, never implied by colour:</p>
  *
  * <ul>
  *   <li>the {@code Add} action stays enabled even
  *       before Linux is installed, because registering a launcher entry needs no
  *       runtime;</li>
- *   <li>a Linux surface or a user web app is enabled only once the curated
- *       system is installed, and says {@code Locked} with the reason when it is
- *       not;</li>
+ *   <li>a Linux surface or a registered user app is enabled only once the
+ *       curated system is installed, and says {@code Locked} with the reason
+ *       when it is not;</li>
  *   <li>a web app renders its chosen image when it has one, the favicon its own
  *       endpoint served when it has not, and a monogram from its own name when
- *       it has neither, so a tile is never an empty square.</li>
+ *       it has neither, so a tile is never an empty square;</li>
+ *   <li>a terminal command renders its chosen image when it has one and the
+ *       bundled terminal glyph when it has not, with the same monogram behind
+ *       both.</li>
  * </ul>
  *
  * <p>The icon, label, and status children are excluded from the accessibility
@@ -121,18 +124,26 @@ public final class LauncherTileView extends LinearLayout {
 
     /**
      * The tile's accessible sentence: the app's own name or curated description,
-     * plus the gestures this tile really supports. A web app says it can be
-     * long-pressed for editing; a curated surface does not promise that.
+     * plus the gestures this tile really supports. A registered app says it can
+     * be long-pressed for editing — in words that name what it opens — while a
+     * curated surface does not promise that.
      */
     private String descriptionFor(LauncherEntry entry, String label, boolean openable) {
-        if (entry.isWebApp()) {
-            return getContext().getString(openable
-                    ? R.string.webapp_tile_open_desc : R.string.webapp_tile_locked_desc, label);
+        switch (entry.getKind()) {
+            case WEB_APP:
+                return getContext().getString(openable
+                        ? R.string.webapp_tile_open_desc
+                        : R.string.webapp_tile_locked_desc, label);
+            case TERMINAL_APP:
+                return getContext().getString(openable
+                        ? R.string.terminal_app_tile_open_desc
+                        : R.string.terminal_app_tile_locked_desc, label);
+            default:
+                String detail = entry.getDescriptionRes() != 0
+                        ? getContext().getString(entry.getDescriptionRes()) : label;
+                return getContext().getString(openable
+                        ? R.string.app_tile_open_desc : R.string.app_tile_locked_desc, detail);
         }
-        String detail = entry.getDescriptionRes() != 0
-                ? getContext().getString(entry.getDescriptionRes()) : label;
-        return getContext().getString(openable
-                ? R.string.app_tile_open_desc : R.string.app_tile_locked_desc, detail);
     }
 
     /** The localised label of an entry: a resource for curated items, user text otherwise. */
@@ -143,22 +154,20 @@ public final class LauncherTileView extends LinearLayout {
     }
 
     /**
-     * Renders the icon plate. A bundled vector icon — the {@code Add} action and
-     * the curated surfaces — is an app asset, so it renders identically whatever
-     * the OEM system font does; a user web app instead walks
-     * {@link LauncherIconPolicy}'s order — its own image, then the favicon its
-     * endpoint served, then a monogram of its name — and stops at the first
-     * source that actually renders.
+     * Renders the icon plate through {@link LauncherIconPolicy}'s order: the
+     * user's own image, then the favicon the app's endpoint served, then the
+     * bundled vector the entry's kind ships, then a monogram of its name — and
+     * stops at the first source that actually renders. A bundled vector is an
+     * app asset, so it renders identically whatever the OEM system font does;
+     * {@code Add} and the curated surfaces always land on it (they have neither
+     * a user image nor a favicon), a web app ships none and skips the step, and
+     * a terminal command reaches it only when the user picked no image.
      */
     private void renderIcon(LauncherEntry entry, String label, Bitmap favicon) {
-        if (entry.getIconRes() != 0) {
-            vectorView.setImageResource(entry.getIconRes());
-            showPlateChild(vectorView);
-            return;
-        }
         boolean hasFavicon = favicon != null;
-        LauncherIconPolicy.Source source =
-                LauncherIconPolicy.preferred(entry.getIconUri(), hasFavicon);
+        int bundledIconRes = entry.getIconRes();
+        LauncherIconPolicy.Source source = LauncherIconPolicy.preferred(
+                entry.getIconUri(), hasFavicon, bundledIconRes);
         if (source == LauncherIconPolicy.Source.USER_IMAGE) {
             if (showUserImage(entry.getIconUri())) {
                 showPlateChild(imageView);
@@ -167,10 +176,18 @@ public final class LauncherTileView extends LinearLayout {
             // The token is still the app's icon, it just cannot be read any more
             // (a revoked permission, a deleted file): fall through rather than
             // leave the plate empty.
-            source = LauncherIconPolicy.after(source, hasFavicon);
+            source = LauncherIconPolicy.after(source, hasFavicon, bundledIconRes);
         }
-        if (source == LauncherIconPolicy.Source.FAVICON && showFavicon(favicon)) {
-            showPlateChild(imageView);
+        if (source == LauncherIconPolicy.Source.FAVICON) {
+            if (showFavicon(favicon)) {
+                showPlateChild(imageView);
+                return;
+            }
+            source = LauncherIconPolicy.after(source, hasFavicon, bundledIconRes);
+        }
+        if (source == LauncherIconPolicy.Source.VECTOR) {
+            vectorView.setImageResource(bundledIconRes);
+            showPlateChild(vectorView);
             return;
         }
         monogramView.setText(monogram(label));

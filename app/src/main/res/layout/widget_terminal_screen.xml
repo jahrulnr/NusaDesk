@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Terminal app surface. A maximized Linux app: the packaged xterm WebView, a -->
+<!-- Terminal app surface. A maximized Linux app: a host for one packaged -->
+<!-- xterm WebView per tab (only the selected tab is visible), a -->
 <!-- passive attach panel for the "session is not running" case, a -->
 <!-- non-blocking banner when the terminal dropped while the session stayed up, -->
 <!-- and the mobile accessory key row that sits directly above the soft -->
@@ -18,8 +19,10 @@
             android:layout_height="0dp"
             android:layout_weight="1">
 
-            <gh.nusashell.nusadesk.presentation.widget.TerminalBridgeView
-                android:id="@+id/terminal_bridge"
+            <!-- Per-tab terminal bridges (ADR-0054): TerminalAppView adds one -->
+            <!-- TerminalBridgeView per live tab and toggles their visibility. -->
+            <FrameLayout
+                android:id="@+id/terminal_tab_host"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:background="@color/terminal_surface" />

@@ -20,8 +20,8 @@ public final class SshClientBridgeTransport implements TerminalTransport {
     }
 
     @Override
-    public void start(SshSessionConfig config, SshSessionListener listener) {
-        bridge.start(config, listener);
+    public void start(SshSessionConfig config, String command, SshSessionListener listener) {
+        bridge.start(config, command, listener);
     }
 
     @Override

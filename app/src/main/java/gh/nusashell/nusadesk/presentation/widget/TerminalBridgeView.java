@@ -21,6 +21,7 @@ import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackWebViewConfig;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalMessage;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalMessageCodec;
+import gh.nusashell.nusadesk.presentation.terminal.TerminalPendingWrites;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -91,6 +92,17 @@ public final class TerminalBridgeView extends FrameLayout {
      * ever show a white rectangle where the shell should be.
      */
     private boolean pageReady;
+    /**
+     * True once the packaged page has reported READY through its wired port —
+     * the first moment a host->page write can actually be delivered. Kept
+     * separate from {@link #pageReady} (which already turns true at
+     * {@code onPageFinished}) because a host-owned tab session can produce its
+     * first output inside exactly that window (ADR-0054): writes arriving
+     * before READY are held in {@link #pendingWrites} and flushed in order
+     * instead of being dropped.
+     */
+    private boolean portReady;
+    private final TerminalPendingWrites pendingWrites = new TerminalPendingWrites();
     private CharSequence requestedOverlay;
 
     public TerminalBridgeView(Context context) {
@@ -165,11 +177,25 @@ public final class TerminalBridgeView extends FrameLayout {
 
     /** Write SSH stdout to the terminal. Must be called on the UI thread. */
     public void writeStdout(String data) {
+        if (released) {
+            return;
+        }
+        if (!portReady) {
+            pendingWrites.add(data, false); // overflow: the new chunk is dropped
+            return;
+        }
         postToPage(TerminalMessage.text(TerminalMessage.Type.WRITE, data));
     }
 
     /** Write SSH stderr to the terminal. Must be called on the UI thread. */
     public void writeStderr(String data) {
+        if (released) {
+            return;
+        }
+        if (!portReady) {
+            pendingWrites.add(data, true);
+            return;
+        }
         postToPage(TerminalMessage.text(TerminalMessage.Type.WRITE_STDERR, data));
     }
 
@@ -208,6 +234,9 @@ public final class TerminalBridgeView extends FrameLayout {
      */
     public void clear() {
         scrollBottomButton.setVisibility(GONE);
+        // A reset means the queued source is gone too: writes still waiting for
+        // the page belong to the previous content and must never flush into it.
+        pendingWrites.clear();
         postToPage(TerminalMessage.signal(TerminalMessage.Type.RESET));
     }
 
@@ -289,6 +318,8 @@ public final class TerminalBridgeView extends FrameLayout {
         }
         released = true;
         pageReady = false;
+        portReady = false;
+        pendingWrites.clear();
         closePort();
         listener = null;
         webView.stopLoading();
@@ -319,6 +350,21 @@ public final class TerminalBridgeView extends FrameLayout {
             return; // page not ready yet; the SSH controller should not be writing.
         }
         port.postMessage(new WebMessage(TerminalMessageCodec.encode(message)));
+    }
+
+    /**
+     * Deliver every write queued before the page's port was ready, in arrival
+     * order. Called once from the READY branch, before the fit/focus
+     * handshake; after it the queue is empty and writes post directly.
+     */
+    private void flushPendingWrites() {
+        for (TerminalPendingWrites.Entry entry : pendingWrites.drain()) {
+            postToPage(TerminalMessage.text(
+                    entry.isStderr()
+                            ? TerminalMessage.Type.WRITE_STDERR
+                            : TerminalMessage.Type.WRITE,
+                    entry.getText()));
+        }
     }
 
     private void closePort() {
@@ -360,10 +406,15 @@ public final class TerminalBridgeView extends FrameLayout {
             return; // invalid/oversized/unknown — drop silently, do not log content.
         }
         if (decoded.getType() == TerminalMessage.Type.READY) {
-            // The packaged page is live and painted: drop the loading cover and
-            // hand the surface its real geometry before anything is written.
+            // The packaged page is live and painted: drop the loading cover,
+            // deliver every write queued before the port existed (in order),
+            // then hand the surface its real geometry. Flushing first keeps a
+            // freshly opened tab's first output ahead of the fit/focus that
+            // could itself trigger page-side repaint work.
             pageReady = true;
+            portReady = true;
             applyOverlay();
+            flushPendingWrites();
             if (getWidth() > 0 && getHeight() > 0) {
                 fit();
             }

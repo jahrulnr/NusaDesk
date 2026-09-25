@@ -302,6 +302,84 @@ Device pass (Samsung SM-G970F, Android 12/API 31, arm64,
 | TSS-005 | PASS — `ACTION_STOP` → `STOPPING` → `STOPPED`; SSH client session closed with the runtime; notification removed; process exited |
 | TSS-006 | PASS — 60 s background: zero runtime state transitions, `keepalive@sshd.apache.org` sent exactly every 30 s, session stayed connected; reopen republished the same `RUNNING` with zero new handshake. In an earlier 45 s window the guest workload was killed non-deterministically while the service process survived — pre-existing OEM behavior, and relaunch honestly started a fresh session rather than faking continuity |
 
+## Terminal tabs and command apps (ADR-0054)
+
+The terminal owns several host sessions (an initial closable shell tab plus tabs
+from the options menu or a launcher terminal-command app), and a launcher entry
+can carry a user-authored guest command. JVM-locked by `TerminalTabsControllerTest`,
+`TerminalSessionControllerTest`, `TerminalCommandTest`,
+`TerminalCommandRegistryTest`, `TerminalCommandRecordCodecTest`,
+`LauncherModelTest`, `LauncherIconPolicyTest`, and `AppFormErrorTest`; the
+interaction claims below were checked on the S10e where marked PASS.
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| TTB-001 | Open the terminal with Linux running | One shell tab exists; the compact options menu shows `New` and `Terminal 1` |
+| TTB-002 | `New` from the options menu | A second shell tab opens as `Terminal 2`, with its own scrollback after switching away and back |
+| TTB-003 | Tap a numbered tab in the options menu, then `Open` | The selected tab renders its own session; typing reaches only that tab; other tabs' output continues in their scrollback |
+| TTB-004 | Add a terminal-command app (`docker exec -it …` style) and tap its tile | The terminal surface opens on a new numbered tab (`Terminal N`); the command runs with a PTY; no typing needed |
+| TTB-005 | Tap the same command app tile again while its tab is live | The existing tab is selected; no second copy opens |
+| TTB-006 | Guest command exits (the device probe uses `q` in `top`) | That tab closes automatically; the previous tab becomes selected; other tabs are unaffected |
+| TTB-007 | Open tabs up to the cap (5) | `New` disappears from the top-level menu; a refused open answers the tab-limit message instead of a silent no-op |
+| TTB-008 | Tap a terminal name, then `Close` | The tab closes, the previous tab becomes selected, and the WebView is released; the initial shell is closable too |
+| TTB-009 | Rotate, background, and return with tabs open | Tabs keep their sessions; the selected tab is restored; geometry refits (PTY agrees with xterm) |
+| TTB-010 | Notification while a command tab is selected | The terminal line and Reconnect action describe the selected tab; runtime Stop closes every tab |
+| TTB-011 | Add/edit/delete a terminal-command app in the Add form | Fields are ordered Name → Image → Type dropdown → Port/Command; invalid values land as field errors; delete removes the tile |
+| TTB-012 | Command-app tile with a deleted app (stale launcher state) | Opening reconciles the launcher instead of opening a stale app; a live tab for a deleted app remains open and labelled `Terminal N` |
+| TTB-013 | Leave ⋮ open while a new tab transitions `CONNECTING` → `RUNNING` | The visible menu item still invokes the action whose label it showed; it cannot retarget by list index |
+| TTB-014 | Add a command app, open the image picker, and let Android recreate the Activity | The form restores its kind, name, command/port, and persisted image token before the picker result is delivered |
+| TTB-015 | Close the only open tab | Empty-terminal state appears; ⋮ still contains `New`; opening it creates the next numbered tab while Linux keeps running |
+| TTB-016 | Type `exit` in a shell tab | Only that tab closes automatically; previous tab is selected, or empty-terminal state appears if it was the last tab |
+| TTB-017 | Change Type in the Add form | One compact Spinner replaces the two always-visible radio rows; each choice swaps the field group |
+| TTB-018 | Tap a tab name, choose `Open` for a non-current tab | That numbered tab becomes selected and shows its own scrollback |
+
+Device pass (Samsung SM-G970F, Android 12/API 31, arm64, 2026-09-25;
+QA-debuggable APK signed with the installed release key so existing guest data
+was preserved). This pass predates the compact-menu refinement documented
+below: TTB-012 records the earlier menu's command-derived label (`top`). The
+final compact menu labels every tab by ordinal (`Terminal N`); the earlier
+label observation is historical and is not a claim about the final UI.
+
+| Case | Result |
+| --- | --- |
+| TTB-001 | PASS (initial UI) — terminal opened on the initial shell tab; shell prompt accepted input. Compact menu numbering is retested below. |
+| TTB-002 | PASS — `New terminal` created `Terminal 2`; each shell kept separate output while switching; `echo TTB001-OK`, `echo BACK-ON-TAB1`, and `echo TAB2-OK-42` appeared in their respective tabs |
+| TTB-003 | PASS — ⋮ switched between shell tabs and the command tab; each displayed its own live output |
+| TTB-004 | PASS — saved `Probe` with command `top`; tapping its tile opened an exec PTY directly and rendered the guest process table. `top` is the device probe; a literal `docker exec -it …` needs a Docker-compatible guest and was not used |
+| TTB-005 | NOT RUN — same-tile deduplication is unit-covered at the controller level; the repeated-tap path was not exercised on-device |
+| TTB-006 | PASS (prior UI) — `q` exited `top`; explicit rerun opened a fresh PTY. Automatic clean-exit close is retested below. |
+| TTB-007 | PASS (prior UI) — reached five live tabs; create action disappeared at the cap. Compact-menu wording is retested below. |
+| TTB-008 | PASS (prior UI) — closing selected extra tabs returned to the previous tab; initial-shell close is retested below. |
+| TTB-009 | NOT RUN — attempted rotation coincided with the device's 30 s screen timeout and lock screen; rotation-specific scrollback/geometry is not claimed |
+| TTB-010 | PARTIAL — the runtime notification existed and reported `Terminal: connected` with a shell selected. Command-tab-specific notification text/action and Stop-closes-all-tabs were not exercised on-device |
+| TTB-011 | PASS — form showed Name → Image → Type → Command; selected Terminal command, saved `Probe`/`top`, then used the Remove confirmation; launcher returned to 4 apps and `terminal_apps` prefs had no remaining app record |
+| TTB-012 | PASS — after deleting `Probe`, its live PTY continued running and the terminal menu labelled it `top`; it was then explicitly closed |
+| TTB-013 | NOT RUN — menu item snapshots are captured in code; the timing race itself was not forced on-device |
+| TTB-014 | NOT RUN — draft save/restore compiles and is wired around the SAF picker; Activity recreation during picker was not forced on-device |
+
+The saved app and all extra QA tabs were removed/closed afterwards. The
+pre-existing rootfs/runtime and other app data were preserved. Android screen
+settings used to keep the device awake during QA were restored.
+
+### Refinement pass: compact tab menu, clean-exit close, and Type Spinner
+
+Device pass (Samsung SM-G970F, Android 12/API 31, arm64, 2026-09-25; QA build
+used the installed release signing key, preserving guest data):
+
+| Case | Result |
+| --- | --- |
+| TTB-015 | PASS — closed the only `Terminal 1` tab; the empty state appeared, ⋮ contained only `New`, and `New` created `Terminal 2` while Linux remained running |
+| TTB-016 | PASS — typed `exit` in `Terminal 2`; its clean SSH close removed the tab automatically, returning to the no-tabs state |
+| TTB-017 | PASS — Add form displayed a single Type Spinner after Name and Image; selecting `Terminal command` changed the field group to Command |
+| Nested tab actions | PASS — tapping `Terminal 1` opened a second-level chooser with `Open` and `Close`; Close removed the tab |
+| Command clean exit | PASS — saved a `OneShot` app with command `true`; tapping the tile started the command PTY and returned to the empty-terminal state when the command exited; the app record was then removed |
+| TTB-018 | PASS — with `OPEN-FIRST` in Terminal 4 and `OPEN-SECOND` in Terminal 5, opened Terminal 4 via its nested Open action and saw its distinct output return |
+
+The QA command app was deleted, all test tabs were closed, and the pre-existing
+guest/runtime remained intact. Screen timeout and stay-on-while-plugged-in
+settings were restored.
+
+
 ## Guest log cases (ADR-0034)
 
 The session console is persisted to `/var/log/lw/boot.log` in the rootfs;

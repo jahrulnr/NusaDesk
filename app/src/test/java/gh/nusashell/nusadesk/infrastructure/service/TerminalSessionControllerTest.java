@@ -36,20 +36,21 @@ public class TerminalSessionControllerTest {
 
     private List<FakeTransport> created;
     private List<TerminalSessionStatus> published;
+    private TerminalTransportFactory factory;
     private TerminalSessionController controller;
 
     @Before
     public void setUp() {
         created = new ArrayList<>();
         published = new ArrayList<>();
-        TerminalTransportFactory factory = () -> {
+        factory = () -> {
             FakeTransport transport = new FakeTransport();
             created.add(transport);
             return transport;
         };
         // A direct executor keeps every transition synchronous, matching the
         // production main-thread executor's serialization guarantees.
-        controller = new TerminalSessionController(factory, published::add, Runnable::run);
+        controller = new TerminalSessionController(factory, null, published::add, Runnable::run);
     }
 
     @Test
@@ -69,6 +70,37 @@ public class TerminalSessionControllerTest {
         SshSessionConfig config = created.get(0).config;
         assertEquals("127.0.0.1", config.getHost());
         assertEquals(22022, config.getPort());
+        // A null command keeps the interactive shell channel (ADR-0033).
+        assertEquals(null, created.get(0).command);
+    }
+
+    @Test
+    public void commandSessionForwardsTheCommandToTheTransport() {
+        controller = new TerminalSessionController(
+                factory, "docker exec -it codex bash", published::add, Runnable::run);
+
+        controller.onRuntimeStatus(running(SESSION));
+
+        assertEquals(1, created.size());
+        assertEquals("docker exec -it codex bash", created.get(0).command);
+        assertEquals(TerminalSessionState.CONNECTING, last().getState());
+    }
+
+    @Test
+    public void commandSessionReconnectRerunsTheCommand() {
+        controller = new TerminalSessionController(
+                factory, "uptime", published::add, Runnable::run);
+        controller.onRuntimeStatus(running(SESSION));
+        // A command that exits ends its channel: the tab drops, exactly like a
+        // shell that ended (ADR-0054 keeps the ADR-0033 drop contract).
+        created.get(0).listener.onClosed("command exited");
+        assertEquals(TerminalSessionState.DROPPED, last().getState());
+
+        controller.reconnect();
+
+        assertEquals(2, created.size());
+        assertEquals("uptime", created.get(1).command);
+        assertEquals(TerminalSessionState.CONNECTING, last().getState());
     }
 
     @Test
@@ -97,7 +129,7 @@ public class TerminalSessionControllerTest {
     }
 
     @Test
-    public void cleanClosePublishesDropped() {
+    public void cleanClosePublishesExited() {
         controller.onRuntimeStatus(running(SESSION));
         FakeTransport transport = created.get(0);
         transport.listener.onState(SshSessionState.RUNNING, "shell open");
@@ -105,7 +137,7 @@ public class TerminalSessionControllerTest {
         transport.listener.onState(SshSessionState.CLOSED, "remote closed the session");
         transport.listener.onClosed("remote closed the session");
 
-        assertEquals(TerminalSessionState.DROPPED, last().getState());
+        assertEquals(TerminalSessionState.EXITED, last().getState());
         assertEquals("remote closed the session", last().getDetail());
     }
 
@@ -306,6 +338,7 @@ public class TerminalSessionControllerTest {
 
     private static final class FakeTransport implements TerminalTransport {
         SshSessionConfig config;
+        String command;
         SshSessionListener listener;
         int startCount;
         int closeCount;
@@ -313,8 +346,10 @@ public class TerminalSessionControllerTest {
         int[] lastResize;
 
         @Override
-        public void start(SshSessionConfig sessionConfig, SshSessionListener sessionListener) {
+        public void start(SshSessionConfig sessionConfig, String command,
+                SshSessionListener sessionListener) {
             config = sessionConfig;
+            this.command = command;
             listener = sessionListener;
             startCount++;
         }

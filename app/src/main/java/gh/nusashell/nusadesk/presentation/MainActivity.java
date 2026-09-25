@@ -3,6 +3,7 @@ package gh.nusashell.nusadesk.presentation;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
@@ -36,6 +37,9 @@ import gh.nusashell.nusadesk.application.runtime.RuntimeInstallationException;
 import gh.nusashell.nusadesk.application.runtime.RuntimeInstallationUseCase;
 import gh.nusashell.nusadesk.application.runtime.RuntimeSnapshotReconciler;
 import gh.nusashell.nusadesk.application.runtime.RuntimeStateStore;
+import gh.nusashell.nusadesk.application.terminal.TerminalCommandRegistry;
+import gh.nusashell.nusadesk.application.terminal.TerminalTabException;
+import gh.nusashell.nusadesk.application.terminal.TerminalTabsPort;
 import gh.nusashell.nusadesk.application.webapp.WebAppRegistry;
 import gh.nusashell.nusadesk.application.workspace.WorkspaceStore;
 import gh.nusashell.nusadesk.domain.backup.BackupMode;
@@ -47,6 +51,10 @@ import gh.nusashell.nusadesk.domain.runtime.GuestAddonPayloadProfile;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
+import gh.nusashell.nusadesk.domain.terminal.TerminalTabKind;
+import gh.nusashell.nusadesk.domain.terminal.TerminalTabSnapshot;
+import gh.nusashell.nusadesk.domain.terminal.TerminalTabsSnapshot;
 import gh.nusashell.nusadesk.domain.update.ApkDigest;
 import gh.nusashell.nusadesk.domain.update.ReleaseVersion;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
@@ -66,9 +74,11 @@ import gh.nusashell.nusadesk.infrastructure.runtime.AndroidGuestAddonInstaller;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidRuntimeInstaller;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidRuntimeStateStore;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeHostService;
-import gh.nusashell.nusadesk.infrastructure.service.TerminalSessionBus;
-import gh.nusashell.nusadesk.infrastructure.service.TerminalSessionRegistry;
+import gh.nusashell.nusadesk.infrastructure.service.TerminalTabsBus;
+import gh.nusashell.nusadesk.infrastructure.service.TerminalTabsController;
+import gh.nusashell.nusadesk.infrastructure.service.TerminalTabsRegistry;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshSecurityInitializer;
+import gh.nusashell.nusadesk.infrastructure.terminal.SharedPreferencesTerminalCommandStore;
 import gh.nusashell.nusadesk.infrastructure.update.ApkDownloader;
 import gh.nusashell.nusadesk.infrastructure.update.GitHubReleaseChecker;
 import gh.nusashell.nusadesk.infrastructure.update.HttpAssetSource;
@@ -79,6 +89,7 @@ import gh.nusashell.nusadesk.infrastructure.webapp.SharedPreferencesWebAppStore;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppFaviconFetcher;
 import gh.nusashell.nusadesk.infrastructure.workspace.SharedPreferencesWorkspaceStore;
 import gh.nusashell.nusadesk.infrastructure.workspace.WorkspaceFolderAccess;
+import gh.nusashell.nusadesk.presentation.desktop.AppFormView;
 import gh.nusashell.nusadesk.presentation.desktop.AppSurfaceHostView;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopApp;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopHomeView;
@@ -88,7 +99,6 @@ import gh.nusashell.nusadesk.presentation.system.SystemBackupPageView;
 import gh.nusashell.nusadesk.presentation.system.SystemScreenView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
 import gh.nusashell.nusadesk.presentation.update.UpdateInstallDialog;
-import gh.nusashell.nusadesk.presentation.webapp.WebAppFormView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppTabStack;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
@@ -117,15 +127,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Shell host.
  *
  * <p>The launcher is the home surface: a search field, the {@code Add app}
- * action, the Linux surfaces this build ships, and the web apps the user
- * registered. Linux is background infrastructure (ADR-0013): this Activity
+ * action, the Linux surfaces this build ships, and the apps the user
+ * registered (local web apps and terminal-command apps). Linux is background infrastructure (ADR-0013): this Activity
  * calls the idempotent {@link RuntimeHostService#ensureRunning} from an explicit
  * foreground event, and no surface — launcher, terminal, system, or web app —
  * renders a start or stop control. The foreground-service notification and its
  * Stop action remain the user-visible lifecycle, as Android requires.</p>
  *
- * <p>The host owns navigation, the install coordinator, the web-app registry,
- * and the probe executor for web-app readiness. It never runs runtime work or
+ * <p>The host owns navigation, the install coordinator, the user-app
+ * registries (web apps and terminal-command apps), and the probe executor for
+ * web-app readiness. It never runs runtime work or
  * makes security decisions locally: the WebView origin policy lives in
  * {@code WebAppWebViewBoundary}, and the terminal's endpoint lives in
  * {@code LocalSshSessionFactory}.</p>
@@ -188,6 +199,7 @@ public final class MainActivity extends Activity {
     private GuestAddonPayloadProfile sshProfile;
     private GuestAddonPayloadProfile serviceProfile;
     private WebAppRegistry webAppRegistry;
+    private TerminalCommandRegistry terminalCommandRegistry;
     private WebAppFaviconFetcher faviconFetcher;
     private WorkspaceStore workspaceStore;
     private WorkspaceFolderAccess workspaceAccess;
@@ -272,6 +284,8 @@ public final class MainActivity extends Activity {
         installer = new AndroidRuntimeInstaller(this, stateStore);
         addonInstaller = new AndroidGuestAddonInstaller(this);
         webAppRegistry = new WebAppRegistry(new SharedPreferencesWebAppStore(this));
+        terminalCommandRegistry = new TerminalCommandRegistry(
+                new SharedPreferencesTerminalCommandStore(this));
         // The workspace folder is a user choice: it is stored, then bound into
         // the guest on every later start (ADR-0023). The access helper owns the
         // platform rules, so the Activity only asks for state and renders it.
@@ -298,13 +312,20 @@ public final class MainActivity extends Activity {
         loadPersistedState();
         restoreShellState(savedInstanceState);
         refreshGuestSshState();
-        refreshWebApps();
+        refreshUserApps();
         refreshWorkspace();
         refreshBattery();
         refreshBoot();
         applyWindowInsets();
         registerBackCallback();
         showRestoredShell();
+        if (activeDestination == DesktopDestination.ADD_APP
+                && savedInstanceState != null) {
+            View surface = fixedSurfaces.get(DesktopDestination.ADD_APP);
+            if (surface instanceof AppFormView) {
+                ((AppFormView) surface).restoreDraft(savedInstanceState);
+            }
+        }
     }
 
     /**
@@ -491,6 +512,15 @@ public final class MainActivity extends Activity {
         outState.putString(STATE_WEB_APP, activeWebAppId);
         outState.putString(STATE_SYSTEM_PAGE,
                 systemScreen == null ? null : systemScreen.activePageId());
+        if (activeDestination == DesktopDestination.ADD_APP) {
+            View surface = fixedSurfaces.get(DesktopDestination.ADD_APP);
+            if (surface instanceof AppFormView) {
+                // The SAF image picker can recreate this Activity while an
+                // unsaved command app is being edited. Preserve its selected
+                // kind and text fields with the content URI token.
+                ((AppFormView) surface).saveDraft(outState);
+            }
+        }
         // A SAF picker round trip can destroy this Activity while the picker is
         // in front, so the export selection stashed for the create-document
         // result has to survive in the instance state.
@@ -529,12 +559,12 @@ public final class MainActivity extends Activity {
             onBackupImportSourcePicked(resultCode, data);
             return;
         }
-        if (requestCode != WebAppFormView.REQUEST_OPEN_IMAGE) {
+        if (requestCode != AppFormView.REQUEST_OPEN_IMAGE) {
             return;
         }
-        View form = fixedSurfaces.get(DesktopDestination.ADD_WEB_APP);
-        if (form instanceof WebAppFormView) {
-            ((WebAppFormView) form).onImagePicked(resultCode, data);
+        View form = fixedSurfaces.get(DesktopDestination.ADD_APP);
+        if (form instanceof AppFormView) {
+            ((AppFormView) form).onImagePicked(resultCode, data);
         }
     }
 
@@ -543,7 +573,7 @@ public final class MainActivity extends Activity {
     private void wireLauncher() {
         desktopHome.setOnInstallListener(view -> startInstall());
         desktopHome.setOnEntryOpenListener(this::openEntry);
-        desktopHome.setOnEntryEditListener(entry -> openWebAppForm(entry.getWebApp()));
+        desktopHome.setOnEntryEditListener(this::openEntryEditor);
         desktopHome.setStorageRequirement(
                 catalogEntry.getCompressedBytes() + catalogEntry.getUncompressedBytes());
         desktopHome.setOnUpdateOpenListener(view -> onBannerInstall());
@@ -681,6 +711,11 @@ public final class MainActivity extends Activity {
         }
         appSurfaceHost.setAppTitle(destination.getTitleRes());
         appSurfaceHost.setMenuActions(Collections.emptyList());
+        if (destination == DesktopDestination.TERMINAL) {
+            // The terminal's options menu is its tab set, re-rendered on every
+            // tab change by the surface's own listener.
+            renderTerminalMenu(TerminalTabsBus.getInstance().current());
+        }
         if (destination == DesktopDestination.LOGS) {
             // Re-scan on every open: log files appear and rotate while the
             // surface is away, so a retained list would go stale.
@@ -710,7 +745,7 @@ public final class MainActivity extends Activity {
     private void renderWebAppMenu(WebAppDefinition definition, WebAppSurfaceView surface) {
         List<AppSurfaceHostView.MenuAction> actions = new ArrayList<>();
         actions.add(new AppSurfaceHostView.MenuAction(
-                R.string.webapp_menu_edit, () -> openWebAppForm(definition)));
+                R.string.webapp_menu_edit, () -> openAppForm(definition, null)));
         for (WebAppTabStack.Tab tab : surface.getTabs()) {
             String tabId = tab.getId();
             String tabTitle = tab.isRoot()
@@ -752,7 +787,10 @@ public final class MainActivity extends Activity {
     private void openEntry(LauncherEntry entry) {
         switch (entry.getKind()) {
             case ADD_APP:
-                openWebAppForm(null);
+                openAppForm(null, null);
+                return;
+            case TERMINAL_APP:
+                openTerminalCommandApp(entry.getTerminalApp());
                 return;
             case WEB_APP:
                 WebAppDefinition definition = definitionFor(entry.getId());
@@ -761,7 +799,7 @@ public final class MainActivity extends Activity {
                 } else {
                     // The tile was rendered from a definition that is gone;
                     // reconcile instead of opening a stale app.
-                    refreshWebApps();
+                    refreshUserApps();
                 }
                 return;
             default:
@@ -772,30 +810,171 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /** Long-press on a user app tile opens that app's edit form. */
+    private void openEntryEditor(LauncherEntry entry) {
+        if (entry.isWebApp()) {
+            openAppForm(entry.getWebApp(), null);
+        } else if (entry.isTerminalApp()) {
+            openAppForm(null, entry.getTerminalApp());
+        }
+    }
+
     /**
-     * Opens the add/edit form. The form is transient by design: a fresh instance
-     * per open, so no stale field value or error line can survive into the next
-     * app the user edits.
+     * Opens the terminal-command app: shows the terminal surface and asks the
+     * host for that app's tab. When Linux is not running yet the surface's own
+     * waiting state is the whole answer — no tab is created, and nothing is
+     * queued to run later.
      */
-    private void openWebAppForm(WebAppDefinition definition) {
-        WebAppDefinition existing = definition == null
-                ? null : definitionFor(definition.getId().value());
-        View previous = fixedSurfaces.remove(DesktopDestination.ADD_WEB_APP);
+    private void openTerminalCommandApp(TerminalCommandApp app) {
+        if (app == null) {
+            refreshUserApps();
+            return;
+        }
+        showSurface(DesktopDestination.TERMINAL);
+        TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
+        if (port == null) {
+            return; // the host service is gone; the surface states Linux is not running
+        }
+        try {
+            port.openOrSelectCommand(app.getId().value(), app.getCommand().value());
+        } catch (TerminalTabException failure) {
+            renderTerminalTabFailure(failure);
+        }
+    }
+
+    /** The user-visible half of a refused tab action; a cap gets its own line. */
+    private void renderTerminalTabFailure(TerminalTabException failure) {
+        if (failure.getReason() == TerminalTabException.Reason.NOT_RUNNING) {
+            return; // the terminal surface already explains that Linux is not running
+        }
+        boolean atCap = failure.getReason() == TerminalTabException.Reason.TAB_LIMIT;
+        Toast.makeText(this, getString(
+                atCap ? R.string.terminal_tab_limit : R.string.terminal_app_open_failed,
+                atCap ? TerminalTabsController.MAX_TABS
+                        : String.valueOf(failure.getMessage())),
+                Toast.LENGTH_LONG).show();
+    }
+
+    /**
+     * Opens the add/edit form for either kind of user app. The form is transient
+     * by design: a fresh instance per open, so no stale field value or error line
+     * can survive into the next app the user edits. Exactly one of the two
+     * arguments is non-null when editing.
+     */
+    private void openAppForm(WebAppDefinition webApp, TerminalCommandApp commandApp) {
+        View previous = fixedSurfaces.remove(DesktopDestination.ADD_APP);
         if (previous != null) {
             appSurfaceHost.getSurfaceContainer().removeView(previous);
         }
-        showSurface(DesktopDestination.ADD_WEB_APP);
-        View surface = fixedSurfaces.get(DesktopDestination.ADD_WEB_APP);
-        if (!(surface instanceof WebAppFormView)) {
+        showSurface(DesktopDestination.ADD_APP);
+        View surface = fixedSurfaces.get(DesktopDestination.ADD_APP);
+        if (!(surface instanceof AppFormView)) {
             return;
         }
-        WebAppFormView form = (WebAppFormView) surface;
-        if (existing == null) {
-            form.bindNew();
-        } else {
-            form.bindExisting(existing);
+        AppFormView form = (AppFormView) surface;
+        WebAppDefinition existingWebApp = webApp == null
+                ? null : definitionFor(webApp.getId().value());
+        TerminalCommandApp existingCommandApp = commandApp == null
+                ? null : commandAppFor(commandApp.getId().value());
+        if (existingCommandApp != null) {
+            form.bindExisting(existingCommandApp);
             appSurfaceHost.setAppTitle(R.string.webapp_edit_title);
+        } else if (existingWebApp != null) {
+            form.bindExisting(existingWebApp);
+            appSurfaceHost.setAppTitle(R.string.webapp_edit_title);
+        } else if (webApp != null || commandApp != null) {
+            // The app was deleted while the tile was still on screen; reconcile
+            // instead of editing a definition that no longer exists.
+            refreshUserApps();
+            showShell();
+        } else {
+            form.bindNew();
         }
+    }
+
+    /**
+     * Keeps the top-level terminal menu small: one action to create a tab, then
+     * one name per open tab. Opening the tab row presents its own Open/Close
+     * choice instead of duplicating close entries for every tab here.
+     */
+    private void renderTerminalMenu(TerminalTabsSnapshot snapshot) {
+        TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
+        if (port == null) {
+            appSurfaceHost.setMenuActions(Collections.emptyList());
+            return;
+        }
+        List<AppSurfaceHostView.MenuAction> actions = new ArrayList<>();
+        if (!port.isFull()) {
+            actions.add(new AppSurfaceHostView.MenuAction(
+                    R.string.terminal_menu_new, this::openNewTerminal));
+        }
+        if (snapshot != null) {
+            for (TerminalTabSnapshot tab : snapshot.getTabs()) {
+                String tabId = tab.getId();
+                String label = terminalTabLabel(tab);
+                actions.add(new AppSurfaceHostView.MenuAction(
+                        label, () -> showTerminalTabActions(port, tabId, label)));
+            }
+        }
+        appSurfaceHost.setMenuActions(actions);
+    }
+
+    /** A tab's stable menu name, independent of whether it runs a shell or command. */
+    private String terminalTabLabel(TerminalTabSnapshot tab) {
+        return getString(R.string.terminal_tab_numbered, tab.getDisplayOrdinal());
+    }
+
+    /** Shows the context menu for one tab, then revalidates it before acting. */
+    private void showTerminalTabActions(
+            TerminalTabsPort port, String tabId, String label) {
+        TerminalTabSnapshot current = port.snapshot().tab(tabId);
+        if (current == null) {
+            return; // the tab exited or was closed while the parent menu was open
+        }
+        CharSequence[] actions = {
+                getString(R.string.terminal_menu_open),
+                getString(R.string.terminal_menu_close)
+        };
+        new AlertDialog.Builder(this)
+                .setTitle(label)
+                .setItems(actions, (dialog, which) -> {
+                    TerminalTabSnapshot stillOpen = port.snapshot().tab(tabId);
+                    if (stillOpen == null) {
+                        return;
+                    }
+                    if (which == 0) {
+                        port.select(tabId);
+                    } else if (which == 1 && stillOpen.isClosable()) {
+                        port.close(tabId);
+                    }
+                })
+                .show();
+    }
+
+    /** Opens one more shell tab ("New") from the options menu. */
+    private void openNewTerminal() {
+        TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
+        if (port == null) {
+            return;
+        }
+        try {
+            port.openShell();
+        } catch (TerminalTabException failure) {
+            renderTerminalTabFailure(failure);
+        }
+    }
+
+    /** The registered terminal-command app for an id, or {@code null}. */
+    private TerminalCommandApp commandAppFor(String commandAppId) {
+        if (commandAppId == null) {
+            return null;
+        }
+        for (TerminalCommandApp app : terminalCommandRegistry.list()) {
+            if (app.getId().value().equals(commandAppId)) {
+                return app;
+            }
+        }
+        return null;
     }
 
     private View fixedSurfaceFor(DesktopDestination destination) {
@@ -818,24 +997,33 @@ public final class MainActivity extends Activity {
         if (destination == DesktopDestination.LOGS) {
             return createLogsSurface();
         }
-        if (destination == DesktopDestination.ADD_WEB_APP) {
-            return createWebAppForm();
+        if (destination == DesktopDestination.ADD_APP) {
+            return createAppForm();
         }
         return systemScreen;
     }
 
     /**
-     * Builds the terminal surface. The session itself lives in the host
-     * service (ADR-0033): this surface consumes it through the registry and
-     * the status bus, and never opens or closes an SSH connection of its own —
-     * there is no target to choose, exactly as the local-only factory
-     * contract requires (ADR-0013).
+     * Builds the terminal surface. The tab sessions live in the host service
+     * (ADR-0033, extended by ADR-0054): this surface consumes them through the
+     * tabs registry and the tabs bus, and never opens or closes an SSH
+     * connection of its own — there is no target to choose, exactly as the
+     * local-only factory contract requires (ADR-0013).
+     *
+     * <p>The tabs listener keeps the options button's tab menu honest: a tab
+     * opened from a launcher tile, or closed from the menu itself, re-renders
+     * it while the terminal is the visible surface.</p>
      */
     private TerminalAppView createTerminalSurface() {
         TerminalAppView terminal = new TerminalAppView(this);
         terminal.setOnGoToDesktopListener(view -> showShell());
+        terminal.setOnTabsChangedListener(snapshot -> {
+            if (activeDestination == DesktopDestination.TERMINAL) {
+                renderTerminalMenu(snapshot);
+            }
+        });
         terminal.setTerminalDependencies(
-                TerminalSessionRegistry.getInstance(), TerminalSessionBus.getInstance());
+                TerminalTabsRegistry.getInstance(), TerminalTabsBus.getInstance());
         return terminal;
     }
 
@@ -912,15 +1100,21 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private WebAppFormView createWebAppForm() {
-        WebAppFormView form = new WebAppFormView(this, webAppRegistry);
-        form.setListener(new WebAppFormView.Listener() {
+    private AppFormView createAppForm() {
+        AppFormView form = new AppFormView(this, webAppRegistry, terminalCommandRegistry);
+        form.setListener(new AppFormView.Listener() {
             @Override
             public void onWebAppSaved(WebAppDefinition definition) {
                 // The app may now point at a different endpoint, so an image
                 // fetched from the old one must not stay on the tile.
                 forgetFavicon(definition.getId().value());
-                refreshWebApps();
+                refreshUserApps();
+                showShell();
+            }
+
+            @Override
+            public void onCommandAppSaved(TerminalCommandApp app) {
+                refreshUserApps();
                 showShell();
             }
 
@@ -928,7 +1122,15 @@ public final class MainActivity extends Activity {
             public void onWebAppDeleted(String webAppId) {
                 discardWebAppSurface(webAppId);
                 forgetFavicon(webAppId);
-                refreshWebApps();
+                refreshUserApps();
+                showShell();
+            }
+
+            @Override
+            public void onCommandAppDeleted(String commandAppId) {
+                // A live tab for the deleted app keeps running until it is
+                // closed, exactly as ADR-0054 documents.
+                refreshUserApps();
                 showShell();
             }
         });
@@ -1088,9 +1290,15 @@ public final class MainActivity extends Activity {
         systemScreen.render(snapshot);
     }
 
-    private void refreshWebApps() {
+    /**
+     * Re-renders the launcher's user apps. The grid lists web apps first, then
+     * terminal-command apps, each in its own launcher order; the System screen
+     * keeps counting only web apps, because that is what its row says.
+     */
+    private void refreshUserApps() {
         List<WebAppDefinition> definitions = new ArrayList<>(webAppRegistry.list());
-        desktopHome.setWebApps(definitions);
+        List<TerminalCommandApp> commandApps = terminalCommandRegistry.list();
+        desktopHome.setApps(definitions, commandApps);
         systemScreen.setWebAppCount(definitions.size());
     }
 

@@ -1,5 +1,6 @@
 package gh.nusashell.nusadesk.presentation.desktop;
 
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 
 import java.util.ArrayList;
@@ -14,9 +15,11 @@ import java.util.function.Function;
  *
  * <p>The grid is one flat list, ordered the way a home screen reads: the
  * {@code Add app} action first, then the Linux surfaces this build ships, then
- * the web apps the user registered in their own launcher order. There are no
- * category sections: with two built-in surfaces and a handful of user apps, a
- * group header per category would be chrome, not information.</p>
+ * the user's registered apps. Registrations live in two stores — web apps and
+ * terminal commands — and the grid lists each store in its own given order,
+ * web apps first, rather than merging them into one user-app pile. There are
+ * no category sections: with two built-in surfaces and a handful of user apps,
+ * a group header per category would be chrome, not information.</p>
  *
  * <p>Search is a case-insensitive substring match over the label the user sees.
  * The caller supplies the already-localised label, which keeps the matching rule
@@ -29,12 +32,15 @@ public final class LauncherModel {
     }
 
     /**
-     * The launcher grid for the currently registered web apps.
+     * The launcher grid for the currently registered user apps.
      *
-     * @param webApps registered definitions in launcher order; {@code null} is
-     *                treated as "no web apps registered yet"
+     * @param webApps     registered web-app definitions in launcher order;
+     *                    {@code null} is treated as "no web apps registered yet"
+     * @param commandApps registered terminal-command apps in launcher order;
+     *                    {@code null} is treated as "none registered yet"
      */
-    public static List<LauncherEntry> entries(List<WebAppDefinition> webApps) {
+    public static List<LauncherEntry> entries(
+            List<WebAppDefinition> webApps, List<TerminalCommandApp> commandApps) {
         List<LauncherEntry> entries = new ArrayList<>();
         entries.add(LauncherEntry.addApp());
         for (DesktopApp app : DesktopApp.curated()) {
@@ -44,6 +50,13 @@ public final class LauncherModel {
             for (WebAppDefinition definition : webApps) {
                 if (definition != null) {
                     entries.add(LauncherEntry.webApp(definition));
+                }
+            }
+        }
+        if (commandApps != null) {
+            for (TerminalCommandApp app : commandApps) {
+                if (app != null) {
+                    entries.add(LauncherEntry.terminalApp(app));
                 }
             }
         }

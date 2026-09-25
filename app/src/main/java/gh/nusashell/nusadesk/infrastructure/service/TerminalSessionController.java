@@ -20,11 +20,21 @@ import java.util.function.Consumer;
  * <p>The session lives here — in the host service — instead of in the terminal
  * view, so its lifetime follows the <em>runtime session</em> (ADR-0033): it
  * opens when the runtime reaches {@code RUNNING}, closes when the runtime
- * leaves it, and survives Activity recreation. A shell that drops or fails
- * while the runtime stays up becomes {@code DROPPED}/{@code FAILED} and is
- * re-attached only by an explicit {@link #reconnect()} — from the terminal
- * banner or the notification action — never silently against a session the
- * user may have stopped.</p>
+ * leaves it, and survives Activity recreation. A clean remote channel end is
+ * reported as {@code EXITED} for the tab owner to remove; a connection that
+ * drops or fails while the runtime stays up becomes {@code DROPPED}/{@code
+ * FAILED} and is re-attached only by an explicit {@link #reconnect()} — from
+ * the terminal banner or the notification action — never silently against a
+ * session the user may have stopped.</p>
+ *
+ * <p>With {@code command == null} the session is the interactive shell of
+ * ADR-0033. With a non-null {@code command} it is a <em>command tab</em>
+ * (ADR-0054): the transport opens an exec channel with a PTY that runs the
+ * command on the guest, and {@link #reconnect()} re-runs the same command.
+ * The command is opaque here — the caller validates it
+ * ({@code TerminalCommand}) and it is never executed on the host. One
+ * controller instance owns one tab's session; the multi-tab contract lives in
+ * {@link TerminalTabsController}.</p>
  *
  * <p>All internal state is mutated on the injected main executor (the service
  * calls in on the main thread; bridge callbacks are marshalled there too), so
@@ -38,6 +48,7 @@ public final class TerminalSessionController implements TerminalSessionPort {
     private static final int DEFAULT_ROWS = 24;
 
     private final TerminalTransportFactory transportFactory;
+    private final String command;
     private final Consumer<TerminalSessionStatus> publisher;
     private final Executor mainExecutor;
 
@@ -54,13 +65,19 @@ public final class TerminalSessionController implements TerminalSessionPort {
 
     /**
      * @param transportFactory source of one fresh SSH transport per session
-     * @param publisher        sink for status updates (production: the
-     *                         {@link TerminalSessionBus}); called on the main executor
+     * @param command          {@code null} for an interactive shell session;
+     *                         a validated command string for an exec-channel
+     *                         session that re-runs the command on every
+     *                         (re)attach
+     * @param publisher        sink for status updates (production: the owning
+     *                         {@link TerminalTabsController}); called on the
+     *                         main executor
      * @param mainExecutor     serializes state transitions; production passes a
      *                         main-thread executor, tests a direct one
      */
     public TerminalSessionController(
             TerminalTransportFactory transportFactory,
+            String command,
             Consumer<TerminalSessionStatus> publisher,
             Executor mainExecutor) {
         if (transportFactory == null) {
@@ -73,6 +90,7 @@ public final class TerminalSessionController implements TerminalSessionPort {
             throw new IllegalArgumentException("mainExecutor must not be null");
         }
         this.transportFactory = transportFactory;
+        this.command = command;
         this.publisher = publisher;
         this.mainExecutor = mainExecutor;
     }
@@ -113,7 +131,8 @@ public final class TerminalSessionController implements TerminalSessionPort {
     /**
      * Explicit re-attach to the running runtime session. A no-op when no
      * runtime session is running; the guest daemon is still up, so a fresh
-     * shell opens (ADR-0013).
+     * channel opens — a shell, or the command re-run for a command tab
+     * (ADR-0013, ADR-0054).
      */
     @Override
     public void reconnect() {
@@ -166,7 +185,7 @@ public final class TerminalSessionController implements TerminalSessionPort {
         transport = created;
         setState(TerminalSessionState.CONNECTING, "");
         SshSessionConfig config = LocalSshSessionFactory.create(lastCols, lastRows);
-        created.start(config, new SshSessionListener() {
+        created.start(config, command, new SshSessionListener() {
             @Override
             public void onState(SshSessionState sshState, String detail) {
                 TerminalSessionController.this.onBridgeState(created, sshState, detail);
@@ -217,8 +236,14 @@ public final class TerminalSessionController implements TerminalSessionPort {
                     setState(TerminalSessionState.FAILED, reason);
                     break;
                 case CLOSED:
+                    // The bridge only publishes CLOSED after a clean remote
+                    // channel EOF. Transport failures take the exception path
+                    // and report RECONNECTING/FAILED instead. The tab owner
+                    // uses EXITED to remove this tab automatically (ADR-0054).
+                    setState(TerminalSessionState.EXITED, reason);
+                    break;
                 default:
-                    // The terminal close is reported through onBridgeClosed.
+                    // The session close is finalized through onBridgeClosed.
                     break;
             }
         });
@@ -233,8 +258,12 @@ public final class TerminalSessionController implements TerminalSessionPort {
                 return;
             }
             transport = null;
-            if (state == TerminalSessionState.FAILED) {
-                return; // FAILED already reported the terminal end; keep its reason
+            if (state == TerminalSessionState.FAILED
+                    || state == TerminalSessionState.EXITED) {
+                // Keep the terminal reason published immediately before this
+                // close callback; in particular, a clean EXITED channel is not
+                // a network drop eligible for Reconnect.
+                return;
             }
             setState(TerminalSessionState.DROPPED, reason == null ? "" : reason);
         });

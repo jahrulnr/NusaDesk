@@ -732,6 +732,49 @@ remains the fallback. The limitations are deliberate:
 - **Never fetched for an app with a user image.** The user's own pick is primary and is not replaced, and no request is made in that case.
 - **Silent by design.** Unreachable, timed out, redirected, too large, or not an image are all the same outcome: the tile keeps its monogram, with no error, toast, or state change.
 
+### Terminal tabs and terminal-command apps (ADR-0054)
+
+The terminal is a set of host-owned sessions (ADR-0033 extended): an initial
+shell tab plus tabs opened from the surface's options menu or from a launcher
+terminal-command app. Every tab, including the initial shell, can be closed. A
+clean guest `exit` closes its tab; if all tabs close, Linux keeps running and
+the surface shows an empty-terminal prompt while ⋮ still offers `New`.
+The bounds are deliberate:
+
+- **Five tabs at a time.** Every tab is a real `WebView` running xterm, so the
+  cap protects memory on a phone; at the cap the `New` action is hidden and an
+  open attempt answers a typed `TAB_LIMIT` reason. The top-level ⋮ list is just
+  `New` and numbered tabs; tapping one opens its `Open` / `Close` choices.
+- **No scrollback restore.** A tab keeps its own scrollback while it is alive,
+  but Activity recreation, process death, and tab switching by close/reopen
+  start from an empty screen — the same limitation ADR-0033 documented. Guest
+  `tmux`/`screen` remains the answer for durable scrollback.
+- **One live tab per command app.** Opening a command app twice selects the tab
+  it already has instead of starting a second copy; a clean command exit closes
+  that tab automatically, or close it manually to start fresh.
+- **A command app is a foreground command, not a service.** A clean command
+  exit closes its terminal tab automatically. A transport drop is different:
+  that tab stays open with an explicit reconnect action, which re-runs the
+  command on a fresh PTY; nothing restarts it automatically, and nothing runs
+  it at boot or in the background on its own.
+- **The notification reports the selected tab.** With several tabs open, the
+  terminal line and the Reconnect action describe the tab the surface is on, not
+  every tab at once.
+- **One printable line.** The stored command is validated as a single line
+  without control characters (512 characters max), so a multi-step command must
+  be written the way a shell accepts it, for example
+  `sh -c 'cd /root; ls; exec bash'`. The guest shell owns quoting, expansion,
+  and exit behaviour.
+- **A PTY is always requested.** A command that behaves differently without a
+  terminal still gets one, because the feature exists to land the user in an
+  interactive session.
+- **App-private registration.** Terminal-command apps live in the app's own
+  private preferences, like web apps: they are not part of the guest backup
+  (ADR-0044), are not visible to Linux, and are removed with the app's data.
+- **Deleting an app does not close its live tab.** The tab keeps running until
+  it is closed and remains labelled `Terminal N`; the deleted app definition no
+  longer appears in the launcher.
+
 ### Native-code distribution
 
 The future APK will likely need a small native execution bridge even though the Linux rootfs is downloaded. Any JNI/native `.so` must support the device ABI and 16 KB page-size devices. Native files must be reproducibly built, checksum/signature verified, licensed, and tested.
@@ -754,7 +797,14 @@ Downloading and executing a Linux runtime from a non-Play source may trigger Dev
 ## Unsupported future features unless explicitly approved
 
 - Arbitrary user-provided rootfs/image/URL.
-- Arbitrary shell command entered into a privileged/native execution API.
+- Arbitrary shell command entered into a privileged/native execution API. The one
+  bounded exception is a launcher terminal-command app (ADR-0054): a
+  user-authored single-line command is stored in app-private preferences and
+  handed to the app's own guest Linux over the pinned loopback SSH session —
+  the same shell the user could type it into. It is never executed by the
+  Android host, never reaches a `Runtime.exec`/`ProcessBuilder`/Binder execution
+  path, and no app data is interpolated into it. Arbitrary commands into
+  host-side execution APIs remain unsupported.
 - Running systemd or a complete init system.
 - Docker-compatible container semantics inside PRoot beyond the bounded
   `udocker compose` adapter (ADR-0025): arbitrary Compose features, real

@@ -1,6 +1,7 @@
 package gh.nusashell.nusadesk.presentation.desktop;
 
 import gh.nusashell.nusadesk.R;
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 
 import java.util.Objects;
@@ -8,16 +9,17 @@ import java.util.Objects;
 /**
  * One item in the launcher grid.
  *
- * <p>The launcher shows three kinds of item in one grid: the {@code Add app}
- * action, the curated Linux surfaces, and the web apps the user registered. They
- * are modelled as one immutable type so the grid, the search filter, and the
- * tile renderer each have exactly one input shape instead of three parallel code
- * paths that could disagree.</p>
+ * <p>The launcher shows four kinds of item in one grid: the {@code Add app}
+ * action, the curated Linux surfaces, and the web apps and terminal commands
+ * the user registered. They are modelled as one immutable type so the grid,
+ * the search filter, and the tile renderer each have exactly one input shape
+ * instead of parallel code paths that could disagree.</p>
  *
- * <p>A web-app entry keeps its {@link WebAppDefinition}, so the tile can show
- * the app's own name and icon and the shell can open the exact loopback origin
- * the definition generates. This object never builds a URL, probes a port, or
- * starts anything; those are the surface's job after the user opens it.</p>
+ * <p>A web-app entry keeps its {@link WebAppDefinition} and a terminal-command
+ * entry keeps its {@link TerminalCommandApp}, so the tile can show the app's
+ * own name and icon and the shell can open the exact surface the registration
+ * describes. This object never builds a URL, probes a port, or starts anything;
+ * those are the surface's job after the user opens it.</p>
  */
 public final class LauncherEntry {
 
@@ -28,7 +30,9 @@ public final class LauncherEntry {
         /** A Linux surface the app ships itself. */
         CURATED,
         /** A user-registered local web app. */
-        WEB_APP
+        WEB_APP,
+        /** A user-registered guest terminal command. */
+        TERMINAL_APP
     }
 
     /** Stable id of the "Add app" action. */
@@ -36,7 +40,7 @@ public final class LauncherEntry {
 
     private static final LauncherEntry ADD_APP = new LauncherEntry(
             Kind.ADD_APP, ADD_APP_ID, R.string.launcher_add_label, null,
-            R.drawable.ic_launcher_add, R.string.webapp_add_desc, null, null);
+            R.drawable.ic_launcher_add, R.string.webapp_add_desc, null, null, null);
 
     private final Kind kind;
     private final String id;
@@ -46,11 +50,12 @@ public final class LauncherEntry {
     private final int descriptionRes;
     private final String iconUri;
     private final WebAppDefinition webApp;
+    private final TerminalCommandApp terminalApp;
 
     private LauncherEntry(
             Kind kind, String id, int labelRes, String label,
             int iconRes, int descriptionRes,
-            String iconUri, WebAppDefinition webApp) {
+            String iconUri, WebAppDefinition webApp, TerminalCommandApp terminalApp) {
         this.kind = kind;
         this.id = id;
         this.labelRes = labelRes;
@@ -59,6 +64,7 @@ public final class LauncherEntry {
         this.descriptionRes = descriptionRes;
         this.iconUri = iconUri;
         this.webApp = webApp;
+        this.terminalApp = terminalApp;
     }
 
     /** The single "Add app" action tile. */
@@ -72,7 +78,7 @@ public final class LauncherEntry {
             throw new IllegalArgumentException("app must not be null");
         }
         return new LauncherEntry(Kind.CURATED, app.getId(), app.getLabelRes(), null,
-                app.getIconRes(), app.getDescriptionRes(), null, null);
+                app.getIconRes(), app.getDescriptionRes(), null, null, null);
     }
 
     /** A registered web app. */
@@ -84,7 +90,20 @@ public final class LauncherEntry {
         // the tile composes its accessible sentence from that name.
         return new LauncherEntry(Kind.WEB_APP, definition.getId().value(),
                 0, definition.getDisplayName(), 0,
-                0, definition.getIconUri(), definition);
+                0, definition.getIconUri(), definition, null);
+    }
+
+    /** A registered terminal-command app. */
+    public static LauncherEntry terminalApp(TerminalCommandApp app) {
+        if (app == null) {
+            throw new IllegalArgumentException("app must not be null");
+        }
+        // Unlike a web app a terminal command ships its own glyph, so the tile
+        // is never bare even before its icon policy runs: a user image still
+        // wins over it and the monogram still backs it.
+        return new LauncherEntry(Kind.TERMINAL_APP, app.getId().value(),
+                0, app.getDisplayName(), R.drawable.ic_launcher_terminal,
+                0, app.getIconUri(), null, app);
     }
 
     public Kind getKind() {
@@ -109,7 +128,9 @@ public final class LauncherEntry {
     /**
      * Drawable resource for the bundled vector icon, or {@code 0} when the
      * entry's icon comes from elsewhere: a web app renders its own image,
-     * favicon, or monogram instead of a bundled asset.
+     * favicon, or monogram instead of a bundled asset. A terminal-command app
+     * keeps the terminal glyph here as the vector step of its icon policy —
+     * a user image still outranks it.
      */
     public int getIconRes() {
         return iconRes;
@@ -130,6 +151,11 @@ public final class LauncherEntry {
         return webApp;
     }
 
+    /** The registered command app, or {@code null} for a non-terminal entry. */
+    public TerminalCommandApp getTerminalApp() {
+        return terminalApp;
+    }
+
     /** True when tapping this entry can open a surface. */
     public boolean isOpenable() {
         return kind != Kind.ADD_APP;
@@ -138,6 +164,11 @@ public final class LauncherEntry {
     /** True when this entry is a web app the user registered. */
     public boolean isWebApp() {
         return kind == Kind.WEB_APP;
+    }
+
+    /** True when this entry is a terminal command the user registered. */
+    public boolean isTerminalApp() {
+        return kind == Kind.TERMINAL_APP;
     }
 
     @Override
@@ -154,13 +185,14 @@ public final class LauncherEntry {
                 && iconRes == that.iconRes
                 && descriptionRes == that.descriptionRes
                 && Objects.equals(iconUri, that.iconUri)
-                && Objects.equals(webApp, that.webApp);
+                && Objects.equals(webApp, that.webApp)
+                && Objects.equals(terminalApp, that.terminalApp);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(kind, id, labelRes, label, iconRes,
-                descriptionRes, iconUri, webApp);
+                descriptionRes, iconUri, webApp, terminalApp);
     }
 
     @Override

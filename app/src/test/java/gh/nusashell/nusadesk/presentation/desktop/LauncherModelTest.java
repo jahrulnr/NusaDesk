@@ -1,5 +1,8 @@
 package gh.nusashell.nusadesk.presentation.desktop;
 
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommand;
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommandAppId;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.webapp.WebAppId;
 
@@ -28,9 +31,20 @@ public class LauncherModelTest {
                 createdAt, createdAt, (int) createdAt);
     }
 
+    private static TerminalCommandApp commandApp(
+            String id, String name, String command, int sortOrder) {
+        return new TerminalCommandApp(
+                TerminalCommandAppId.of(id), name, null,
+                TerminalCommand.of(command), 1, 1, sortOrder);
+    }
+
     private static final List<WebAppDefinition> WEB_APPS = Arrays.asList(
             webApp("Notebook", 8000, 1),
             webApp("Wiki", 8080, 2));
+
+    private static final List<TerminalCommandApp> COMMAND_APPS = Arrays.asList(
+            commandApp("cmd-codex", "Codex", "docker exec -it codex bash", 0),
+            commandApp("cmd-htop", "Htop", "htop", 1));
 
     private static final Function<LauncherEntry, String> LABELS = entry -> {
         switch (entry.getKind()) {
@@ -56,8 +70,8 @@ public class LauncherModelTest {
     }
 
     @Test
-    public void addAppComesFirstThenLinuxSurfacesThenWebApps() {
-        List<LauncherEntry> entries = LauncherModel.entries(WEB_APPS);
+    public void addAppComesFirstThenLinuxSurfacesThenWebAppsThenCommandApps() {
+        List<LauncherEntry> entries = LauncherModel.entries(WEB_APPS, COMMAND_APPS);
 
         assertEquals(LauncherEntry.Kind.ADD_APP, entries.get(0).getKind());
         assertEquals(LauncherEntry.ADD_APP_ID, entries.get(0).getId());
@@ -66,15 +80,20 @@ public class LauncherModelTest {
         assertEquals("logs", entries.get(3).getId());
         assertEquals("notebook", entries.get(4).getId());
         assertEquals("wiki", entries.get(5).getId());
-        assertEquals(6, entries.size());
+        assertEquals(LauncherEntry.Kind.TERMINAL_APP, entries.get(6).getKind());
+        assertEquals("cmd-codex", entries.get(6).getId());
+        assertEquals("cmd-htop", entries.get(7).getId());
+        assertEquals(8, entries.size());
     }
 
     @Test
     public void theAddAppActionIsNotAnAppButStaysOpenable() {
-        LauncherEntry add = LauncherModel.entries(Collections.emptyList()).get(0);
+        LauncherEntry add =
+                LauncherModel.entries(Collections.emptyList(), null).get(0);
 
         assertFalse(add.isOpenable());
         assertFalse(add.isWebApp());
+        assertFalse(add.isTerminalApp());
         assertTrue(add.getLabelRes() != 0);
         assertTrue(add.getIconRes() != 0);
     }
@@ -86,7 +105,7 @@ public class LauncherModelTest {
      */
     @Test
     public void webAppsHaveNoBundledIconSoTheirOwnImagePolicyApplies() {
-        for (LauncherEntry entry : LauncherModel.entries(WEB_APPS)) {
+        for (LauncherEntry entry : LauncherModel.entries(WEB_APPS, null)) {
             if (entry.isWebApp()) {
                 assertEquals(0, entry.getIconRes());
             }
@@ -95,7 +114,7 @@ public class LauncherModelTest {
 
     @Test
     public void aWebAppEntryCarriesItsOwnDefinitionSoTheTileCanOpenIt() {
-        LauncherEntry entry = LauncherModel.entries(WEB_APPS).get(4);
+        LauncherEntry entry = LauncherModel.entries(WEB_APPS, null).get(4);
 
         assertTrue(entry.isWebApp());
         assertTrue(entry.isOpenable());
@@ -105,16 +124,42 @@ public class LauncherModelTest {
     }
 
     @Test
-    public void noWebAppsIsAValidLauncher() {
-        List<LauncherEntry> entries = LauncherModel.entries(null);
+    public void aTerminalCommandEntryCarriesItsOwnAppSoTheTileCanOpenIt() {
+        LauncherEntry entry = LauncherModel.entries(null, COMMAND_APPS).get(4);
+
+        assertTrue(entry.isTerminalApp());
+        assertFalse(entry.isWebApp());
+        assertTrue(entry.isOpenable());
+        assertEquals("Codex", entry.getLabel());
+        assertEquals("docker exec -it codex bash",
+                entry.getTerminalApp().getCommand().value());
+        // A command app ships its own glyph: the tile still walks the icon
+        // policy, but the bundled vector always stands before the monogram.
+        assertTrue(entry.getIconRes() != 0);
+    }
+
+    @Test
+    public void noRegisteredAppsIsAValidLauncher() {
+        List<LauncherEntry> entries = LauncherModel.entries(null, null);
 
         assertEquals(4, entries.size());
         assertFalse(entries.get(1).isWebApp());
+        assertFalse(entries.get(1).isTerminalApp());
+    }
+
+    @Test
+    public void emptyOrNullCommandAppListsAreTolerated() {
+        assertEquals(6, LauncherModel.entries(WEB_APPS, null).size());
+        assertEquals(6,
+                LauncherModel.entries(WEB_APPS, Collections.emptyList()).size());
+        List<TerminalCommandApp> withNull = new ArrayList<>(COMMAND_APPS);
+        withNull.add(null);
+        assertEquals(8, LauncherModel.entries(WEB_APPS, withNull).size());
     }
 
     @Test
     public void anEmptyQueryKeepsTheGridUnchanged() {
-        List<LauncherEntry> entries = LauncherModel.entries(WEB_APPS);
+        List<LauncherEntry> entries = LauncherModel.entries(WEB_APPS, COMMAND_APPS);
 
         assertFalse(LauncherModel.isFiltering("   "));
         assertSame(entries, LauncherModel.filter(entries, "   ", LABELS));
@@ -123,25 +168,38 @@ public class LauncherModelTest {
 
     @Test
     public void aQueryMatchesTheLabelTheUserSeesIgnoringCaseAndSurroundingSpace() {
-        List<LauncherEntry> entries = LauncherModel.entries(WEB_APPS);
+        List<LauncherEntry> entries = LauncherModel.entries(WEB_APPS, COMMAND_APPS);
 
         assertEquals(1, LauncherModel.filter(entries, "  note  ", LABELS).size());
         assertEquals("notebook",
                 LauncherModel.filter(entries, "NOTE", LABELS).get(0).getId());
         assertEquals("terminal",
                 LauncherModel.filter(entries, "term", LABELS).get(0).getId());
+        assertEquals("cmd-codex",
+                LauncherModel.filter(entries, "codex", LABELS).get(0).getId());
+    }
+
+    @Test
+    public void aQueryMatchesACommandAppOnlyByItsVisibleLabel() {
+        List<LauncherEntry> entries = LauncherModel.entries(null, COMMAND_APPS);
+
+        // The command text is not the tile's label, so it can never match.
+        assertTrue(LauncherModel.filter(entries, "docker exec", LABELS).isEmpty());
+        assertEquals("cmd-htop",
+                LauncherModel.filter(entries, "htop", LABELS).get(0).getId());
     }
 
     @Test
     public void aQueryWithNoMatchReturnsNothingSoTheLauncherCanSaySo() {
-        List<LauncherEntry> entries = LauncherModel.entries(WEB_APPS);
+        List<LauncherEntry> entries = LauncherModel.entries(WEB_APPS, null);
 
         assertTrue(LauncherModel.filter(entries, "zzz", LABELS).isEmpty());
     }
 
     @Test
     public void filteringNeverMutatesTheGridItWasGiven() {
-        List<LauncherEntry> entries = new ArrayList<>(LauncherModel.entries(WEB_APPS));
+        List<LauncherEntry> entries =
+                new ArrayList<>(LauncherModel.entries(WEB_APPS, null));
         int before = entries.size();
 
         List<LauncherEntry> matches = LauncherModel.filter(entries, "note", LABELS);

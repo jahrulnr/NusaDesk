@@ -19,7 +19,9 @@ public enum TerminalSessionState {
     RUNNING,
     /** A bounded reconnect attempt is in progress after a drop. */
     RECONNECTING,
-    /** The shell ended (clean close) while the runtime session stayed up. */
+    /** The channel ended cleanly while the runtime session stayed up. */
+    EXITED,
+    /** The shell connection was lost and needs an explicit reconnect. */
     DROPPED,
     /** The shell failed and is not retrying. */
     FAILED

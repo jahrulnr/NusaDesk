@@ -105,7 +105,7 @@ public class SshClientBridgeIntegrationTest {
                 10_000, 10_000, 10_000, 0,
                 SshSessionConfig.DEFAULT_TERMINAL_TYPE, 80, 24);
 
-        bridge.start(config, listener);
+        bridge.start(config, null, listener);
         try {
             assertTrue("did not reach RUNNING",
                     listener.runningLatch.await(15, TimeUnit.SECONDS));
@@ -150,7 +150,7 @@ public class SshClientBridgeIntegrationTest {
                 5_000, 5_000, 5_000, 0,
                 SshSessionConfig.DEFAULT_TERMINAL_TYPE, 80, 24);
 
-        bridge.start(config, listener);
+        bridge.start(config, null, listener);
         try {
             assertTrue("did not reach FAILED on host-key mismatch",
                     listener.failedLatch.await(15, TimeUnit.SECONDS));
@@ -159,6 +159,110 @@ public class SshClientBridgeIntegrationTest {
         }
         assertEquals("first-trust callback must not be consulted on mismatch",
                 null, callbackInvoked.get());
+    }
+
+    @Test
+    public void execChannelRunsTheCommandOnAPty() throws Exception {
+        // The exec-channel path behind a command tab (ADR-0054): the command
+        // string goes to the server verbatim, output streams back, and the
+        // command exiting ends the session with a clean close.
+        server.setCommandFactory((channel, command) -> new ExecProbeCommand(command));
+
+        InMemoryTrustStore trustStore = new InMemoryTrustStore();
+        SshCredentialProvider credentials = new FixedPasswordCredentialProvider(PASSWORD);
+        CapturingListener listener = new CapturingListener();
+
+        SshClientBridge bridge = new SshClientBridge(
+                credentials, trustStore, (host, fp) -> true,
+                new SshReconnectPolicy(1, 0L, 0L), System::currentTimeMillis);
+
+        SshSessionConfig config = new SshSessionConfig(
+                "127.0.0.1", port, USER, "cred",
+                10_000, 10_000, 10_000, 0,
+                SshSessionConfig.DEFAULT_TERMINAL_TYPE, 80, 24);
+
+        bridge.start(config, "uptime", listener);
+        try {
+            assertTrue("exec session did not reach RUNNING",
+                    listener.runningLatch.await(15, TimeUnit.SECONDS));
+            String stdout = listener.awaitOutputContaining("ran: uptime", 15);
+            assertTrue("expected the command's output, got: " + stdout,
+                    stdout.contains("ran: uptime"));
+            // ssh -t semantics: the exec request must carry a PTY. The embedded
+            // server only learns TERM from a pty-req, so this is the exact
+            // client behavior a command tab depends on — without it the guest
+            // runs the command with no TTY and interactive commands die
+            // instantly (the device defect this test now locks down).
+            assertTrue("the exec channel must request a PTY, got: " + stdout,
+                    stdout.contains("pty: " + SshSessionConfig.DEFAULT_TERMINAL_TYPE));
+            assertTrue("exec session did not close when the command exited",
+                    listener.closedLatch.await(15, TimeUnit.SECONDS));
+        } finally {
+            bridge.close();
+        }
+    }
+
+    /** Minimal exec command: reports the command string, then exits 0. */
+    private static final class ExecProbeCommand implements Command {
+        private final String command;
+        private OutputStream out;
+        private ExitCallback callback;
+        private Thread runner;
+
+        ExecProbeCommand(String command) {
+            this.command = command;
+        }
+
+        @Override
+        public void setInputStream(InputStream in) {
+            // unused: the probe never reads stdin
+        }
+
+        @Override
+        public void setOutputStream(OutputStream out) {
+            this.out = out;
+        }
+
+        @Override
+        public void setErrorStream(OutputStream err) {
+            // unused
+        }
+
+        @Override
+        public void setExitCallback(ExitCallback callback) {
+            this.callback = callback;
+        }
+
+        @Override
+        public void start(ChannelSession channel, Environment env) throws IOException {
+            // MINA's server registers TERM only when the client sent a pty-req,
+            // so this is the probe's pty evidence.
+            String term = env.getEnv().get(Environment.ENV_TERM);
+            String pty = term == null || term.isEmpty() ? "pty: none" : "pty: " + term;
+            runner = new Thread(() -> {
+                try {
+                    out.write(("ran: " + command + "\r\n" + pty + "\r\n")
+                            .getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                } catch (IOException ignored) {
+                    // channel closed mid-write
+                } finally {
+                    ExitCallback cb = callback;
+                    if (cb != null) {
+                        cb.onExit(0);
+                    }
+                }
+            }, "exec-probe");
+            runner.setDaemon(true);
+            runner.start();
+        }
+
+        @Override
+        public void destroy(ChannelSession channel) throws Exception {
+            if (runner != null) {
+                runner.interrupt();
+            }
+        }
     }
 
     /** Minimal echo shell: echoes each input line prefixed with "echo: ". */

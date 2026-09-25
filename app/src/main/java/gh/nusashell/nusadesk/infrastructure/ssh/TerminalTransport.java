@@ -13,10 +13,17 @@ package gh.nusashell.nusadesk.infrastructure.ssh;
 public interface TerminalTransport {
 
     /**
-     * Begin a shell session. The listener receives lifecycle states and
-     * streamed output on transport-owned threads and must not block.
+     * Begin a session. The listener receives lifecycle states and streamed
+     * output on transport-owned threads and must not block.
+     *
+     * @param command {@code null} opens an interactive shell channel; a
+     *                non-null command opens an exec channel (still with a
+     *                PTY) that runs the command on the remote side. The
+     *                command is opaque here — it is validated upstream
+     *                ({@code TerminalCommand}) and is never executed on the
+     *                host (ADR-0054).
      */
-    void start(SshSessionConfig config, SshSessionListener listener);
+    void start(SshSessionConfig config, String command, SshSessionListener listener);
 
     /**
      * Send bytes to the shell stdin. Thread-safe; silently dropped when no

@@ -20,7 +20,11 @@ you choose, and add your own web apps alongside the tools built into NusaDesk.
 ## Your workspace, your way
 
 - **Work in Linux.** Use a touch-friendly terminal for command-line work on your
-  phone.
+  phone, open multiple terminals, and manage them from a compact menu with
+  `New`, numbered tabs, and per-terminal `Open` / `Close` actions.
+- **Launch a command directly.** Add a terminal-command app with a guest command
+  such as `docker exec -it workspace bash`; tapping its tile opens that command
+  in its own PTY inside Linux.
 - **Keep your files close.** Choose a workspace folder you can use from both
   Android and Linux.
 - **Bring your own web apps.** Add the local web apps you rely on to your

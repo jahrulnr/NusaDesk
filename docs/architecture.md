@@ -73,6 +73,8 @@ Pure Java rules and value objects:
 - terminal session state vocabulary (`TerminalSessionState`/`Status`, ADR-0033);
 - the user web-app definition, its id, and the guest port policy that reserves
   `22022` for the terminal;
+- terminal-command values, app ids, and per-tab snapshots, validated in pure
+  Java;
 - deterministic policies that can be unit-tested without Android.
 
 This layer must not import `android.*`, access files/network/processes, read environment variables, or know about Gradle.
@@ -84,8 +86,10 @@ Use-case boundaries and ports:
 - runtime state persistence;
 - curated runtime installation and progress/error reporting;
 - runtime readiness/endpoint observation;
-- the terminal session port: input, geometry, explicit reconnect, and the
-  output stream a surface subscribes to (ADR-0033);
+- the terminal-tabs port: tab creation, selection, close, input, geometry,
+  explicit reconnect, and per-tab output subscriptions (ADR-0054);
+- the terminal-command registry and store contracts: command validation,
+  launcher order, and add/update/delete persistence (ADR-0054);
 - the web-app registry and store contracts: validation, launcher order, and
   add/update/delete persistence.
 
@@ -123,7 +127,7 @@ security decisions.
 
 ```text
 presentation/
-  DesktopDestination.java     HOME · TERMINAL · SYSTEM · LOGS · ADD_WEB_APP
+  DesktopDestination.java     HOME · TERMINAL · SYSTEM · LOGS · ADD_APP
   SessionUiState.java         domain session state -> label/badge/detail, no action
   RuntimeStateDescriptor.java install-state copy (pure, unit-tested)
   GuestSshUiState.java        terminal-component state (pure)
@@ -131,18 +135,20 @@ presentation/
     DesktopHomeView.java      the launcher: search, non-ready status visibility,
                              setup steps, grid, and neutral icon plates
     LauncherModel.java        the grid's entries and its search rule (pure)
-    LauncherEntry.java        Add app | curated surface | user web app (pure)
+    LauncherEntry.java        Add app | curated surface | user web app | command app
     LauncherStatus.java       one passive non-ready status statement (pure)
     LauncherHeaderText.java   the header's count wording (pure)
     LauncherGridView.java     responsive tile grid (columns follow real width)
     LauncherTileView.java     one tile: icon plate, label, honest status
+    LauncherIconPolicy.java   icon source priority and fallback order (pure)
+    AppFormView.java          add/edit web-app and terminal-command app form
+    AppFormError.java         registry reason -> form field (pure)
     AppSurfaceHostView.java   compact task bar + retained surface container
   terminal/
-    TerminalAppView.java      terminal surface consuming the host-owned session
+    TerminalAppView.java      terminal surface consuming host-owned terminal tabs
+    TerminalPendingWrites.java bounded output queue until the WebView bridge is ready (pure)
     TerminalKeyRowView.java   mobile accessory keys
   webapp/
-    WebAppFormView.java       add/edit form: name, optional image, guest port
-    WebAppFormError.java      registry reason -> form field (pure)
     WebAppSurfaceView.java    probe, then the exact generated origin in a WebView
   system/
     SystemScreenView.java     install/session/technical detail + Android App Info shortcut
@@ -166,15 +172,22 @@ Rules this layer enforces:
   the system screen reports the same states as labelled rows and exposes the
   platform-owned App Info page for permission management.
 - **No fake state.** The launcher lists only surfaces the build can open; there
-  is no placeholder desktop or file browser. A web app tile is a registered
-  entry, and the surface says "not running" until the endpoint answers.
+  is no placeholder desktop or file browser. User entries are either a web app
+  whose generated loopback endpoint answers, or a terminal-command app that
+  opens its guest command in a PTY (ADR-0054).
 - **No arbitrary target.** The terminal's client config comes only from
-  `LocalSshSessionFactory`, which takes the initial PTY size and nothing else.
-- **The session outlives the surface.** The terminal SSH session is owned by
-  `RuntimeHostService` (ADR-0033): `TerminalSessionController` follows the
-  runtime session, and the surface only renders `TerminalSessionBus` state and
-  drives `TerminalSessionPort`. Detaching the view unsubscribes it — it never
-  closes the shell.
+  `LocalSshSessionFactory`, which takes the initial PTY size and nothing else;
+  saved terminal commands still use the same fixed endpoint, credential, and
+  pinned host key (ADR-0054).
+- **Terminal tabs outlive the surface.** The terminal tab set is owned by
+  `RuntimeHostService` (ADR-0033, extended by ADR-0054):
+  `TerminalTabsController` owns one `TerminalSessionController` per tab, and
+  the surface renders `TerminalTabsBus` snapshots and drives each tab through
+  `TerminalTabsPort`. Detaching the view unsubscribes and releases only its
+  WebViews — it never closes the SSH sessions.
+- **Command apps run only in the guest.** A launcher terminal-command app
+  opens an exec SSH channel with a PTY over the same pinned loopback endpoint;
+  the Android host never passes its stored command to a local process API.
 - **Retained surfaces.** A destination stays attached and is switched by
   visibility, which is what keeps a live terminal's WebView and scrollback — and
   a web app's page — alive across a trip back to the launcher. Surfaces are
@@ -218,9 +231,10 @@ implemented and device-verified on Android 10/API 29 arm64.
 ```mermaid
 flowchart TD
     Bridge["Execution bridge<br/>packaged standalone PRoot in jniLibs/<abi>"] --> Guest["Guest SSH server<br/>curated OpenSSH add-on on 127.0.0.1:22022"]
-    Guest --> Session["Host-owned terminal session<br/>TerminalSessionController in the foreground service (ADR-0033)"]
+    Guest --> Tabs["Host-owned terminal tabs<br/>TerminalTabsController in the foreground service (ADR-0054)"]
+    Tabs --> Session["Per-tab SSH session<br/>TerminalSessionController (ADR-0033)"]
     Session --> Terminal["Terminal surface<br/>local xterm.js bundle in owned WebView origin"]
-    Session --> Notification["Status notification<br/>terminal line + Reconnect action"]
+    Tabs --> Notification["Status notification<br/>selected tab line + Reconnect action"]
     Notification --> Supervision["Supervision<br/>Android foreground service with user-visible Stop"]
 ```
 

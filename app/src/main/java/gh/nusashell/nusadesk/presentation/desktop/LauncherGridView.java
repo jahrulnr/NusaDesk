@@ -62,9 +62,10 @@ public final class LauncherGridView extends LinearLayout {
     }
 
     /**
-     * Receives a long press on a tile that has something to edit. Only web apps
-     * do; the gesture is also stated in the tile's content description, so it is
-     * never the only way to reach the edit form.
+     * Receives a long press on a tile that has something to edit. Only the
+     * user-registered entries — web apps and terminal commands — do; the
+     * gesture is also stated in the tile's content description, so it is never
+     * the only way to reach the edit form.
      */
     public void setOnEntryEditListener(OpenListener listener) {
         this.editListener = listener;
@@ -234,7 +235,7 @@ public final class LauncherGridView extends LinearLayout {
         for (LauncherEntry entry : entries) {
             LauncherTileView tile = new LauncherTileView(getContext());
             tile.setOnClickListener(view -> open((LauncherTileView) view));
-            if (entry.isWebApp()) {
+            if (entry.isWebApp() || entry.isTerminalApp()) {
                 tile.setOnLongClickListener(view -> {
                     if (editListener != null) {
                         editListener.onEntryOpened(((LauncherTileView) view).getEntry());

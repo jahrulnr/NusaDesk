@@ -21,10 +21,11 @@ import java.util.List;
  *
  * <p>The bar is deliberately small and contextual: a way back to the launcher,
  * the surface title, and — only for a surface that really has app-level actions
- * — one options button. A user web app uses that menu for edit and internal tab
- * actions. It carries no session chrome, because Linux is
- * background infrastructure: an app surface says nothing about the session, and
- * the launcher owns the single readiness statement (ADR-0013).</p>
+ * — one options button. A user web app uses that menu for edit and its internal
+ * tabs; the terminal uses it for the compact terminal list and per-tab actions.
+ * It carries no session chrome, because Linux is background infrastructure: an
+ * app surface says nothing about the session, and the launcher owns the single
+ * readiness statement (ADR-0013).</p>
  *
  * <p>Surfaces stay attached and are switched by visibility, which is what keeps
  * a live terminal's WebView and scrollback alive across a trip back to the
@@ -123,17 +124,22 @@ public final class AppSurfaceHostView extends LinearLayout {
         if (menuActions.isEmpty()) {
             return;
         }
+        // A tab snapshot can replace menuActions while PopupMenu is still on
+        // screen (for example CONNECTING -> RUNNING). Keep the items and their
+        // callbacks paired to the exact menu the user opened, so a stale label
+        // can never invoke a different action by index.
+        List<MenuAction> actions = new ArrayList<>(menuActions);
         PopupMenu menu = new PopupMenu(getContext(), anchor);
-        for (int index = 0; index < menuActions.size(); index++) {
-            MenuAction action = menuActions.get(index);
+        for (int index = 0; index < actions.size(); index++) {
+            MenuAction action = actions.get(index);
             menu.getMenu().add(Menu.NONE, index, index, action.title(getContext()));
         }
         menu.setOnMenuItemClickListener(item -> {
             int index = item.getItemId();
-            if (index < 0 || index >= menuActions.size()) {
+            if (index < 0 || index >= actions.size()) {
                 return false;
             }
-            menuActions.get(index).action.run();
+            actions.get(index).action.run();
             return true;
         });
         menu.show();

@@ -13,10 +13,13 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 
+import gh.nusashell.nusadesk.application.terminal.TerminalSessionPort;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
 import gh.nusashell.nusadesk.domain.terminal.TerminalSessionStatus;
+import gh.nusashell.nusadesk.domain.terminal.TerminalTabSnapshot;
+import gh.nusashell.nusadesk.domain.terminal.TerminalTabsSnapshot;
 import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesHostKeyTrustStore;
 import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesSessionStateStore;
 import gh.nusashell.nusadesk.infrastructure.ssh.KeystoreVaultCredentialProvider;
@@ -47,12 +50,15 @@ import java.util.UUID;
  * The {@code RUNNING} notification appears only after the controller accepts a
  * readiness frame and obtains a concrete loopback endpoint.
  *
- * <p>The service also owns the <em>terminal</em> SSH client session
- * (ADR-0033): a {@link TerminalSessionController} follows the runtime session
- * and the same notification carries the terminal state with a Reconnect
- * action when the shell dropped or failed while Linux stayed up. The terminal
- * surface in the app is a consumer of that session, so Activity recreation
- * never closes the shell.</p>
+ * <p>The service also owns the <em>terminal</em> SSH client sessions
+ * (ADR-0033, extended to tabs by ADR-0054): a {@link TerminalTabsController}
+ * follows the runtime session, opening one initial shell tab on the first
+ * {@code RUNNING} status and closing every open tab when the runtime leaves
+ * {@code RUNNING}. The user may close any tab without stopping Linux; a clean
+ * remote channel exit removes only that tab. The notification carries the
+ * selected tab's terminal state with a Reconnect action when its connection
+ * dropped or failed while Linux stayed up. The terminal surface consumes the
+ * sessions, so Activity recreation never closes them.</p>
  *
  * <p>The foreground service type is {@code specialUse} with a documented
  * runtime-host subtype. The subtype rationale and any distribution-channel
@@ -84,9 +90,10 @@ public final class RuntimeHostService extends Service {
     public static final String ACTION_ENSURE_RUNNING =
             "gh.nusashell.nusadesk.action.RUNTIME_ENSURE_RUNNING";
     /**
-     * Intent action to explicitly re-attach the terminal SSH session after its
-     * shell dropped or failed while the runtime stayed up (ADR-0033). A no-op
-     * unless a runtime session is running.
+     * Intent action to explicitly re-attach the selected terminal tab's SSH
+     * session after its shell or command dropped or failed while the runtime
+     * stayed up (ADR-0033, ADR-0054). A no-op unless a runtime session is
+     * running and a tab is selected.
      */
     public static final String ACTION_TERMINAL_RECONNECT =
             "gh.nusashell.nusadesk.action.TERMINAL_RECONNECT";
@@ -100,14 +107,14 @@ public final class RuntimeHostService extends Service {
 
     private NotificationManager notificationManager;
     private RuntimeHostController controller;
-    private TerminalSessionController terminalController;
+    private TerminalTabsController terminalTabs;
     private SharedPreferencesSessionStateStore sessionStateStore;
     /** Last runtime status; the terminal-driven notification refresh re-renders it. */
     private HostRuntimeStatus lastStatus;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     // Stored once: a capturing method reference creates a fresh object per
     // evaluation, so register/unregister must share one instance.
-    private final TerminalSessionBus.Listener terminalListener = this::onTerminalStatus;
+    private final TerminalTabsBus.Listener terminalTabsListener = this::onTerminalTabs;
 
     @Override
     public void onCreate() {
@@ -122,16 +129,16 @@ public final class RuntimeHostService extends Service {
         sessionStateStore = new SharedPreferencesSessionStateStore(this);
         controller = new RuntimeHostController(
                 RuntimeWorkloadRegistry.getInstance(), System::currentTimeMillis);
-        terminalController = new TerminalSessionController(
+        terminalTabs = new TerminalTabsController(
                 new SshClientBridgeTransportFactory(
                         new KeystoreVaultCredentialProvider(this),
                         new SharedPreferencesHostKeyTrustStore(this),
                         SshReconnectPolicy.DEFAULT,
                         System::currentTimeMillis),
-                TerminalSessionBus.getInstance()::publish,
+                TerminalTabsBus.getInstance()::publish,
                 mainHandler::post);
-        TerminalSessionRegistry.getInstance().register(terminalController);
-        TerminalSessionBus.getInstance().register(terminalListener);
+        TerminalTabsRegistry.getInstance().register(terminalTabs);
+        TerminalTabsBus.getInstance().register(terminalTabsListener);
         // A snapshot persisted before the process died is reconciled honestly:
         // states that require a live workload become FAILED so no view can show
         // a false RUNNING for a runtime that no longer exists. This bookkeeping
@@ -175,12 +182,18 @@ public final class RuntimeHostService extends Service {
         if (ACTION_STOP.equals(action)) {
             controller.stop(this::onStatus);
         } else if (ACTION_TERMINAL_RECONNECT.equals(action)) {
-            // Explicit re-attach from the notification after the shell dropped
-            // or failed while Linux stayed up. The controller ignores it when
-            // no runtime session is running (ADR-0033); a stale action from a
-            // restarted process (runtime lost, reconciled FAILED) must not
-            // leave the service foregrounded with nothing to do.
-            terminalController.reconnect();
+            // Explicit re-attach from the notification after the selected
+            // tab's session dropped or failed while Linux stayed up. The
+            // per-tab controller ignores it when no runtime session is
+            // running (ADR-0033); a stale action from a restarted process
+            // (runtime lost, reconciled FAILED) must not leave the service
+            // foregrounded with nothing to do.
+            TerminalTabSnapshot selected = TerminalTabsBus.getInstance().current().selected();
+            TerminalSessionPort selectedTab =
+                    selected == null ? null : terminalTabs.tab(selected.getId());
+            if (selectedTab != null) {
+                selectedTab.reconnect();
+            }
             if (lastStatus == null || !lastStatus.isRuntimeRunning()) {
                 stopForeground(STOP_FOREGROUND_REMOVE);
                 stopSelf();
@@ -229,11 +242,11 @@ public final class RuntimeHostService extends Service {
      */
     private void publishStatus(HostRuntimeStatus status) {
         lastStatus = status;
-        // The terminal session follows the runtime session: it opens once the
-        // runtime is running and closes the moment it is not (ADR-0033). Feed
-        // it before rendering so the notification reflects the new terminal
-        // state together with the runtime state.
-        terminalController.onRuntimeStatus(status);
+        // The terminal tabs follow the runtime session: the shell tab opens
+        // once the runtime is running and every tab closes the moment it is
+        // not (ADR-0033). Feed it before rendering so the notification
+        // reflects the new terminal state together with the runtime state.
+        terminalTabs.onRuntimeStatus(status);
         updateNotification(status);
         RuntimeStatusBus.getInstance().publish(status);
         persistSnapshot(status);
@@ -243,11 +256,11 @@ public final class RuntimeHostService extends Service {
     }
 
     /**
-     * Terminal session status deliveries (always on the main thread, via the
-     * bus): re-render the notification with the fresh terminal line and
-     * Reconnect action. No runtime status is touched.
+     * Terminal tabs snapshot deliveries (always on the main thread, via the
+     * bus): re-render the notification with the selected tab's fresh terminal
+     * line and Reconnect action. No runtime status is touched.
      */
-    private void onTerminalStatus(TerminalSessionStatus status) {
+    private void onTerminalTabs(TerminalTabsSnapshot snapshot) {
         HostRuntimeStatus runtime = lastStatus;
         if (runtime != null) {
             updateNotification(runtime);
@@ -292,7 +305,12 @@ public final class RuntimeHostService extends Service {
     }
 
     private Notification buildNotification(HostRuntimeStatus status) {
-        TerminalSessionStatus terminal = TerminalSessionBus.getInstance().current();
+        // The notification line and Reconnect action describe the selected
+        // tab; with no tabs (runtime down) that degrades to NOT_STARTED, which
+        // the policy renders as "no terminal line, no action".
+        TerminalTabSnapshot selected = TerminalTabsBus.getInstance().current().selected();
+        TerminalSessionStatus terminal = selected == null
+                ? TerminalSessionStatus.notStarted() : selected.getStatus();
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle(RuntimeNotificationPolicy.title(status))
@@ -374,13 +392,13 @@ public final class RuntimeHostService extends Service {
             Log.i(TAG, "service destroyed while the runtime was live; stopping it");
             controller.stop(this::publishDestroyedStatus);
         }
-        // The terminal session belongs to this service: release it so no view
-        // can keep a session the host no longer supervises, and drop the
-        // registry handle so a freshly created surface resolves a new session
-        // instead of a stale one.
-        TerminalSessionBus.getInstance().unregister(terminalListener);
-        terminalController.close();
-        TerminalSessionRegistry.getInstance().clear();
+        // The terminal sessions belong to this service: release them so no
+        // view can keep a session the host no longer supervises, and drop the
+        // registry handle so a freshly created surface resolves a new
+        // controller instead of a stale one.
+        TerminalTabsBus.getInstance().unregister(terminalTabsListener);
+        terminalTabs.close();
+        TerminalTabsRegistry.getInstance().clear();
         super.onDestroy();
     }
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-26
+
+### Added
+
+- Add multi-tab terminals and launcher terminal-command apps (ADR-0054). The
+  terminal keeps up to five closable tabs; the ⋮ menu stays compact with `New`
+  plus `Terminal 1`, `Terminal 2`, …, and each tab name opens `Open` / `Close`
+  actions. A clean guest `exit` closes only that tab; closing the last tab keeps
+  Linux running and leaves `New` available. Every tab is its own host-owned SSH
+  session with its own WebView and scrollback. A launcher app can be a
+  **terminal command** — a user-authored single-line command such as
+  `docker exec -it notebook bash` — that runs in its own PTY when its tile is
+  tapped. The command travels over the existing pinned loopback SSH session as
+  an exec channel and is never executed by Android; the Add form asks for the
+  app kind once (web app on a local port, or terminal command). Re-opening a
+  live command app selects its tab instead of starting a second copy. Change
+  the Add form's Type chooser from radio buttons to a compact accessible dropdown.
+
 ## [0.9.0] - 2026-09-24
 
 ### Added
