@@ -29,6 +29,18 @@
  *     once a scroll is actually in progress, to stop page bounce/zoom without
  *     blocking taps.
  *   - Pixel positions and fling steps are clamped to xterm's scroll range.
+ *   - The bundled DOM renderer only repaints whole rows at buffer.viewportY,
+ *     so a fractional scrollTop by itself would leave the rendered text
+ *     snapped to row boundaries (a visible stick-then-jump under the finger).
+ *     While a fractional position exists the adapter mirrors it onto
+ *     `.xterm-screen` as translateY(viewportY*cellHeight - scrollTop), which
+ *     keeps the rendered rows under the finger between row crossings. The
+ *     offset moves the row, selection, and decoration layers together, so a
+ *     native selection stays aligned with its text.
+ *   - Release momentum uses a windowed velocity sample: velocity is averaged
+ *     over the last FLING_SAMPLE_WINDOW_MS of movement and discarded when the
+ *     last movement is older than that, so a hold-then-release does not lurch
+ *     and one twitchy final frame does not spike the fling.
  *
  * The pure decision logic lives in `policy(opts)` so it can be unit-tested in
  * Node without a DOM. `install(container, term)` wires the DOM listeners and
@@ -84,12 +96,20 @@
 
   /** Pixel distance a drag must travel before it becomes a scroll. */
   var SCROLL_THRESHOLD_PX = 10;
-  var FLING_FRICTION_PX_PER_MS2 = 0.005;
+  /* Chosen so the fastest allowed fling decays below MIN_FLING_VELOCITY well
+     inside MAX_FLING_DURATION_MS; a weaker value makes the duration cap cut a
+     fast fling while it is still visibly moving. */
+  var FLING_FRICTION_PX_PER_MS2 = 0.008;
   var MIN_FLING_VELOCITY_PX_PER_MS = 0.02;
   var MAX_FLING_VELOCITY_PX_PER_MS = 3;
   var MAX_FLING_DURATION_MS = 450;
+  /* Release velocity is averaged over the move samples inside this window; a
+     sample older than this also marks the gesture as stationary, so release
+     momentum only ever reflects the finger's final motion. */
+  var FLING_SAMPLE_WINDOW_MS = 100;
   var boundTerminal = null;
   var boundCancelFling = null;
+  var boundSyncRowOffset = null;
   var pendingPixels = 0;
 
   /**
@@ -208,6 +228,9 @@
       boundTerminal.scrollToBottom();
     }
     pendingPixels = 0;
+    if (boundSyncRowOffset) {
+      boundSyncRowOffset();
+    }
   }
 
 
@@ -229,6 +252,7 @@
       lastY: 0,
       lastTime: 0,
       velocityY: 0,
+      samples: [],
       flingFrame: 0,
       flingTime: 0,
       flingElapsed: 0,
@@ -295,6 +319,48 @@
       return holds(container.querySelector(".xterm-rows"));
     }
 
+    /* The DOM renderer repaints whole rows at buffer.viewportY, so a
+       fractional scrollTop alone snaps the text to row boundaries. Mirroring
+       the fractional remainder onto `.xterm-screen` keeps the rendered rows
+       (and the selection/decoration layers inside it) under the finger
+       between row crossings. Rows only exist for viewportY..+rows, so the
+       offset is always within half a cell. */
+    function rowOffsetPx() {
+      var scrollable = xtermScrollable();
+      var buf = boundTerminal && boundTerminal.buffer
+          ? boundTerminal.buffer.active : null;
+      if (!scrollable || !buf) {
+        return null;
+      }
+      var position = scrollable.getScrollPosition();
+      var dimensions = scrollable.getScrollDimensions();
+      var scrollTop = Number(position && position.scrollTop);
+      var lines = Number(buf.length);
+      var cellHeight = lines > 0
+          ? Number(dimensions && dimensions.scrollHeight) / lines : 0;
+      var ydisp = Number(buf.viewportY);
+      if (!Number.isFinite(scrollTop) || !Number.isFinite(cellHeight)
+          || cellHeight <= 0 || !Number.isFinite(ydisp)) {
+        return null;
+      }
+      return ydisp * cellHeight - scrollTop;
+    }
+
+    function syncRowOffset() {
+      var screen = container.querySelector(".xterm-screen");
+      if (!screen || !screen.style) {
+        return;
+      }
+      var offset = rowOffsetPx();
+      if (offset === null || Math.abs(offset) < 0.5) {
+        if (screen.style.transform) {
+          screen.style.transform = "";
+        }
+        return;
+      }
+      screen.style.transform = "translateY(" + offset + "px)";
+    }
+
     function cancelFling() {
       if (state.flingFrame !== 0) {
         var view = container.ownerDocument && container.ownerDocument.defaultView;
@@ -353,6 +419,7 @@
         cancelFling();
         return;
       }
+      syncRowOffset();
       var nextVelocity = velocity > 0
         ? Math.max(0, velocity - FLING_FRICTION_PX_PER_MS2 * elapsed)
         : Math.min(0, velocity + FLING_FRICTION_PX_PER_MS2 * elapsed);
@@ -372,7 +439,36 @@
       if (!Number.isFinite(amount) || amount === 0) {
         return;
       }
-      scrollBy(amount);
+      if (scrollBy(amount)) {
+        syncRowOffset();
+      }
+    }
+
+    /* Release momentum should reflect how the finger was actually moving just
+       before liftoff. Averaging the trailing window smooths single-frame
+       jitter, and discarding samples older than the window means a finger
+       held still before release produces no fling at all. */
+    function releaseVelocity(now) {
+      var samples = state.samples;
+      while (samples.length > 0 && now - samples[0].t > FLING_SAMPLE_WINDOW_MS) {
+        samples.shift();
+      }
+      if (samples.length === 0) {
+        return 0;
+      }
+      var last = samples[samples.length - 1];
+      if (now - last.t > FLING_SAMPLE_WINDOW_MS) {
+        return 0;
+      }
+      var span = last.t - samples[0].t;
+      if (span <= 0) {
+        return last.dt > 0 ? last.d / last.dt : 0;
+      }
+      var dy = 0;
+      for (var i = 0; i < samples.length; i++) {
+        dy += samples[i].d;
+      }
+      return dy / span;
     }
 
     /* Listen on the page container in capture phase. The xterm viewport and
@@ -399,6 +495,7 @@
       state.startY = state.lastY = e.touches[0].clientY;
       state.lastTime = Date.now();
       state.velocityY = 0;
+      state.samples.length = 0;
     }
 
     function handleTouchMove(e) {
@@ -436,6 +533,7 @@
         state.canceled = true;
         state.primaryTouchId = null;
         state.velocityY = 0;
+        state.samples.length = 0;
         state.lastY = y;
         state.lastTime = timestamp;
         return;
@@ -443,13 +541,18 @@
       if (decision.scroll) {
         state.active = true;
         applyTouchDelta(decision.scrollTop - metrics.scrollTop);
-        state.velocityY = deltaY / elapsed;
+        state.samples.push({ t: timestamp, d: deltaY, dt: elapsed });
+        while (state.samples.length > 1
+            && timestamp - state.samples[0].t > FLING_SAMPLE_WINDOW_MS) {
+          state.samples.shift();
+        }
         if (decision.preventDefault) {
           e.preventDefault();
         }
       } else if (isMouseTracking() || hasDomSelection()) {
         state.active = false;
         state.velocityY = 0;
+        state.samples.length = 0;
       }
       state.lastY = y;
       state.lastTime = timestamp;
@@ -462,6 +565,7 @@
         state.canceled = true;
         state.primaryTouchId = null;
         state.velocityY = 0;
+        state.samples.length = 0;
         cancelFling();
         return;
       }
@@ -473,15 +577,19 @@
       state.primaryTouchId = null;
       state.canceled = false;
       if (shouldFling) {
+        state.velocityY = releaseVelocity(timestamp);
         scheduleFling();
       } else {
         state.velocityY = 0;
+        state.samples.length = 0;
       }
     }
     function cancel() {
       state.active = false;
       state.canceled = true;
       state.primaryTouchId = null;
+      state.velocityY = 0;
+      state.samples.length = 0;
       cancelFling();
     }
     target.addEventListener("touchstart", handleTouchStart, { passive: true, capture: true });
@@ -489,14 +597,35 @@
     target.addEventListener("touchend", finish, { passive: true, capture: true });
     target.addEventListener("touchcancel", cancel, { passive: true, capture: true });
     boundCancelFling = cancelFling;
+    boundSyncRowOffset = syncRowOffset;
+    /* Scrolls that do not pass through the adapter (wheel smooth-scroll,
+       buffer output, scrollToBottom) move the fractional position too, so the
+       rendered rows must re-offset on every xterm scroll/resize. */
+    var scrollHook = boundTerminal && typeof boundTerminal.onScroll === "function"
+        ? boundTerminal.onScroll(syncRowOffset) : null;
+    var resizeHook = boundTerminal && typeof boundTerminal.onResize === "function"
+        ? boundTerminal.onResize(syncRowOffset) : null;
     return function dispose() {
       cancelFling();
+      var screen = container.querySelector(".xterm-screen");
+      if (screen && screen.style && screen.style.transform) {
+        screen.style.transform = "";
+      }
+      if (scrollHook && typeof scrollHook.dispose === "function") {
+        scrollHook.dispose();
+      }
+      if (resizeHook && typeof resizeHook.dispose === "function") {
+        resizeHook.dispose();
+      }
       target.removeEventListener("touchstart", handleTouchStart, { capture: true });
       target.removeEventListener("touchmove", handleTouchMove, { capture: true });
       target.removeEventListener("touchend", finish, { capture: true });
       target.removeEventListener("touchcancel", cancel, { capture: true });
       if (boundCancelFling === cancelFling) {
         boundCancelFling = null;
+      }
+      if (boundSyncRowOffset === syncRowOffset) {
+        boundSyncRowOffset = null;
       }
     };
   }

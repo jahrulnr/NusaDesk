@@ -448,6 +448,34 @@ public final class TerminalBridgeView extends FrameLayout {
     }
 
     /**
+     * The packaged-asset MIME map served over the owned origin. Package-private
+     * and static so a plain JUnit test pins every mapping the terminal page
+     * depends on (html/js/css/svg/json/txt, with everything else opaque).
+     */
+    static String mimeTypeFor(String file) {
+        String lower = file.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".html")) {
+            return "text/html";
+        }
+        if (lower.endsWith(".js")) {
+            return "application/javascript";
+        }
+        if (lower.endsWith(".css")) {
+            return "text/css";
+        }
+        if (lower.endsWith(".svg")) {
+            return "image/svg+xml";
+        }
+        if (lower.endsWith(".json")) {
+            return "application/json";
+        }
+        if (lower.endsWith(".txt")) {
+            return "text/plain";
+        }
+        return "application/octet-stream";
+    }
+
+    /**
      * Serves the packaged terminal assets over the owned origin and keeps every
      * other navigation inside the WebView's origin policy. External links leave
      * for the system browser.
@@ -527,23 +555,7 @@ public final class TerminalBridgeView extends FrameLayout {
         }
 
         private String mimeTypeFor(String file) {
-            String lower = file.toLowerCase(Locale.ROOT);
-            if (lower.endsWith(".html")) {
-                return "text/html";
-            }
-            if (lower.endsWith(".js")) {
-                return "application/javascript";
-            }
-            if (lower.endsWith(".css")) {
-                return "text/css";
-            }
-            if (lower.endsWith(".json")) {
-                return "application/json";
-            }
-            if (lower.endsWith(".txt")) {
-                return "text/plain";
-            }
-            return "application/octet-stream";
+            return TerminalBridgeView.mimeTypeFor(file);
         }
     }
 

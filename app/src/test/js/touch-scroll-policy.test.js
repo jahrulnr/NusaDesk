@@ -349,6 +349,199 @@ check("dispose removes touch listeners", removedListeners, [
   "touchstart", "touchmove", "touchend", "touchcancel",
 ]);
 check("dispose cancels pending fling", canceledFrames.length > 0, true);
+
+// 15. Release momentum must reflect the finger's final motion only. A finger
+//     held still before release must not fling: the last movement sample ages
+//     out of FLING_SAMPLE_WINDOW_MS, so a hold-release stays put instead of
+//     lurching. A fake clock makes the hold deterministic.
+const realNow = Date.now;
+let fakeNow = 0;
+Date.now = function () { return fakeNow; };
+try {
+  const viewport2 = { clientHeight: 100, scrollHeight: 2100 };
+  const xtermRoot2 = { classList: { contains: () => false } };
+  const screen2 = { style: {} };
+  const listeners2 = {};
+  const removedListeners2 = [];
+  const animationFrames2 = [];
+  const pixelMoves2 = [];
+  const pixelState2 = { scrollTop: 1000 };
+  // cellHeight = scrollHeight / buffer.length = 2100 / 105 = 20px; the fake
+  // mimics xterm's Viewport._handleScroll, which rounds scrollTop to a row.
+  const buffer2 = { viewportY: 50, length: 105, baseY: 50 };
+  const scrollable2 = {
+    getScrollPosition: () => ({ scrollTop: pixelState2.scrollTop }),
+    getScrollDimensions: () => ({ height: 100, scrollHeight: 2100 }),
+    setScrollPosition: ({ scrollTop }) => {
+      pixelState2.scrollTop = scrollTop;
+      buffer2.viewportY = Math.round(scrollTop / 20);
+      pixelMoves2.push(scrollTop);
+    },
+  };
+  const scrollHooks2 = [];
+  const container2 = {
+    ownerDocument: {
+      getSelection: () => null,
+      defaultView: {
+        requestAnimationFrame: (callback) => {
+          animationFrames2.push(callback);
+          return animationFrames2.length;
+        },
+        cancelAnimationFrame: () => {},
+      },
+    },
+    querySelector: (selector) => selector === ".xterm-viewport" ? viewport2
+      : selector === ".xterm-screen" ? screen2 : xtermRoot2,
+    addEventListener: (name, handler) => { listeners2[name] = handler; },
+    removeEventListener: (name) => removedListeners2.push(name),
+  };
+  const terminal2 = {
+    rows: 5,
+    buffer: { active: buffer2 },
+    _core: { _viewport: { _scrollableElement: scrollable2 } },
+    scrollLines: () => {},
+    onScroll: (cb) => { scrollHooks2.push(cb); return { dispose: () => {} }; },
+    onResize: () => ({ dispose: () => {} }),
+  };
+  const dispose2 = install(container2, terminal2);
+  const noopPrevent = () => {};
+
+  fakeNow = 0;
+  pixelState2.scrollTop = 1000;
+  buffer2.viewportY = 50;
+  listeners2.touchstart({ touches: [{ identifier: 7, clientY: 400 }] });
+  listeners2.touchmove({
+    touches: [{ identifier: 7, clientY: 370 }],
+    preventDefault: noopPrevent,
+  });
+  listeners2.touchmove({
+    touches: [{ identifier: 7, clientY: 340 }],
+    preventDefault: noopPrevent,
+  });
+  check("fast drag keeps scrolling", pixelState2.scrollTop, 1060);
+  fakeNow = 150; // finger held still: no more move events arrive
+  listeners2.touchend({ touches: [], changedTouches: [{ identifier: 7 }] });
+  check("hold-release schedules no fling", animationFrames2.length, 0);
+  check("hold-release leaves the position alone", pixelState2.scrollTop, 1060);
+
+  // 16. A flick that is still moving at release keeps momentum, averaged over
+  //     the trailing window instead of trusting one noisy final frame.
+  fakeNow = 1000;
+  animationFrames2.length = 0;
+  listeners2.touchstart({ touches: [{ identifier: 8, clientY: 400 }] });
+  listeners2.touchmove({
+    touches: [{ identifier: 8, clientY: 384 }],
+    preventDefault: noopPrevent,
+  }); // d=-16
+  fakeNow = 1016;
+  listeners2.touchmove({
+    touches: [{ identifier: 8, clientY: 368 }],
+    preventDefault: noopPrevent,
+  }); // d=-16
+  fakeNow = 1032;
+  listeners2.touchmove({
+    touches: [{ identifier: 8, clientY: 366 }],
+    preventDefault: noopPrevent,
+  }); // d=-2, decelerating
+  fakeNow = 1048;
+  listeners2.touchend({ touches: [], changedTouches: [{ identifier: 8 }] });
+  check("moving release schedules a fling", animationFrames2.length, 1);
+  // windowed velocity = -34px/32ms ~= -1.06px/ms; one frame of 16ms moves the
+  // viewport ~17px, far below the 48px a -3px/ms saturated fling would do.
+  pixelMoves2.length = 0;
+  const before16 = pixelState2.scrollTop;
+  fakeNow += 16;
+  animationFrames2.shift()();
+  const step16 = pixelState2.scrollTop - before16;
+  check("windowed fling speed is the averaged motion", step16 > 5 && step16 < 30, true);
+
+  // 17. The fling eases to rest instead of cutting off mid-motion. With the
+  //     old 0.005px/ms2 friction the 450ms cap ended a max-speed fling while it
+  //     was still moving ~0.75px/ms (~12px/frame); now the last applied frame
+  //     must be smaller than one frame at MIN_FLING_VELOCITY.
+  fakeNow = 2000;
+  animationFrames2.length = 0;
+  pixelState2.scrollTop = 200;
+  buffer2.viewportY = 10;
+  listeners2.touchstart({ touches: [{ identifier: 9, clientY: 400 }] });
+  listeners2.touchmove({
+    touches: [{ identifier: 9, clientY: 340 }],
+    preventDefault: noopPrevent,
+  });
+  fakeNow = 2016;
+  listeners2.touchmove({
+    touches: [{ identifier: 9, clientY: 280 }],
+    preventDefault: noopPrevent,
+  });
+  fakeNow = 2032;
+  listeners2.touchend({ touches: [], changedTouches: [{ identifier: 9 }] });
+  check("hard flick schedules a fling", animationFrames2.length, 1);
+  let lastAppliedStep = 0;
+  let frames = 0;
+  while (animationFrames2.length > 0 && frames < 40) {
+    const frame = animationFrames2.shift();
+    const before = pixelState2.scrollTop;
+    fakeNow += 16;
+    frame();
+    const step = Math.abs(pixelState2.scrollTop - before);
+    if (step > 0) {
+      lastAppliedStep = step;
+    }
+    frames++;
+  }
+  check("fling eases to rest instead of stopping mid-motion",
+    lastAppliedStep < 4, true);
+  check("fling ended on velocity, not the duration cap", frames < 29, true);
+
+  // 18. The DOM renderer repaints whole rows at viewportY, so the adapter
+  //     mirrors the fractional remainder onto .xterm-screen. As scrollTop
+  //     crosses a row boundary (cellHeight 20px here) the translate offset
+  //     wraps sign instead of letting the text jump a whole row.
+  fakeNow = 3000;
+  animationFrames2.length = 0;
+  pixelState2.scrollTop = 1000;
+  buffer2.viewportY = 50;
+  scrollHooks2.forEach((cb) => cb()); // external re-alignment fires onScroll
+  listeners2.touchstart({ touches: [{ identifier: 10, clientY: 400 }] });
+  listeners2.touchmove({
+    touches: [{ identifier: 10, clientY: 395 }],
+    preventDefault: noopPrevent,
+  }); // below threshold: no scroll, no offset
+  check("sub-threshold move applies no row offset", screen2.style.transform || "", "");
+  listeners2.touchmove({
+    touches: [{ identifier: 10, clientY: 390 }],
+    preventDefault: noopPrevent,
+  }); // scrollTop 1005, viewportY stays 50 -> offset -5
+  check("fractional scroll offsets the rendered rows", screen2.style.transform,
+    "translateY(-5px)");
+  listeners2.touchmove({
+    touches: [{ identifier: 10, clientY: 384 }],
+    preventDefault: noopPrevent,
+  }); // scrollTop 1011 -> viewportY rounds to 51 -> offset 1020-1011 = +9
+  check("offset wraps across a row crossing", screen2.style.transform,
+    "translateY(9px)");
+
+  // External scrolls (wheel, buffer output) resync the same offset through
+  // the term.onScroll hook; returning to a row boundary clears it.
+  pixelState2.scrollTop = 1500;
+  buffer2.viewportY = 75;
+  scrollHooks2.forEach((cb) => cb());
+  check("row-aligned external scroll clears the offset",
+    screen2.style.transform || "", "");
+  pixelState2.scrollTop = 1506;
+  buffer2.viewportY = 75;
+  scrollHooks2.forEach((cb) => cb());
+  check("fractional external scroll re-applies the offset",
+    screen2.style.transform, "translateY(-6px)");
+
+  dispose2();
+  check("second dispose removes touch listeners", removedListeners2, [
+    "touchstart", "touchmove", "touchend", "touchcancel",
+  ]);
+  check("dispose clears the row offset", screen2.style.transform, "");
+} finally {
+  Date.now = realNow;
+}
 delete global.document;
 
 if (failures > 0) {
