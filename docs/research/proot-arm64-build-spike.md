@@ -100,9 +100,9 @@ bridge itself.
 
 ## Patches applied (recorded origin)
 
-Both patches are local build-compatibility fixes. They are re-applied
-idempotently by `scripts/build-proot-arm64.sh`. Neither changes PRoot
-behavior; both are required for an NDK/Bionic/mawk build.
+The first two patches are local build-compatibility fixes; the third is a
+behavior fix for a device-visible failure (NusaDesk issue #1). All three are
+re-applied idempotently by `scripts/build-proot-arm64.sh`.
 
 ### Patch A — `src/extension/ashmem_memfd/ashmem_memfd.c`: add `<string.h>`
 
@@ -121,6 +121,41 @@ The build host has only `mawk`. Replaced with a manual hex parser and a
 `offset_to_pokedata_workaround=1016` (`0x3f8`), matching the loader symbol
 offset (`pokedata_workaround` at `0x20000003f8` minus `_start` at
 `0x2000000000`). Local fix.
+
+### Patch C — `src/extension/link2symlink/link2symlink.c`: `link()` must not destroy a link source
+
+Unlike A and B this one changes behavior, because the shipped behavior loses
+data. It answers NusaDesk issue #1, reproduced on the S7 Edge (2026-09-26):
+
+- A `link()` whose source is an ordinary symbolic link renamed that source to a
+  name built from the *content* of the link (`sl -> a` became `a0001.0002`),
+  relative to PRoot's own working directory (`filesDir` in the app). Any
+  failure after that rename -- an `EEXIST` left by an earlier attempt is
+  enough -- returned `-1`, which the extension machinery reports as `EPERM`,
+  with the source already renamed away. `uv`, which hardlinks from its cache,
+  fails on this, and the source link is lost.
+- A member of a faked hard-link group whose backing file is gone could not be
+  removed at all: `decrement_link_count()` propagated its own bookkeeping
+  failures, so `rm` answered `EPERM` and a broken `uv` cache stayed
+  undeletable.
+
+The patch makes the extension never rename or unlink an ordinary symbolic-link
+source: without `AT_SYMLINK_FOLLOW` the new name is another symbolic link with
+the same content, with it the target is resolved (relative to the link's
+directory, or through the guest translation of an absolute target) and the
+usual conversion applies to that target. A source that names one of the
+extension's own entries is routed to the group it already belongs to instead of
+being moved into a group of its own; a conversion is rolled back when one of
+its steps fails; the `l2s_*` helpers report the real `errno` (`-1` was
+universally reported as `EPERM`); and the unlink-side bookkeeping is best
+effort, so a file can always be removed. Upstream `termux/proot` does not carry
+a fix at the latest tag (`v5.1.107.95`).
+
+Device evidence (S7 Edge, API 29, bridge `243c26a7…`): the issue's own
+`os.link()` repro now succeeds with the source intact; `uv pip install
+--link-mode=hardlink packaging requests` installs and imports; `rm -rf` of the
+agent's 17k-entry `uv` cache, which previously stopped at `EPERM`, completes
+(a second pass removes backing files the first pass renamed under itself).
 
 ## Build process (reproduced by `scripts/build-proot-arm64.sh`)
 
@@ -159,13 +194,14 @@ Forcing single-threaded linking with `-Wl,--threads=1` makes the output
 `scripts/build-proot-arm64.sh --repro-check` (two full clean builds, `cmp`):
 
 ```
-Stripped sha256: 6577444428cd0a0ddd4dd45a56af1bb49622986f52700e33a9bfdbb681e64046
+Stripped sha256: 243c26a7f512e9211b04cacedd6927f6291b3eaef54ec2c7d8c2ecf4e0282335
 Reproducibility check: rebuilding and comparing...
-  PASS: bit-identical across clean rebuilds (6577444428cd0a0ddd4dd45a56af1bb49622986f52700e33a9bfdbb681e64046)
+  PASS: bit-identical across clean rebuilds (243c26a7f512e9211b04cacedd6927f6291b3eaef54ec2c7d8c2ecf4e0282335)
 ```
 
 The pinned expected hash is recorded in the build script and checked on
-every run.
+every run. It was bumped together with Patch C; the loader is unaffected and
+keeps its own pin.
 
 ## readelf verification (local; not a device test)
 

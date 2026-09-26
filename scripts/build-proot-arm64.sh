@@ -69,7 +69,9 @@ PAGE_SIZE_FLAG="-Wl,-z,max-page-size=16384"
 THREADS_FLAG="-Wl,--threads=1"
 
 # Reproducible stripped output hash (sha256) for this exact configuration.
-EXPECTED_SHA256="6577444428cd0a0ddd4dd45a56af1bb49622986f52700e33a9bfdbb681e64046"
+# Bumped with Patch C (the link2symlink fix, NusaDesk issue #1): the loader
+# is unaffected and keeps its own pin below.
+EXPECTED_SHA256="243c26a7f512e9211b04cacedd6927f6291b3eaef54ec2c7d8c2ecf4e0282335"
 # Same for the freestanding loader shipped as libproot-loader.so.
 EXPECTED_LOADER_SHA256="12d2b63e897fd91a334fce23edea5d2419cae4d5fd2a369f05d03ab75682add0"
 
@@ -186,6 +188,464 @@ END {
 }
 AWKEOF
   log "  Patch B: rewrote loader-info.awk for mawk compatibility"
+fi
+
+# Patch C: the link2symlink extension of this revision does not learn that a
+# source may be a symbolic link of its own: it renames the source to a name
+# built from the *content* of that link, relative to PRoot's own working
+# directory, and any failure after that rename -- EEXIST from an earlier
+# attempt is enough -- leaves the source renamed away while the guest is told
+# EPERM.  The patch below (NusaDesk issue #1; upstream termux/proot does not
+# carry it) never moves nor unlinks a source that is an ordinary symbolic
+# link: without AT_SYMLINK_FOLLOW the new name is another symbolic link with
+# the same content, with it the target is resolved and the usual conversion
+# applies to that target.  A source that names one of the extension's own
+# entries is routed to the group it belongs to instead of being moved into a
+# group of its own, and a failure while a source is converted rolls the
+# source back.
+L2S_SOURCE="${PROOT_SRC}/src/extension/link2symlink/link2symlink.c"
+if ! grep -q 'normalize_joined_path' "${L2S_SOURCE}"; then
+  git -C "${PROOT_SRC}" apply <<'L2S_PATCH_C'
+diff --git a/src/extension/link2symlink/link2symlink.c b/src/extension/link2symlink/link2symlink.c
+index 9c67b10..ffc58d2 100644
+--- a/src/extension/link2symlink/link2symlink.c
++++ b/src/extension/link2symlink/link2symlink.c
+@@ -227,11 +227,14 @@ static int l2s_access(const char *path)
+ 	int dir_fd;
+ 
+ 	if (l2s_entry(path, &dir_fd, &name) < 0)
+-		return -1;
++		return errno > 0 ? -errno : -ENOENT;
+ 
+ 	/* No AT_SYMLINK_NOFOLLOW: access(2) follows, and a dangling
+ 	 * intermediate has always counted as a free slot here.  */
+-	return (dir_fd < 0) ? access(path, F_OK) : faccessat(dir_fd, name, F_OK, 0);
++	if (dir_fd < 0)
++		return access(path, F_OK) == 0 ? 0 : (errno > 0 ? -errno : -ENOENT);
++
++	return faccessat(dir_fd, name, F_OK, 0) == 0 ? 0 : (errno > 0 ? -errno : -ENOENT);
+ }
+ 
+ static int l2s_symlink(const char *target, const char *path)
+@@ -240,9 +243,12 @@ static int l2s_symlink(const char *target, const char *path)
+ 	int dir_fd;
+ 
+ 	if (l2s_entry(path, &dir_fd, &name) < 0)
+-		return -1;
++		return errno > 0 ? -errno : -ENOENT;
++
++	if (dir_fd < 0)
++		return symlink(target, path) == 0 ? 0 : (errno > 0 ? -errno : -EPERM);
+ 
+-	return (dir_fd < 0) ? symlink(target, path) : symlinkat(target, dir_fd, name);
++	return symlinkat(target, dir_fd, name) == 0 ? 0 : (errno > 0 ? -errno : -EPERM);
+ }
+ 
+ static int l2s_unlink(const char *path)
+@@ -251,9 +257,12 @@ static int l2s_unlink(const char *path)
+ 	int dir_fd;
+ 
+ 	if (l2s_entry(path, &dir_fd, &name) < 0)
+-		return -1;
++		return errno > 0 ? -errno : -ENOENT;
++
++	if (dir_fd < 0)
++		return unlink(path) == 0 ? 0 : (errno > 0 ? -errno : -EPERM);
+ 
+-	return (dir_fd < 0) ? unlink(path) : unlinkat(dir_fd, name, 0);
++	return unlinkat(dir_fd, name, 0) == 0 ? 0 : (errno > 0 ? -errno : -EPERM);
+ }
+ 
+ static int l2s_rename(const char *old_path, const char *new_path)
+@@ -264,17 +273,18 @@ static int l2s_rename(const char *old_path, const char *new_path)
+ 	int new_dir_fd;
+ 
+ 	if (l2s_entry(old_path, &old_dir_fd, &old_name) < 0)
+-		return -1;
++		return errno > 0 ? -errno : -ENOENT;
+ 	if (l2s_entry(new_path, &new_dir_fd, &new_name) < 0)
+-		return -1;
++		return errno > 0 ? -errno : -ENOENT;
+ 
+ 	if (old_dir_fd < 0 && new_dir_fd < 0)
+-		return rename(old_path, new_path);
++		return rename(old_path, new_path) == 0 ? 0 : (errno > 0 ? -errno : -EPERM);
+ 
+ 	/* An absolute path with AT_FDCWD is the side that isn't in the
+ 	 * l2s directory -- the file being moved into it, typically.  */
+ 	return renameat(old_dir_fd < 0 ? AT_FDCWD : old_dir_fd, old_name,
+-			new_dir_fd < 0 ? AT_FDCWD : new_dir_fd, new_name);
++			new_dir_fd < 0 ? AT_FDCWD : new_dir_fd, new_name) == 0
++		? 0 : (errno > 0 ? -errno : -EPERM);
+ }
+ 
+ /**
+@@ -294,7 +304,7 @@ static int my_readlink(const char symlink[PATH_MAX], char value[PATH_MAX])
+ 		? readlink(symlink, value, PATH_MAX)
+ 		: readlinkat(dir_fd, name, value, PATH_MAX);
+ 	if (size < 0)
+-		return size;
++		return errno > 0 ? -errno : -ENOENT;
+ 	if (size >= PATH_MAX)
+ 		return -ENAMETOOLONG;
+ 	value[size] = '\0';
+@@ -475,26 +485,95 @@ static void readlink_proc_fd(struct readlink_proc_fd_state *state)
+ 	state->substituted = true;
+ }
+ 
++/**
++ * Normalize the absolute path @path -- drop "." components and redundant
++ * slashes, resolve ".." ones -- into @result.  A ".." that would escape
++ * the root is dropped.  The paths normalized here are host paths, hence
++ * always absolute.  This function returns -errno if an error occured,
++ * otherwise 0.
++ */
++static int normalize_joined_path(const char *path, char result[PATH_MAX])
++{
++	const char *cursor = path;
++	size_t length = 0;
++
++	if (path[0] != '/')
++		return -EINVAL;
++
++	while (*cursor != '\0') {
++		const char *start;
++		size_t segment_length;
++
++		while (*cursor == '/')
++			cursor++;
++
++		start = cursor;
++		while (*cursor != '\0' && *cursor != '/')
++			cursor++;
++		segment_length = cursor - start;
++
++		if (segment_length == 0)
++			continue;
++
++		if (segment_length == 1 && start[0] == '.')
++			continue;
++
++		if (segment_length == 2 && start[0] == '.' && start[1] == '.') {
++			while (length > 0 && result[length - 1] != '/')
++				length--;
++			if (length > 0)
++				length--;
++			continue;
++		}
++
++		if (length + segment_length + 2 >= PATH_MAX)
++			return -ENAMETOOLONG;
++
++		result[length++] = '/';
++		memcpy(result + length, start, segment_length);
++		length += segment_length;
++	}
++
++	if (length == 0)
++		result[length++] = '/';
++	result[length] = '\0';
++
++	return 0;
++}
++
+ /**
+  * Move the path pointed to by @tracee's @sysarg to a new location,
+  * symlink the original path to this new one, make @tracee's @sysarg
+  * point to the new location.  This function returns -errno if an
+  * error occured, otherwise 0.
++ *
++ * @follow tells whether the caller asked for the symbolic link @sysarg
++ * names to be dereferenced, that is, whether the syscall is linkat(2)
++ * with AT_SYMLINK_FOLLOW.  Such a source is resolved here, since the
++ * kernel is never asked to do it.  A source that is an ordinary
++ * symbolic link and is not dereferenced is emulated by another symbolic
++ * link.  Either way the source itself is never renamed nor unlinked:
++ * only the file a regular source names, or the entries of this
++ * extension a source names, are converted.
+  */
+-static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sysarg)
++static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sysarg, bool follow)
+ {
+ 	char original[PATH_MAX];
+ 	char intermediate[PATH_MAX];
+ 	char new_intermediate[PATH_MAX];
+ 	char final[PATH_MAX];
+ 	char new_final[PATH_MAX];
++	char resolved[PATH_MAX];
+ 	char * name;
++	char * source_name;
+ 	struct stat statl;
++	struct stat targetl;
+ 	ssize_t size;
+ 	int status;
+ 	int link_count;
+ 	int first_link = 1;
+ 	int intermediate_suffix = 1;
++	int depth = 0;
+ 
+ 	/* Note: this path was already canonicalized.  */
+ 	size = read_string(tracee, original, peek_reg(tracee, CURRENT, sysarg), PATH_MAX);
+@@ -503,6 +582,11 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 	if (size >= PATH_MAX)
+ 		return -ENAMETOOLONG;
+ 
++restart:
++	/* A chain of symbolic links cannot be longer than this.  */
++	if (++depth > 40)
++		return -ELOOP;
++
+ 	/* Sanity check: directories can't be linked.  */
+ 	status = lstat(original, &statl);
+ 	if (status < 0)
+@@ -512,6 +596,8 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 
+ 	/* Check if it is a symbolic link.  */
+ 	if (S_ISLNK(statl.st_mode)) {
++		bool from_machinery = false;
++
+ 		/* get name */
+ 		size = my_readlink(original, intermediate);
+ 		if (size < 0)
+@@ -523,8 +609,94 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 		else
+ 			name++;
+ 
+-		if (strncmp(name, PREFIX, strlen(PREFIX)) == 0)
++		if (strncmp(name, PREFIX, strlen(PREFIX)) == 0) {
++			status = lstat(intermediate, &targetl);
++			if (status == 0 && S_ISLNK(targetl.st_mode)) {
++				/* The target is the intermediate of the
++				 * group the source belongs to.  */
++				from_machinery = true;
++			} else {
++				/* Or the source itself is such an
++				 * intermediate, it then names its final
++				 * file directly.  Only that shape belongs
++				 * here; an ordinary link that merely
++				 * points into the directory must not be
++				 * taken for one of our entries.  */
++				source_name = strrchr(original, '/');
++				source_name = (source_name == NULL ? original : source_name + 1);
++
++				if (strncmp(source_name, PREFIX, strlen(PREFIX)) == 0) {
++					strcpy(intermediate, original);
++					from_machinery = true;
++				}
++			}
++		}
++
++		if (from_machinery) {
+ 			first_link = 0;
++		} else if (!follow) {
++			/* Without AT_SYMLINK_FOLLOW the link names
++			 * the symbolic link itself: emulate it with
++			 * another symbolic link that has the same
++			 * content.  */
++			status = read_path(tracee, final, peek_reg(tracee, CURRENT, link_target_sysarg));
++			if (status < 0)
++				return status;
++
++			status = symlink(intermediate, final);
++			if (status < 0)
++				return errno > 0 ? -errno : -EPERM;
++
++			poke_reg(tracee, SYSARG_RESULT, 0);
++			set_sysnum(tracee, PR_void);
++			return 0;
++		} else {
++			/* With AT_SYMLINK_FOLLOW the link names the
++			 * target of the symbolic link: resolve one
++			 * level and try again with the resolved path.
++			 * A guest-absolute target is translated here;
++			 * a relative one is first joined to the
++			 * directory the symbolic link lies in.  */
++			if (intermediate[0] == '/') {
++				status = translate_path(tracee, resolved, AT_FDCWD, intermediate, false);
++				if (status < 0)
++					return status;
++			} else {
++				name = strrchr(original, '/');
++				if (name == NULL)
++					return -EINVAL;
++
++				*name = '\0';
++				if (snprintf(resolved, PATH_MAX, "%s/%s", original, intermediate) >= PATH_MAX) {
++					*name = '/';
++					return -ENAMETOOLONG;
++				}
++				*name = '/';
++
++				status = normalize_joined_path(resolved, new_intermediate);
++				if (status < 0)
++					return status;
++				strcpy(resolved, new_intermediate);
++			}
++
++			strcpy(original, resolved);
++			goto restart;
++		}
++	} else if (is_l2s_file(original)) {
++		/* The source is the final file of a group: the links it
++		 * already has must keep working, so point the new name at
++		 * its intermediate instead of moving it into a group of
++		 * its own.  */
++		size_t length = strlen(original);
++
++		memcpy(intermediate, original, length - 5);
++		intermediate[length - 5] = '\0';
++
++		status = lstat(intermediate, &targetl);
++		if (status < 0 || !S_ISLNK(targetl.st_mode))
++			return -ENOENT;
++
++		first_link = 0;
+ 	} else {
+ 		/* compute new name */
+ 		name = strrchr(original,'/');
+@@ -571,7 +743,7 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 		do {
+ 			sprintf(new_intermediate, "%s%04d", intermediate, intermediate_suffix);
+ 			intermediate_suffix++;
+-		} while ((l2s_access(new_intermediate) != -1) && (intermediate_suffix < 1000));
++		} while ((l2s_access(new_intermediate) == 0) && (intermediate_suffix < 1000));
+ 		strcpy(intermediate, new_intermediate);
+ 
+ 		strcpy(final, intermediate);
+@@ -585,13 +757,18 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 
+ 		/* Symlink the intermediate to the final file.  */
+ 		status = l2s_symlink(final, intermediate);
+-		if (status < 0)
++		if (status < 0) {
++			l2s_rename(final, original);
+ 			return status;
++		}
+ 
+ 		/* Symlink the original path to the intermediate one.  */
+ 		status = symlink(intermediate, original);
+-		if (status < 0)
+-			return status;
++		if (status < 0) {
++			l2s_unlink(intermediate);
++			l2s_rename(final, original);
++			return errno > 0 ? -errno : -EPERM;
++		}
+ 	} else {
+ 		/*Move the original content to new location, by incrementing count at end of path. */
+ 		size = my_readlink(intermediate, final);
+@@ -671,8 +848,13 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
+ 		return 0;
+ 
+ 	size = my_readlink(original, intermediate);
+-	if (size < 0)
+-		return size;
++	if (size < 0) {
++		/* Unreadable although lstat(2) reported a symbolic link:
++		 * nothing can be said about its group, so let the kernel
++		 * unlink it rather than failing the call.  */
++		VERBOSE(tracee, 1, "Skiping deref of unreadable link2symlink \"%s\"", original);
++		return 0;
++	}
+ 
+ 	name = strrchr(intermediate, '/');
+ 	if (name == NULL)
+@@ -696,39 +878,59 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
+ 	link_count = atoi(final + strlen(final) - 4);
+ 	link_count--;
+ 
+-	/* Check if it is or is not the last link to delete */
++	/* Check if it is or is not the last link to delete.
++	 *
++	 * The failures below describe the state of the group, not the
++	 * syscall: a group whose final file is gone is already broken,
++	 * and the tracee's unlink(2) must never be turned into an error
++	 * by this bookkeeping -- the file would then be impossible to
++	 * remove at all.  Hence the skip-and-let-it-through.  */
+ 	if (link_count > 0) {
+ 		strncpy(new_final, final, strlen(final) - 4);
+ 		sprintf(new_final + strlen(final) - 4, "%04d", link_count);
+ 
+ 		status = l2s_rename(final, new_final);
+-		if (status < 0)
+-			return status;
++		if (status < 0) {
++			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
++			return 0;
++		}
+ 		status = notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) final, (intptr_t) new_final);
+ 		if (status < 0)
+-			return status;
++			return 0;
+ 
+ 		strcpy(final, new_final);
+ 
+-		/* Symlink the intermediate to the final file.  */
++		/* Symlink the intermediate to the final file.  The
++		 * intermediate may already be gone, that is exactly what
++		 * recreating it is for.  */
+ 		status = l2s_unlink(intermediate);
+-		if (status < 0)
+-			return status;
++		if (status < 0 && status != -ENOENT) {
++			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
++			return 0;
++		}
+ 
+ 		status = l2s_symlink(final, intermediate);
+-		if (status < 0)
+-			return status;
++		if (status < 0) {
++			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
++			return 0;
++		}
+ 	} else {
+-		/* If it is the last, delete the intermediate and final */
++		/* If it is the last, delete the intermediate and final.
++		 * The intermediate goes first: an interruption leaves an
++		 * orphan final file, never a link that dangles.  */
+ 		status = l2s_unlink(intermediate);
+-		if (status < 0)
+-			return status;
++		if (status < 0 && status != -ENOENT) {
++			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
++			return 0;
++		}
+ 		status = l2s_unlink(final);
+-		if (status < 0)
+-			return status;
++		if (status < 0 && status != -ENOENT) {
++			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
++			return 0;
++		}
+ 		status = notify_extensions(tracee, LINK2SYMLINK_UNLINK, (intptr_t) final, 0);
+ 		if (status < 0)
+-			return status;
++			return 0;
+ 		}
+ 
+ 	return 0;
+@@ -1228,7 +1430,7 @@ int link2symlink_callback(Extension *extension, ExtensionEvent event,
+ 			 *     int symlink(const char *oldpath, const char *newpath);
+ 			 */
+ 
+-			status = move_and_symlink_path(tracee, SYSARG_1, SYSARG_2);
++			status = move_and_symlink_path(tracee, SYSARG_1, SYSARG_2, false);
+ 			if (status < 0)
+ 				return status;
+ 
+@@ -1265,7 +1467,8 @@ int link2symlink_callback(Extension *extension, ExtensionEvent event,
+ 			 *   newdirfd + newpath -> newpath
+ 			 */
+ 
+-			status = move_and_symlink_path(tracee, SYSARG_2, SYSARG_4);
++			status = move_and_symlink_path(tracee, SYSARG_2, SYSARG_4,
++							(peek_reg(tracee, CURRENT, SYSARG_5) & AT_SYMLINK_FOLLOW) != 0);
+ 			if (status < 0)
+ 				return status;
+ 
+L2S_PATCH_C
+  log "  Patch C: fixed the link2symlink handling of symbolic link sources"
 fi
 
 # ---------------------------------------------------------------------------

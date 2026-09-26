@@ -67,17 +67,33 @@ PRoot is the adopted execution bridge (ADR-0007/0008): the packaged `libproot.so
 ### Guest hard links are emulated, not real
 
 Android's SELinux policy for the app domain denies hard-link creation, so a
-guest process cannot create a real hard link anywhere in its rootfs
-(device-verified: `ln` inside the guest fails with `Permission denied` even in
-`/tmp`). `dpkg` creates a backup hard link before every unpack, so without a
-workaround no `apt install`/`apt upgrade` can complete. NusaDesk therefore runs
-PRoot with `--link2symlink` (ADR-0020), which emulates hard links with symlinks
-inside the guest.
+guest process cannot create a real hard link anywhere in its rootfs. That is
+still the case with the shipped bridge, device-verified with the app's own
+PRoot: a bare `ln` in app data answers `Permission denied` under `Enforcing`,
+and the "hard link" a guest program observes (equal inode, `st_nlink`
+counting, write-through) is the `--link2symlink` emulation of ADR-0020
+faking those fields -- the on-disk entries are symbolic links. `dpkg` creates
+a backup hard link before every unpack, so without a workaround no
+`apt install`/`apt upgrade` can complete; NusaDesk therefore runs PRoot with
+`--link2symlink` (ADR-0020).
 
-Consequence to keep in mind: a guest program that needs a *true* hard link —
-comparing inode numbers, or requiring `st_nlink > 1` — will not behave correctly.
-Package installation and upgrades are supported; code that depends on real hard
-link semantics is not.
+Consequences to keep in mind:
+
+- A guest program that needs a *true* hard link — comparing inode numbers, or
+  requiring `st_nlink > 1` — will not behave correctly. Package installation
+  and upgrades are supported; code that depends on real hard link semantics is
+  not.
+- Linking a symbolic link, or one of the emulation's own entries, no longer
+  destroys anything and the program sees the operation succeed (the fix
+  recorded in the build spike, 2026-09-26); before it, such a `link()` moved
+  the source away and answered `EPERM`.
+- Removing a directory that holds emulated links may need a second `rm -rf`
+  pass: the link-count update renames a backing file while the first pass
+  walks the directory, and that first pass then reports `Directory not
+  empty`. `rm` no longer answers `EPERM` for such files.
+- The emulation's `.l2s.` entries are visible in directory listings (the
+  extension does not filter them). Tools that enumerate a tree see them as
+  extra entries.
 
 ### Guest SSH server is not supplied by Ubuntu Base
 

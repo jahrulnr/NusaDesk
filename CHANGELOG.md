@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-26
+
+### Fixed
+
+- Stop the guest `link()` emulation from destroying a symbolic-link source
+  (NusaDesk issue #1). A `link()` whose source is an ordinary symbolic link
+  used to rename that source to a name derived from the link's content,
+  relative to PRoot's own working directory, and a later failure surfaced as
+  `EPERM` with the source already gone; `uv` hardlinks hit this and lost the
+  link. The packaged PRoot now leaves such a source untouched -- without
+  `AT_SYMLINK_FOLLOW` the new name is another symbolic link with the same
+  content, with it the target is resolved and the usual emulation applies to
+  it -- routes a source that names one of the emulation's own entries to the
+  group it belongs to, rolls a conversion back when a step fails, reports the
+  real errno instead of `EPERM`, and treats unlink-side bookkeeping as best
+  effort so a file in a broken group can always be removed. Device-verified on
+  the S7 Edge: the issue's `os.link()` repro succeeds with the source intact,
+  `uv pip install --link-mode=hardlink packaging requests` installs and
+  imports, and the agent's 17k-entry `uv` cache, previously undeletable with
+  `EPERM`, deletes (a second `rm -rf` pass may be needed for backing files
+  the first pass renamed under itself).
+
 ## [0.10.0] - 2026-09-26
 
 ### Added

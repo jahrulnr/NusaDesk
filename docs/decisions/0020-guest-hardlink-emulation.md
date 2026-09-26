@@ -98,3 +98,39 @@ rootfs on an unrooted Android device.
   output is unrelated and non-fatal: the `Readline` debconf frontend module is
   not part of the curated payload, so debconf falls back to a non-interactive
   frontend and the install still completes.
+
+## Amendment (2026-09-26): a link source is never moved
+
+The emulation as first shipped had two failure modes on device, reproduced as
+NusaDesk issue #1 on the S7 Edge:
+
+- `link()` with an ordinary symbolic-link source renamed that source to a name
+  derived from the link's content, relative to PRoot's working directory; a
+  following failure (an `EEXIST` left by an earlier attempt is enough)
+  reported `EPERM` with the source already renamed away.
+- A member of a group whose backing file had been lost could not be removed at
+  all, because the unlink-side bookkeeping propagated its own errors: `rm`
+  answered `EPERM`, and a broken `uv` cache stayed undeletable.
+
+The packaged PRoot now carries a third recorded patch (see the build script and
+`docs/research/proot-arm64-build-spike.md`) that never renames nor unlinks an
+ordinary symbolic-link source: without `AT_SYMLINK_FOLLOW` the new name is
+another symbolic link with the same content, with it the target is resolved
+(relative to the link's directory, or through the guest translation of an
+absolute target) and the conversion applies to the target. A source that names
+one of the extension's own entries is routed to the group it already belongs
+to; a conversion is rolled back when a step fails; the helpers report the real
+`errno` instead of `EPERM`; and the unlink-side bookkeeping is best effort, so
+a file is always removable.
+
+Two boundaries stay, and are recorded in `docs/limitations.md`: a directory
+holding emulated links may need a second `rm -rf` pass (the count update
+renames a backing file while the first pass walks the directory), and the
+`.l2s.` entries remain visible in directory listings -- which is now harmless,
+since linking them works.
+
+The premise of this ADR is unchanged: the kernel still denies hard links to the
+app domain, device-verified with the shipped bridge (`ln` in app data answers
+`Permission denied` under `Enforcing`; the guest-visible "hard link" is the
+emulation reporting a faked inode and `st_nlink`, while the on-disk entries are
+symbolic links).
