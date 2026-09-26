@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-27
+
+### Added
+
+- Seed a durable agent bundle into the guest at `/root/.agents` — a
+  user-editable `AGENTS.md` describing the guest environment plus a starter
+  `termux-api-vs-android-cli` skill that decides when a task belongs on the
+  capability-bridge `termux-*`/`nusadesk-*` commands versus the native
+  `android-cli` tools (ADR-0056). Seeded files update only while
+  byte-identical to the installed copy, never overwrite user edits, and are
+  never recreated after the user deletes them.
+
+### Changed
+
+- Split installation choices into two independent, default-off toolkits
+  (ADR-0057): **USB / ADB driver** and **Termux commands** can each be
+  selected at first setup, both, or neither, and either can be installed
+  later from its own action under System → One-click install. The service
+  manager/Python overlay is required for a complete session again — it
+  installs with the core pipeline, gates launcher readiness and boot start,
+  and is never presented as an option. Guest toolkit state is tracked per
+  choice under `/var/lib/nusadesk/optional-tools/`, an upgrade adopts
+  previously provisioned toolkits instead of dropping them, and the shared
+  `termux_compat` module stays core for `android-cli`/`nusadesk-*` clients
+  even when the Termux commands are skipped.
+- Declutter the setup surface: remove the static "Set up your Linux desktop"
+  heading, the storage/ABI/network requirements card, the decorative
+  "Private by default" footer, and the nested optional-tools card. The
+  optional toolkits now render as plain checkbox rows directly on the setup
+  surface, and the setup card's own surface is gone so the launcher's
+  patterned backdrop stays visible behind the content.
+- Pin the setup action to the bottom edge of the launcher instead of
+  scrolling it with the log: `DesktopHomeView` now scrolls its content inside
+  a `ScrollView` and reparents the wizard's single action into a bottom
+  footer with a soft scrim, so the button never hangs mid-page and is always
+  thumb-reachable.
+- Give the terminal a faint math-art backdrop built from computed contour
+  lines: a packaged `math-art.svg` tile whose level-set curves are calculated
+  from a smooth periodic field, so they form large flowing loops that never
+  cross. Stroke-only in dim green under the DOM-rendered xterm rows, with a
+  transparent terminal theme so white terminal text keeps full contrast.
+- Keep the setup log readable across components: required and optional
+  phases carry their own tags (`svc`, `usb`, `termux`) and wrapped
+  continuations indent under each line's tag column so a wrapped line never
+  reads as a new log event.
+
 ## [0.10.2] - 2026-09-26
 
 ### Fixed
