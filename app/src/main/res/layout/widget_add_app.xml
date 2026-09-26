@@ -121,14 +121,17 @@
             android:labelFor="@id/app_kind_spinner"
             android:text="@string/app_form_type_label" />
 
-        <!-- The Spinner body itself: same widget resource as the capability
-             dialogs; the item rows are wired in AppFormView. -->
-        <include
+        <!-- Use the same background as the Name input on the actual Spinner;
+             an <include> background override is not applied consistently by
+             Android's inflater on devices. Dialogs retain their own Spinner. -->
+        <Spinner
             android:id="@+id/app_kind_spinner"
-            layout="@layout/nusadesk_dialog_spinner"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp" />
+            android:layout_marginTop="8dp"
+            android:background="@drawable/search_field_surface"
+            android:minHeight="@dimen/touch_target"
+            android:popupBackground="@drawable/nusadesk_dialog_surface" />
 
         <TextView
             android:id="@+id/app_form_body"

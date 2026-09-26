@@ -5,6 +5,9 @@ import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Looper;
 import android.view.View;
@@ -85,6 +88,23 @@ public class AppFormKindSelectTest {
         assertEquals("the Type label must point at its control",
                 R.id.app_kind_spinner,
                 form.findViewById(R.id.app_form_type_label).getLabelFor());
+    }
+
+    @Test
+    public void typeDropdownUsesTheSameNeutralFieldSurfaceAsName() {
+        AppFormView form = form();
+        form.bindNew();
+        Drawable name = form.findViewById(R.id.app_name_input).getBackground();
+        Drawable type = form.findViewById(R.id.app_kind_spinner).getBackground();
+        assertEquals("Type should match the Name field, not the green-tinted dialog input",
+                centerColor(name), centerColor(type));
+    }
+
+    private static int centerColor(Drawable drawable) {
+        Bitmap pixels = Bitmap.createBitmap(60, 60, Bitmap.Config.ARGB_8888);
+        drawable.setBounds(0, 0, 60, 60);
+        drawable.draw(new Canvas(pixels));
+        return pixels.getPixel(30, 30);
     }
 
     @Test
