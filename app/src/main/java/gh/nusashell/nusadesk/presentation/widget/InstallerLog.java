@@ -9,26 +9,29 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Maps combined rootfs + guest-SSH add-on install snapshots to an append-only,
- * bounded, deduplicated terminal log for the single setup pipeline. Pure Java
- * with no Android imports so the mapping, deduplication, and progress parsing
- * are testable in plain JUnit.
+ * Maps combined rootfs + add-on install snapshots to an append-only, bounded,
+ * deduplicated terminal log for the single setup pipeline. Pure Java with no
+ * Android imports so the mapping, deduplication, and progress parsing are
+ * testable in plain JUnit.
  *
  * <p>Each install phase produces one log line. Rootfs phases use the phase
  * word ({@code download}, {@code verify}, {@code extract}, {@code ready},
- * {@code error}); add-on phases use the {@code ssh} component tag so the two
- * components never blur together in the same terminal. Consecutive snapshots
- * in the same component and phase do not produce duplicate lines; the download
- * percent is parsed from the detail and surfaced through the progress bar
- * instead of spamming the log. History is bounded to {@link #MAX_LINES} lines
- * so the viewport never grows unbounded.</p>
+ * {@code error}); add-on phases carry their own component tag — {@code ssh}
+ * for the essential terminal component, {@code svc} for the opt-in guest
+ * services extra (ADR-0057) — so the components never blur together in the
+ * same terminal. Consecutive snapshots in the same component and phase do
+ * not produce duplicate lines; the download percent is parsed from the
+ * detail and surfaced through the progress bar instead of spamming the log.
+ * History is bounded to {@link #MAX_LINES} lines so the viewport never grows
+ * unbounded.</p>
  *
  * <p>The log is gated by an active-install flag. It activates on a new rootfs
  * attempt (the first rootfs download after idle or failure) or on an add-on
  * download that starts without a rootfs install this session (rootfs already
- * active, add-on auto-continued). Before activation it only carries the
- * prepare-context line, so an initial load with the rootfs already ready never
- * appends a spurious {@code ready} line for an install that did not happen.</p>
+ * active, an add-on auto-continued, or the user installing the services
+ * extra from System). Before activation it only carries the prepare-context
+ * line, so an initial load with the rootfs already ready never appends a
+ * spurious {@code ready} line for an install that did not happen.</p>
  */
 final class InstallerLog {
 
@@ -77,6 +80,37 @@ final class InstallerLog {
     static String lineFor(InstallPhaseSnapshot phase) {
         RuntimeState state = phase.getState();
         String detail = phase.getDetail();
+        if (phase.getComponent() == InstallPhaseSnapshot.Component.SERVICES) {
+            switch (state) {
+                case DOWNLOADING:
+                    return "svc  " + stripDownloadPercent(detail);
+                case VERIFYING:
+                case EXTRACTING:
+                case READY:
+                    return "svc  " + nullToEmpty(detail);
+                case FAILED:
+                    return "svc error  " + nullToEmpty(detail);
+                default:
+                    return null;
+            }
+        }
+        if (phase.getComponent() == InstallPhaseSnapshot.Component.USB_ADB
+                || phase.getComponent() == InstallPhaseSnapshot.Component.TERMUX) {
+            String tag = phase.getComponent() == InstallPhaseSnapshot.Component.USB_ADB
+                    ? "usb" : "termux";
+            switch (state) {
+                case DOWNLOADING:
+                    return tag + "  " + stripDownloadPercent(detail);
+                case VERIFYING:
+                case EXTRACTING:
+                case READY:
+                    return tag + "  " + nullToEmpty(detail);
+                case FAILED:
+                    return tag + " error  " + nullToEmpty(detail);
+                default:
+                    return null;
+            }
+        }
         if (phase.getComponent() == InstallPhaseSnapshot.Component.ADDON) {
             switch (state) {
                 case DOWNLOADING:
@@ -161,9 +195,11 @@ final class InstallerLog {
             return appendLine(phase);
         }
         if (!active
-                && phase.getComponent() == InstallPhaseSnapshot.Component.ADDON
+                && phase.getComponent() != InstallPhaseSnapshot.Component.ROOTFS
                 && phase.getState() == RuntimeState.DOWNLOADING) {
-            // Add-on auto-continued without a rootfs install this session.
+            // An add-on started without a rootfs install this session: the
+            // terminal component auto-continued, or the services extra was
+            // requested from first install or the System page.
             if (prepareContext == null) {
                 return false;
             }

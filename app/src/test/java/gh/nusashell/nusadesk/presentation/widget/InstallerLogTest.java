@@ -37,7 +37,24 @@ public class InstallerLogTest {
         return InstallPhaseSnapshot.addon(addonSnapshot(state, detail));
     }
 
+    private static InstallPhaseSnapshot services(RuntimeState state, String detail) {
+        return InstallPhaseSnapshot.serviceAddon(
+                new RuntimeSnapshot("guest-service-bridge", state, detail, 0, 1_000L));
+    }
+
     // ---- percent parsing ----
+
+    @Test
+    public void independentOptionalToolkitsHaveDistinctLogTags() {
+        InstallPhaseSnapshot usb = InstallPhaseSnapshot.usbAdb(
+                new RuntimeSnapshot("usb", RuntimeState.READY,
+                        "USB / ADB ready", 0, 1_000L));
+        InstallPhaseSnapshot termux = InstallPhaseSnapshot.termux(
+                new RuntimeSnapshot("termux", RuntimeState.FAILED,
+                        "failed to write commands", 0, 1_000L));
+        assertEquals("usb  USB / ADB ready", InstallerLog.lineFor(usb));
+        assertEquals("termux error  failed to write commands", InstallerLog.lineFor(termux));
+    }
 
     @Test
     public void parsesPercentFromDownloadDetail() {
@@ -168,6 +185,51 @@ public class InstallerLogTest {
     @Test
     public void addonNotInstalledProducesNoLine() {
         assertNull(InstallerLog.lineFor(addon(RuntimeState.NOT_INSTALLED, "")));
+    }
+
+    // ---- services-extra line mapping (ADR-0055) ----
+
+    @Test
+    public void servicesDownloadLineUsesSvcTagAndStripsPercent() {
+        String line = InstallerLog.lineFor(services(
+                RuntimeState.DOWNLOADING, "Downloading Guest services 3/14 · 45%"));
+        assertEquals("svc  Downloading Guest services 3/14", line);
+    }
+
+    @Test
+    public void servicesLinesAreDistinctFromSshLines() {
+        assertEquals("ssh  Verifying OpenSSH 1/7",
+                InstallerLog.lineFor(addon(RuntimeState.VERIFYING, "Verifying OpenSSH 1/7")));
+        assertEquals("svc  Verifying Guest services 1/14",
+                InstallerLog.lineFor(services(RuntimeState.VERIFYING, "Verifying Guest services 1/14")));
+        assertEquals("svc error  network timeout",
+                InstallerLog.lineFor(services(RuntimeState.FAILED, "network timeout")));
+    }
+
+    @Test
+    public void servicesPhasesDedupSeparatelyFromSsh() {
+        InstallerLog log = new InstallerLog();
+        log.append(rootfs(RuntimeState.DOWNLOADING, "Downloading Ubuntu Base"));
+        log.append(rootfs(RuntimeState.READY, "installed"));
+        log.append(addon(RuntimeState.DOWNLOADING, "Downloading OpenSSH 1/7"));
+        // Same state on a different component is a different phase: both append.
+        assertTrue(log.append(services(RuntimeState.DOWNLOADING, "Downloading Guest services 1/14")));
+        assertFalse(log.append(services(RuntimeState.DOWNLOADING, "Downloading Guest services 2/14")));
+
+        List<String> lines = log.lines();
+        assertEquals("ssh  Downloading OpenSSH 1/7", lines.get(2));
+        assertEquals("svc  Downloading Guest services 1/14", lines.get(3));
+    }
+
+    @Test
+    public void servicesDownloadActivatesLogWithoutRootfsInstall() {
+        InstallerLog log = new InstallerLog();
+        log.prependPrepare("A pinned Ubuntu Base system");
+        // Core already installed, no install this session: installing the
+        // extra from System activates the log on its first download.
+        log.append(rootfs(RuntimeState.READY, "installed"));
+        assertTrue(log.append(services(RuntimeState.DOWNLOADING, "Downloading Guest services 1/14")));
+        assertEquals("svc  Downloading Guest services 1/14", log.lines().get(1));
     }
 
     // ---- deduplication by (component, state) ----

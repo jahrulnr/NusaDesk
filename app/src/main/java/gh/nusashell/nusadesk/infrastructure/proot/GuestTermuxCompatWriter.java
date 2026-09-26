@@ -54,6 +54,13 @@ import java.util.Set;
  * Unsupported Termux flags fail with usage instead of being silently ignored.
  * Exit codes follow the Termux contract: {@code 0} on a result, {@code 1} on a
  * typed bridge error, {@code 2} on usage or transport failure.</p>
+ *
+ * <p>Install ownership is split: {@link #ensureModule} writes only the shared
+ * {@code termux_compat} module and is part of the core session surface —
+ * {@code android-cli} and the {@code nusadesk-*} clients import it — while
+ * {@link #ensure} additionally installs the {@code termux-*} commands and
+ * {@code docs/termux-compat.md}. That full layer is opt-in and is reached
+ * only through {@link GuestOptionalTools} ({@code Kind.TERMUX}).</p>
  */
 public final class GuestTermuxCompatWriter {
 
@@ -440,11 +447,43 @@ public final class GuestTermuxCompatWriter {
     }
 
     /**
+     * Ensure only the shared {@code termux_compat} runtime module matches the
+     * current app version.
+     *
+     * <p>The module is part of the core guest surface, not of the optional
+     * Termux command set: {@code android-cli} and every {@code nusadesk-*}
+     * client import it for bridge transport, so it must be installed even
+     * when the user never chose the {@code termux-*} commands
+     * ({@link GuestOptionalTools.Kind#TERMUX}).</p>
+     *
+     * @param activeRootfs validated active rootfs directory
+     * @param appVersion APK version name, not user input
+     * @return whether the module was updated or was already current
+     * @throws IOException when a fixed path is unsafe or cannot be written
+     */
+    public static GuestAwarenessReadmeWriter.Result ensureModule(
+            Path activeRootfs, String appVersion) throws IOException {
+        if (activeRootfs == null) {
+            throw new IllegalArgumentException("activeRootfs must not be null");
+        }
+        String version = GuestAwarenessReadmeWriter.requireVersionForWriter(appVersion);
+        Path lib = prepareDirectory(activeRootfs, GUEST_MODULE_DIR_RELATIVE_PATH,
+                "guest /usr/local/lib/nusadesk");
+        boolean updated = ensureFile(lib.resolve("termux_compat.py"),
+                moduleContent(version).getBytes(StandardCharsets.UTF_8),
+                MODULE_PERMISSIONS);
+        return updated ? GuestAwarenessReadmeWriter.Result.UPDATED
+                : GuestAwarenessReadmeWriter.Result.UNCHANGED;
+    }
+
+    /**
      * Ensure the whole Termux-compat layer (shared runtime module, one
      * executable script per cataloged command, the documentation page, and a
      * sweep of stale generated commands) matches the current app version.
      *
-     * <p>Writes are atomic and idempotent like every other generated guest
+     * <p>This is the opt-in surface: {@link GuestOptionalTools} calls it only
+     * when {@link GuestOptionalTools.Kind#TERMUX} is installed or adopted.
+     * Writes are atomic and idempotent like every other generated guest
      * file: content is staged beside the target and moved into place, and a
      * file whose bytes already match is left untouched. A script this writer
      * once installed but that is no longer declared by the catalog is swept,
@@ -466,13 +505,10 @@ public final class GuestTermuxCompatWriter {
                 "guest /root/docs");
         Path bin = prepareDirectory(activeRootfs, GUEST_BIN_RELATIVE_PATH,
                 "guest /usr/local/bin");
-        Path lib = prepareDirectory(activeRootfs, GUEST_MODULE_DIR_RELATIVE_PATH,
-                "guest /usr/local/lib/nusadesk");
 
-        boolean updated = false;
-        updated |= ensureFile(lib.resolve("termux_compat.py"),
-                moduleContent(version).getBytes(StandardCharsets.UTF_8),
-                MODULE_PERMISSIONS);
+        boolean updated =
+                ensureModule(activeRootfs, version)
+                        == GuestAwarenessReadmeWriter.Result.UPDATED;
         for (TermuxCommand command : TermuxCommandCatalog.all()) {
             updated |= ensureFile(bin.resolve(command.name()),
                     scriptContent(command.name(), version)
@@ -485,6 +521,33 @@ public final class GuestTermuxCompatWriter {
         updated |= sweepStale(bin);
         return updated ? GuestAwarenessReadmeWriter.Result.UPDATED
                 : GuestAwarenessReadmeWriter.Result.UNCHANGED;
+    }
+
+    /**
+     * Whether {@code bin} holds at least one {@code termux-*} regular file
+     * carrying this writer's marker. Package-private: it is the adoption
+     * signal {@link GuestOptionalTools} uses to recognise a Termux-compat
+     * install written before install markers existed. The shared module
+     * lives outside {@code bin} and is never counted — it is core, not an
+     * opt-in signal. Detection only: an unreadable directory or entry answers
+     * {@code false} rather than failing the session start.
+     */
+    static boolean hasMarkedCommand(Path bin) {
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(bin)) {
+            for (Path entry : entries) {
+                String name = entry.getFileName().toString();
+                if (!name.startsWith("termux-")
+                        || !Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
+                    continue;
+                }
+                if (carriesMarker(entry)) {
+                    return true;
+                }
+            }
+        } catch (IOException unreadable) {
+            return false;
+        }
+        return false;
     }
 
     /**
@@ -516,29 +579,35 @@ public final class GuestTermuxCompatWriter {
         return removed;
     }
 
-    private static boolean carriesMarker(Path file) throws IOException {
+    private static boolean carriesMarker(Path file) {
         // Open with NOFOLLOW so a symlink swapped in after the check above is
         // never read through; the marker is only ever in our own regular files.
-        Set<java.nio.file.OpenOption> options = new HashSet<>();
-        options.add(StandardOpenOption.READ);
-        options.add(LinkOption.NOFOLLOW_LINKS);
-        try (java.nio.channels.SeekableByteChannel channel =
-                     Files.newByteChannel(file, options);
-             BufferedReader reader = new BufferedReader(
-                     new java.io.InputStreamReader(
-                             java.nio.channels.Channels.newInputStream(channel),
-                             StandardCharsets.UTF_8))) {
-            for (int line = 0; line < 3; line++) {
-                String text = reader.readLine();
-                if (text == null) {
-                    return false;
-                }
-                if (text.contains(MARKER)) {
-                    return true;
+        // Detection only: an unreadable entry counts as unmarked (and, during
+        // the stale sweep, is therefore left alone).
+        try {
+            Set<java.nio.file.OpenOption> options = new HashSet<>();
+            options.add(StandardOpenOption.READ);
+            options.add(LinkOption.NOFOLLOW_LINKS);
+            try (java.nio.channels.SeekableByteChannel channel =
+                         Files.newByteChannel(file, options);
+                 BufferedReader reader = new BufferedReader(
+                         new java.io.InputStreamReader(
+                                 java.nio.channels.Channels.newInputStream(channel),
+                                 StandardCharsets.UTF_8))) {
+                for (int line = 0; line < 3; line++) {
+                    String text = reader.readLine();
+                    if (text == null) {
+                        return false;
+                    }
+                    if (text.contains(MARKER)) {
+                        return true;
+                    }
                 }
             }
+            return false;
+        } catch (IOException unreadable) {
+            return false;
         }
-        return false;
     }
 
     /**

@@ -81,6 +81,44 @@ public class SetupPhasePolicyTest {
         assertEquals(RuntimeState.READY, phase.getState());
     }
 
+    @Test
+    public void rootfsReadyPassesServicesExtraPhaseThrough() {
+        // The opt-in services extra (ADR-0055) renders on the same surface
+        // when it installs: its tagged phase is the latest add-on snapshot,
+        // and the policy forwards it unchanged.
+        InstallPhaseSnapshot services = InstallPhaseSnapshot.serviceAddon(
+                new RuntimeSnapshot("guest-service-bridge",
+                        RuntimeState.DOWNLOADING, "detail", 0, 1_000L));
+        InstallPhaseSnapshot phase = SetupPhasePolicy.phaseFor(
+                rootfs(RuntimeState.READY), services);
+        assertEquals(InstallPhaseSnapshot.Component.SERVICES, phase.getComponent());
+        assertEquals(RuntimeState.DOWNLOADING, phase.getState());
+    }
+
+    @Test
+    public void mandatoryServiceBridgeControlsReadinessAndRetry() {
+        RuntimeSnapshot ready = rootfs(RuntimeState.READY);
+        assertEquals(SetupAction.INSTALLING,
+                SetupPhasePolicy.actionFor(ready, true, false, false, false));
+        assertEquals(SetupAction.RETRY,
+                SetupPhasePolicy.actionFor(ready, true, false, false, true));
+        assertEquals(SetupAction.HIDDEN,
+                SetupPhasePolicy.actionFor(ready, true, false, true, false));
+        InstallPhaseSnapshot pending = SetupPhasePolicy.phaseFor(ready, null, true);
+        assertEquals(InstallPhaseSnapshot.Component.SERVICES, pending.getComponent());
+        assertEquals(RuntimeState.NOT_INSTALLED, pending.getState());
+    }
+
+    @Test
+    public void requiredServicesKeepSetupVisibleUntilInstalled() {
+        assertEquals(SetupAction.INSTALLING,
+                SetupPhasePolicy.actionFor(rootfs(RuntimeState.READY),
+                        true, false, false, false));
+        assertEquals(SetupAction.HIDDEN,
+                SetupPhasePolicy.actionFor(rootfs(RuntimeState.READY),
+                        true, false, true, false));
+    }
+
     // ---- action ----
 
     @Test

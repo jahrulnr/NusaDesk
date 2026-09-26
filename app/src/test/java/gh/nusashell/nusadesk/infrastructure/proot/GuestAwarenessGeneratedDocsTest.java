@@ -20,7 +20,12 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(readme.contains("(docs/battery-sensors-location.md)"));
         assertTrue(readme.contains("(docs/messaging-telephony.md)"));
         assertTrue(readme.contains("(docs/calendar.md)"));
-        assertTrue(readme.contains("(docs/termux-compat.md)"));
+        // The Termux topic doc ships only with the optional Termux toolkit
+        // (ADR-0057), so the README names it conditionally instead of linking
+        // a file a core-only install does not have.
+        assertTrue(readme.contains("termux-compat.md"));
+        assertTrue(readme.contains("optional toolkit"));
+        assertFalse(readme.contains("(docs/termux-compat.md)"));
         assertTrue(readme.contains("App version: 0.1.0"));
         // One line per topic doc plus the managed footer; keep the README a
         // single compact screen.

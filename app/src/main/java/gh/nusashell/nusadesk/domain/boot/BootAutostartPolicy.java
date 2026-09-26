@@ -5,9 +5,9 @@ package gh.nusashell.nusadesk.domain.boot;
  *
  * <p>Mirrors the gates the in-app autostart boundary applies before calling
  * {@code RuntimeHostService.ensureRunning} — runtime {@code READY}, terminal
- * component installed, service bridge settled — plus the opt-in that only
- * exists on this path. Inputs are booleans so the policy carries no Android
- * or persistence knowledge; the receiver owns how each signal is read.</p>
+ * component installed, required service bridge installed — plus the opt-in
+ * that only exists on this path. Optional USB/ADB and Termux commands do not
+ * gate a Linux session.</p>
  *
  * <p>The evaluation order is deliberate: the consent gate runs first, then
  * the install gates in the same order the presentation applies them. The
@@ -23,13 +23,13 @@ public final class BootAutostartPolicy {
      * Decide what a {@code BOOT_COMPLETED} or {@code MY_PACKAGE_REPLACED}
      * trigger may do.
      *
-     * @param optedIn              the user's "Start Linux at boot" setting
-     * @param payloadReady         persisted runtime state reconciles to
-     *                             {@code READY}
-     * @param sshAddonPresent      the curated OpenSSH add-on overlay is
-     *                             detected on disk
-     * @param serviceBridgePresent the guest service-bridge overlay is
-     *                             detected on disk
+     * @param optedIn         the user's "Start Linux at boot" setting
+     * @param payloadReady    persisted runtime state reconciles to
+     *                        {@code READY}
+     * @param sshAddonPresent the curated OpenSSH add-on overlay is
+     *                        detected on disk
+     * @param serviceBridgePresent the required guest service bridge overlay
+     *                             is detected on disk
      * @return the typed outcome; never {@code null}
      */
     public static BootAutostartDecision decide(

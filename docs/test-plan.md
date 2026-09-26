@@ -1305,6 +1305,63 @@ the existing MainActivity renderers still update them — state ownership did
 not move with the layout. `SystemScreenView.navigateBack()` is the Back
 contract MainActivity consults for the System destination.
 
+## First-install opt-in and One-click install, device run 2026-09-27 (ADR-0055, superseded)
+
+Historical record: this run documents the superseded single "Guest services
+&amp; tools" extra. ADR-0057 replaced it with the required core
+(rootfs + SSH + service/Python overlay) plus two independent toolkit
+choices; the device run for that model is recorded below.
+
+On the Samsung S10e (Android 12/API 31), the signed, debuggable QA build
+was kept installed while `pm clear` removed only NusaDesk's app data. The
+real first-run screen displayed `Guest services & tools` unchecked, with a
+7.1 MB size and a visible Start setup action. The `prepare` line's wrapped
+continuations aligned under its detail column; captured later phases began
+at their own flush-left tags (`download`, `verify`, `extract`).
+
+| ID | Device action | Observed result |
+| --- | --- | --- |
+| OPT-001 | Start setup without ticking the optional extra | Ubuntu Base and `guest-ssh-openssh` installed; `guest-service-bridge` was absent from the add-ons directory. The Linux terminal opened with `root@localhost:~#` and live PRoot/sshd processes. |
+| OPT-002 | Open System → One-click install before installing the extra | Guest services showed `Not installed` with an enabled `Install` button; USB/ADB and Termux showed `Needs Guest services & tools`. |
+| OPT-003 | Tap Install | The service overlay appeared on disk, the row changed to `Installed`, and dependent rows changed to `Active in every session`. |
+| OPT-004 | Run `python3 --version` in the shell that was already open, then stop and restart the Linux session | The old shell still reported `command not found` because the overlay binds are fixed at session start. After restart, Python reported `3.12.3` and `termux-battery-status` returned battery JSON. The page now explains the restart requirement. |
+| OPT-005 | Clear NusaDesk's new test data, tick the first-run optional checkbox, and Start setup | Both `guest-ssh-openssh` and `guest-service-bridge` installed through the initial pipeline; the first Linux shell already reported Python `3.12.3`. The seeded agent skill appeared in the guest. |
+
+No arbitrary URL or package was offered; no other app's data was cleared.
+The two opt-in paths (first-run checkbox and later System action) were each
+exercised on a fresh NusaDesk state.
+
+## Independent toolkit choices, device run 2026-09-27 (ADR-0057)
+
+On the Samsung S10e (Android 12/API 31) with the signed, debuggable QA build
+(versionCode 18) and `pm clear` between scenarios. The setup surface showed
+the two optional checkboxes as plain rows directly on the setup card — no
+static heading and no requirements card — with Start setup visible without
+scrolling.
+
+| ID | Device action | Observed result |
+| --- | --- | --- |
+| TOL-001 | Start setup with neither toolkit ticked | Core installed: `guest-ssh-openssh` + `guest-service-bridge`. Guest `/usr/local/bin` had `android-cli` and the `nusadesk-*` core clients but no `adb`, no `nusadesk-usb`, no `termux-*`; no `optional-tools` marker directory. `python3 --version` reported `3.12.3`. |
+| TOL-002 | System → One-click install after TOL-001 | Core services row showed `Installed` with no action; USB / ADB and Termux rows each showed `Not installed` with their own enabled `Install` button. |
+| TOL-003 | Tap Termux `Install` only | `termux` marker written, `termux-*` scripts appeared (57 files), USB row stayed `Not installed`, and `termux-battery-status` returned battery JSON in the already-running session. |
+| TOL-004 | Tap USB / ADB `Install` | `usb-adb` marker written; `nusadesk-usb`, `nusadesk-usbd`, the `adb` wrapper and `opt/nusadesk/libusb-shim.c` appeared; `command -v nusadesk-usb`/`adb`/`nusadesk-usbd` resolved under `/usr/local/bin` in the running session. |
+| TOL-005 | `pm clear`, tick both toolkits, Start setup | Both markers and both file sets were installed by the initial pipeline; the launcher unlocked after the core plus the two requested toolkits. |
+
+Toolkit state is tracked per choice under `/var/lib/nusadesk/optional-tools/`
+and adopted from pre-marker installs on upgrade; the shared `termux_compat`
+module stayed present in every scenario (`/usr/local/lib/nusadesk/`), which
+is what the core `android-cli`/`nusadesk-*` clients import.
+
+## Setup footer, exposed backdrop, and terminal math art, device run 2026-09-27
+
+Same S10e after `pm clear`, on the signed QA build with the layout changes.
+
+| ID | Device action | Observed result |
+| --- | --- | --- |
+| VIS-001 | Open the fresh setup screen | The setup content sat directly on the launcher backdrop — the interlocking pattern was visible around the log and options — and `Start setup` was pinned at the bottom edge over a soft scrim instead of scrolling with the content. |
+| VIS-002 | Start a core-only setup, then open the terminal | A faint dim-green contour pattern (level-set loops of a smooth periodic field, generated by `scripts/build-terminal-math-art.py` into `terminal/math-art.svg`) rendered behind the terminal; the loops flow without crossing and white text stayed fully legible. |
+| VIS-003 | Run `seq 1 120` and swipe the scrollback | The scrollback moved to lines 106–120 with rows aligned; the math backdrop stayed behind the text. The launcher afterwards showed no footer button and the pattern behind the app grid. |
+
 ## Native Android tooling in the guest (`android-cli`, ADR-0045), device run 2026-09-20
 
 Run on the S10e (SM-G970F, API 31) with the debug build; the session binds

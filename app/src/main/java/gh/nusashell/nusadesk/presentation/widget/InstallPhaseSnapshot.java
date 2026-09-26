@@ -5,7 +5,8 @@ import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
 
 /**
  * A runtime install snapshot tagged with the component it belongs to, so the
- * single setup pipeline can render the rootfs and the guest-SSH add-on as one
+ * single setup pipeline can render the rootfs, the guest-SSH add-on, the
+ * required service/Python overlay, and the two optional toolkits as one
  * append-only terminal log without persisting an add-on snapshot as base
  * runtime state.
  *
@@ -15,8 +16,13 @@ import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
  */
 public final class InstallPhaseSnapshot {
 
-    /** Which curated component a setup snapshot describes. */
-    public enum Component { ROOTFS, ADDON }
+    /**
+     * Which curated component a setup snapshot describes. {@code ROOTFS} and
+     * {@code ADDON} are the essential core (Linux + the terminal component);
+     * {@code SERVICES} is the required Python/systemctl overlay; the two
+     * toolkits are separate opt-in choices (ADR-0057).
+     */
+    public enum Component { ROOTFS, ADDON, SERVICES, USB_ADB, TERMUX }
 
     private final Component component;
     private final RuntimeSnapshot snapshot;
@@ -40,6 +46,21 @@ public final class InstallPhaseSnapshot {
     /** Tags a guest-SSH add-on install snapshot. */
     public static InstallPhaseSnapshot addon(RuntimeSnapshot snapshot) {
         return new InstallPhaseSnapshot(Component.ADDON, snapshot);
+    }
+
+    /** Tags the required service/Python overlay phase. */
+    public static InstallPhaseSnapshot serviceAddon(RuntimeSnapshot snapshot) {
+        return new InstallPhaseSnapshot(Component.SERVICES, snapshot);
+    }
+
+    /** Tags optional USB/ADB provisioning. */
+    public static InstallPhaseSnapshot usbAdb(RuntimeSnapshot snapshot) {
+        return new InstallPhaseSnapshot(Component.USB_ADB, snapshot);
+    }
+
+    /** Tags optional Termux command provisioning. */
+    public static InstallPhaseSnapshot termux(RuntimeSnapshot snapshot) {
+        return new InstallPhaseSnapshot(Component.TERMUX, snapshot);
     }
 
     public Component getComponent() {

@@ -62,7 +62,7 @@ public class BootStartReceiverTest {
 
     @Test
     public void optedInWithAllGatesSetStartsTheEnsureRunningIntent() {
-        optInWithGates(true, true, true);
+        optInWithGates(true, true);
         RecordingContext context = new RecordingContext();
 
         new BootStartReceiver().onReceive(
@@ -78,7 +78,7 @@ public class BootStartReceiverTest {
 
     @Test
     public void optedInPackageReplacedWithAllGatesSetAlsoStarts() {
-        optInWithGates(true, true, true);
+        optInWithGates(true, true);
         RecordingContext context = new RecordingContext();
 
         new BootStartReceiver().onReceive(
@@ -91,7 +91,7 @@ public class BootStartReceiverTest {
 
     @Test
     public void optedInWithAnUnsetGateStartsNothing() {
-        optInWithGates(true, true, false);
+        optInWithGates(true, false);
         RecordingContext context = new RecordingContext();
 
         new BootStartReceiver().onReceive(
@@ -104,7 +104,7 @@ public class BootStartReceiverTest {
     @Test
     public void optedInOnAFreshDeviceStartsNothing() {
         // No override: the real probe runs against an empty files dir, where
-        // no persisted READY, no SSH overlay, and no bridge exist — every
+        // neither a persisted READY nor an SSH overlay exists — every
         // disk read must fail closed.
         preferences().setEnabled(true);
         RecordingContext context = new RecordingContext();
@@ -117,7 +117,7 @@ public class BootStartReceiverTest {
 
     @Test
     public void unrelatedActionStartsNothingEvenWhenOptedIn() {
-        optInWithGates(true, true, true);
+        optInWithGates(true, true);
         RecordingContext context = new RecordingContext();
 
         new BootStartReceiver().onReceive(
@@ -127,8 +127,20 @@ public class BootStartReceiverTest {
                 context.startedServices.isEmpty());
     }
 
-    private static void optInWithGates(
-            boolean payloadReady, boolean sshAddon, boolean serviceBridge) {
+    @Test
+    public void optedInWithoutRequiredServiceBridgeStartsNothing() {
+        optInWithGates(true, true, false);
+        RecordingContext context = new RecordingContext();
+        new BootStartReceiver().onReceive(context, new Intent(Intent.ACTION_BOOT_COMPLETED));
+        assertTrue(context.startedServices.isEmpty());
+    }
+
+    private static void optInWithGates(boolean payloadReady, boolean sshAddon) {
+        optInWithGates(payloadReady, sshAddon, true);
+    }
+
+    private static void optInWithGates(boolean payloadReady, boolean sshAddon,
+                                       boolean serviceBridge) {
         preferences().setEnabled(true);
         BootStartReceiver.gateProbeOverride = new BootStartReceiver.GateProbe() {
             @Override

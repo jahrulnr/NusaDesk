@@ -8,10 +8,14 @@ import android.graphics.drawable.LayerDrawable;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.AttributeSet;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -52,7 +56,12 @@ import java.util.Map;
  * action. There is no separate "Next: add terminal component" card or second
  * button: the one action starts the whole pipeline, and a retry runs only the
  * component that is missing or failed. App icons, search, and the grid stay
- * hidden until both components are active.</p>
+ * hidden until all core components are active.</p>
+ *
+ * <p>The wizard's single action is pinned to the bottom edge of the screen
+ * (a fixed footer over the backdrop, ADR-0057 layout amendment) instead of
+ * scrolling with the log, so it never hangs in the middle of an otherwise
+ * empty page; the setup content scrolls behind it.</p>
  *
  * <p>Linux is background infrastructure (ADR-0013), so there is no start, stop,
  * or session control anywhere on this surface. The launcher keeps the normal
@@ -64,9 +73,14 @@ import java.util.Map;
  * <p>The launcher owns no runtime policy: it forwards the install intent to
  * the host and renders whatever the host publishes.</p>
  */
-public final class DesktopHomeView extends ScrollView
+public final class DesktopHomeView extends FrameLayout
         implements ScreenView, SessionStatusAware, GuestSshStatusAware {
 
+    private ScrollView scroller;
+    private LinearLayout content;
+    private FrameLayout footer;
+    private Button footerAction;
+    private int contentBaseBottomPadding;
     private View setupRuntimeCard;
     private InstallerWizardView wizard;
     private TextView titleView;
@@ -93,6 +107,17 @@ public final class DesktopHomeView extends ScrollView
     private InstallPhaseSnapshot addonPhase;
     private GuestSshUiState guestSsh = GuestSshUiState.missing();
     private HostRuntimeStatus session;
+    /** Whether the mandatory service bridge (systemctl/Python overlay) is
+     *  active on disk, as reported by the host. Fails closed: apps and the
+     *  terminal stay locked behind setup until the host reports ready. */
+    private boolean serviceReady;
+    /** Whether the latest services-overlay phase snapshot ended in FAILED —
+     *  tracked separately so a later toolkit snapshot cannot mask it. */
+    private boolean serviceFailed;
+    /** True while a user-requested optional toolkit install is running
+     *  (ADR-0057): keeps the setup surface mounted so the toolkit's phases
+     *  stay visible instead of the launcher unlocking mid-pipeline. */
+    private boolean optionalInstallActive;
 
     private final RuntimeStatusBus.Listener statusListener = this::renderSessionStatus;
 
@@ -118,9 +143,40 @@ public final class DesktopHomeView extends ScrollView
         setBackground(new LayerDrawable(new Drawable[]{
                 getContext().getDrawable(R.drawable.launcher_backdrop),
                 new LinePatternDrawable(getContext(), R.color.launcher_pattern_line)}));
-        LayoutInflater.from(getContext()).inflate(R.layout.widget_desktop_home, this, true);
+        // The content scrolls; the one setup action lives in a footer pinned
+        // to the bottom edge, so it is always thumb-reachable instead of
+        // scrolling away with the log (ADR-0057 layout amendment).
+        scroller = new ScrollView(getContext());
+        scroller.setFillViewport(true);
+        addView(scroller, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        LayoutInflater.from(getContext()).inflate(R.layout.widget_desktop_home, scroller, true);
+        content = (LinearLayout) scroller.getChildAt(0);
+        contentBaseBottomPadding = content.getPaddingBottom();
+        footer = new FrameLayout(getContext());
+        footer.setBackground(getContext().getDrawable(R.drawable.launcher_footer_scrim));
+        int sidePadding = getResources().getDimensionPixelSize(R.dimen.content_padding);
+        int bottomPadding = getResources().getDimensionPixelSize(R.dimen.content_padding);
+        footer.setPadding(sidePadding, 0, sidePadding, bottomPadding);
+        footer.setVisibility(GONE);
+        addView(footer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM));
+
         setupRuntimeCard = findViewById(R.id.setup_runtime_card);
         wizard = findViewById(R.id.installer_wizard);
+        // Reparent the wizard's single action into the footer. The wizard
+        // keeps the view reference, so its text/visibility updates still land
+        // on the button wherever it is attached.
+        footerAction = wizard.findViewById(R.id.wizard_action);
+        ((ViewGroup) footerAction.getParent()).removeView(footerAction);
+        // Keep the button's declared height from the wizard layout; the footer
+        // owns the surrounding padding.
+        footer.addView(footerAction, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                getResources().getDimensionPixelSize(R.dimen.button_height)));
         titleView = findViewById(R.id.launcher_title);
         countView = findViewById(R.id.launcher_count);
         statusView = findViewById(R.id.launcher_status);
@@ -202,9 +258,58 @@ public final class DesktopHomeView extends ScrollView
         updateText.setText(getContext().getString(R.string.update_banner_text, tag));
     }
 
-    /** States the real storage requirement for the first-run setup step. */
-    public void setStorageRequirement(long totalBytes) {
-        wizard.setStorageRequirement(totalBytes);
+    /**
+     * Offers — or withdraws — each optional toolkit independently on the
+     * setup surface (ADR-0057): the USB / ADB driver and the Termux command
+     * compatibility layer. The host derives each offer from disk truth; the
+     * wizard only shows the card while a start/retry decision is pending, and
+     * an offered toolkit is never pre-selected.
+     */
+    public void setOptionalToolsOffered(boolean usbOffered, boolean termuxOffered) {
+        wizard.setOptionalToolsOffered(usbOffered, termuxOffered);
+        // Re-render immediately: card visibility derives from the current
+        // action inside the wizard, so the offer must reach showPhase now —
+        // not whenever the next snapshot happens to arrive.
+        render();
+    }
+
+    /** Whether the user ticked the USB / ADB driver toolkit for this setup run. */
+    public boolean isUsbAdbSelected() {
+        return wizard.isUsbAdbSelected();
+    }
+
+    /** Whether the user ticked the Termux commands toolkit for this setup run. */
+    public boolean isTermuxSelected() {
+        return wizard.isTermuxSelected();
+    }
+
+    /**
+     * Reports whether the mandatory service bridge (systemctl/Python overlay)
+     * is usable — the host derives this from the verified overlay on disk.
+     * It is part of the core setup gate: apps and the terminal stay hidden
+     * behind the setup card while it is missing, and a failed mandatory
+     * install keeps the card mounted with a retry action.
+     */
+    public void setRuntimeServiceReady(boolean ready) {
+        if (serviceReady == ready) {
+            return;
+        }
+        serviceReady = ready;
+        render();
+    }
+
+    /**
+     * Keeps the setup surface visible while a user-requested optional toolkit
+     * install runs — including one started from the System page — so its
+     * {@code usb}/{@code termux} phases and failure stay on screen instead of
+     * the launcher silently unlocking or hiding the outcome.
+     */
+    public void setOptionalInstallActive(boolean active) {
+        if (optionalInstallActive == active) {
+            return;
+        }
+        optionalInstallActive = active;
+        render();
     }
 
     /**
@@ -248,11 +353,17 @@ public final class DesktopHomeView extends ScrollView
     }
 
     /**
-     * Feeds one guest-SSH add-on install snapshot into the unified surface and
-     * re-renders. The add-on snapshot is display-only: it is never persisted as
-     * base runtime state (presence is derived from disk).
+     * Feeds one add-on install snapshot — the guest-SSH terminal component,
+     * the mandatory service bridge, or an optional toolkit — into the
+     * unified surface and re-renders. The snapshot is display-only: it is
+     * never persisted as base runtime state (presence is derived from disk).
      */
     public void renderAddonPhase(InstallPhaseSnapshot phase) {
+        if (phase.getComponent() == InstallPhaseSnapshot.Component.SERVICES) {
+            // Latch the mandatory overlay's failure so a later toolkit or
+            // SSH snapshot cannot mask the retry the user is owed.
+            serviceFailed = phase.getState() == RuntimeState.FAILED;
+        }
         this.addonPhase = phase;
         wizard.appendLog(phase);
         render();
@@ -313,33 +424,38 @@ public final class DesktopHomeView extends ScrollView
     }
 
     private void render() {
-        RuntimeState install = runtimeSnapshot == null
-                ? RuntimeState.NOT_INSTALLED
-                : runtimeSnapshot.getState();
         boolean systemReady = isSystemReady();
-        boolean serviceReady = guestSsh.getKind() == GuestSshUiState.Kind.INSTALLED;
-        boolean showApps = LauncherModel.shouldShowApps(systemReady, serviceReady);
+        boolean sshInstalled = guestSsh.getKind() == GuestSshUiState.Kind.INSTALLED;
+        // The terminal needs all three core pieces: rootfs, the guest-SSH
+        // add-on, and the mandatory systemctl/Python service bridge.
+        boolean terminalReady = sshInstalled && serviceReady;
+        boolean showApps = LauncherModel.shouldShowApps(systemReady, terminalReady);
         boolean filtering = showApps && LauncherModel.isFiltering(query());
 
         List<LauncherEntry> entries = LauncherModel.entries(webApps, terminalApps);
         List<LauncherEntry> visible = LauncherModel.filter(entries, query(), this::labelOf);
 
-        // One installer surface while either component is missing. Hiding (and
-        // not binding) launcher apps prevents users and accessibility services
-        // from entering half-installed app flows.
-        boolean setupNeeded = !systemReady || !serviceReady;
+        // One installer surface while any core component is missing, and
+        // while a user-requested optional toolkit install is still running.
+        // Hiding (and not binding) launcher apps prevents users and
+        // accessibility services from entering half-installed app flows.
+        boolean setupNeeded = !systemReady || !terminalReady || optionalInstallActive;
         appsSearchRow.setVisibility(showApps ? VISIBLE : GONE);
         appsHeaderRow.setVisibility(showApps ? VISIBLE : GONE);
         setupRuntimeCard.setVisibility(setupNeeded && !filtering ? VISIBLE : GONE);
         appsNote.setVisibility(GONE);
         if (setupNeeded) {
-            InstallPhaseSnapshot phase = SetupPhasePolicy.phaseFor(runtimeSnapshot, addonPhase);
+            InstallPhaseSnapshot phase = SetupPhasePolicy.phaseFor(
+                    runtimeSnapshot, addonPhase, sshInstalled);
             SetupAction action = SetupPhasePolicy.actionFor(
                     runtimeSnapshot,
+                    sshInstalled,
+                    guestSsh.getKind() == GuestSshUiState.Kind.FAILED,
                     serviceReady,
-                    guestSsh.getKind() == GuestSshUiState.Kind.FAILED);
+                    serviceFailed);
             wizard.showPhase(phase, action);
         }
+        updateFooter(setupNeeded);
 
         renderStatus(LauncherStatus.of(runtimeSnapshot, guestSsh, session));
         titleView.setText(R.string.launcher_title);
@@ -355,6 +471,26 @@ public final class DesktopHomeView extends ScrollView
                 showApps && filtering && visible.isEmpty() ? VISIBLE : GONE);
         searchEmpty.setText(getContext().getString(
                 R.string.apps_search_no_results, query().trim()));
+    }
+
+    /**
+     * Shows or hides the pinned setup action. The footer follows the wizard's
+     * own action visibility, so a running install (action hidden) or a ready
+     * device never leaves an empty bar; while it is shown, the scroll content
+     * reserves room so the last line is not hidden behind it.
+     */
+    private void updateFooter(boolean setupVisible) {
+        boolean show = setupVisible && footerAction.getVisibility() == VISIBLE;
+        footer.setVisibility(show ? VISIBLE : GONE);
+        int extra = show
+                ? getResources().getDimensionPixelSize(R.dimen.button_height)
+                        + 3 * getResources().getDimensionPixelSize(R.dimen.content_padding)
+                : 0;
+        int wanted = contentBaseBottomPadding + extra;
+        if (content.getPaddingBottom() != wanted) {
+            content.setPadding(content.getPaddingLeft(), content.getPaddingTop(),
+                    content.getPaddingRight(), wanted);
+        }
     }
 
     /** The grid's app count: the {@code Add app} action is not an app. */

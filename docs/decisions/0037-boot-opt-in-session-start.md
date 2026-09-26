@@ -8,6 +8,13 @@ amended manifest guard). Unit evidence is in place; real-device verification
 of boot delivery, FGS promotion, `MY_PACKAGE_REPLACED`, and OEM behavior is
 open work recorded in `docs/test-plan.md`.
 
+Amended by ADR-0055 and restored by ADR-0057: the required
+`serviceBridgePresent` gate and its `SKIP_BRIDGE_NOT_SETTLED` outcome are
+part of boot start again. The bridge is a mandatory core component, so a
+trigger that finds it missing skips and lets the user-visible setup run
+instead of starting a session without its service manager. Only the two
+optional toolkits (USB/ADB, Termux commands) are non-gates.
+
 ## Context
 
 ADR-0013 drew the autostart boundary at "no background start": Linux exists
@@ -92,19 +99,13 @@ best-effort convenience, not an always-on daemon.
    - *sshAddonPresent* — `GuestSshDaemon.detect(activeRootfs,
      activeAddon(guest-ssh-openssh)) != null`, the same detection the
      launcher's "terminal component installed" state uses.
-   - *serviceBridgePresent* — `GuestServiceBridge.detect(
-     activeAddon(guest-service-bridge)) != null`, which re-verifies every
-     vendored file against its pinned digest.
 
-   The bridge gate is deliberately **stricter** than the in-app one: the
-   launcher also treats a *failed* bridge install as settled (SSH works
-   without it), but add-on install outcomes are never persisted
+   ADR-0057 restored the *serviceBridgePresent* gate: the bridge is a
+   mandatory core component, so a missing overlay means the session would
+   lack its service manager; boot skips and the user-visible setup owns the
+   repair. Add-on install outcomes are still never persisted
    (`AndroidGuestAddonInstaller.publish` reports to the listener only), so
-   at boot "absent" cannot be told apart from "failed". Starting anyway
-   would open a session that can never run the service manager — and the
-   idempotent boundary would then leave that live session alone. An absent
-   bridge is therefore `SKIP_BRIDGE_NOT_SETTLED`; the next app-visible
-   launch runs the normal pipeline.
+   "absent" and "failed" both skip, which is the honest answer either way.
 
 4. **START reuses the existing idempotent boundary.** On `START` the
    receiver calls `RuntimeHostService.ensureRunning(applicationContext)`,

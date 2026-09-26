@@ -41,7 +41,11 @@ public class GuestAwarenessReadmeWriterTest {
         assertTrue(text.contains("(docs/media.md)"));
         assertTrue(text.contains("(docs/battery-sensors-location.md)"));
         assertTrue(text.contains("(docs/messaging-telephony.md)"));
-        assertTrue(text.contains("(docs/termux-compat.md)"));
+        // Conditional on the optional Termux toolkit (ADR-0057): named, not
+        // linked, because a core-only install has no termux-compat.md.
+        assertTrue(text.contains("termux-compat.md"));
+        assertTrue(text.contains("optional toolkit"));
+        assertFalse(text.contains("(docs/termux-compat.md)"));
         assertTrue(text.split("\\n", -1).length < 34);
     }
 
@@ -111,6 +115,54 @@ public class GuestAwarenessReadmeWriterTest {
         String cliText = new String(Files.readAllBytes(cli), StandardCharsets.UTF_8);
         assertTrue(cliText.contains("App version: 0.2.0"));
         assertFalse(cliText.contains("stale cli text"));
+    }
+
+    @Test
+    public void ensureLeavesOptionalToolBundlesUnchosenOnFreshRootfs() throws Exception {
+        Path rootfs = temporary.newFolder("rootfs").toPath();
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+
+        // The shared termux_compat module is core: android-cli and the
+        // nusadesk-* clients import it even without the Termux command set.
+        assertTrue(Files.isRegularFile(rootfs.resolve(
+                GuestTermuxCompatWriter.GUEST_MODULE_RELATIVE_PATH)));
+
+        // Opt-in bundles stay absent: no USB/ADB files, no termux-*
+        // commands, no termux doc page, and no install markers appear.
+        assertFalse(Files.exists(
+                rootfs.resolve(GuestUsbCliWriter.GUEST_CLI_RELATIVE_PATH)));
+        assertFalse(Files.exists(
+                rootfs.resolve(GuestUsbDaemonWriter.GUEST_DAEMON_RELATIVE_PATH)));
+        assertFalse(Files.exists(
+                rootfs.resolve(GuestUsbShimWriter.WRAPPER_GUEST_PATH)));
+        assertFalse(Files.exists(
+                rootfs.resolve(GuestUsbShimWriter.SHIM_GUEST_PATH)));
+        assertFalse(Files.exists(
+                rootfs.resolve(GuestTermuxCompatWriter.GUEST_DOC_RELATIVE_PATH)));
+        assertFalse(Files.exists(rootfs.resolve(
+                GuestOptionalTools.GUEST_STATE_DIR_RELATIVE_PATH)));
+        for (String command : GuestTermuxCompatWriter.COMMANDS) {
+            assertFalse(command + " must stay opt-in",
+                    Files.exists(rootfs.resolve(
+                            GuestTermuxCompatWriter.guestRelativePath(command))));
+        }
+        assertFalse(GuestOptionalTools.isInstalled(rootfs,
+                GuestOptionalTools.Kind.USB_ADB));
+        assertFalse(GuestOptionalTools.isInstalled(rootfs,
+                GuestOptionalTools.Kind.TERMUX));
+    }
+
+    @Test
+    public void ensureSeedsTheUserOwnedAgentBundle() throws Exception {
+        Path rootfs = temporary.newFolder("rootfs").toPath();
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+
+        assertTrue(Files.isRegularFile(
+                rootfs.resolve(GuestAgentSeedWriter.GUEST_AGENTS_MD_RELATIVE_PATH)));
+        assertTrue(Files.isRegularFile(
+                rootfs.resolve(GuestAgentSeedWriter.SKILL_FILE_RELATIVE_PATH)));
+        assertTrue(Files.isRegularFile(
+                rootfs.resolve(GuestAgentSeedWriter.STATE_FILE_RELATIVE_PATH)));
     }
 
     @Test

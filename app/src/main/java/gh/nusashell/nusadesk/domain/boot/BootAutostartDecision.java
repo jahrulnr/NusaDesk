@@ -29,13 +29,6 @@ public enum BootAutostartDecision {
      * with no terminal component to serve, so the trigger does nothing.
      */
     SKIP_SSH_ADDON_MISSING,
-    /**
-     * The guest service-bridge overlay is absent at boot. The in-app gate
-     * treats a <em>failed</em> bridge install as settled (SSH still works),
-     * but add-on install outcomes are never persisted, so at boot "absent"
-     * cannot be distinguished from "failed" — and a session started without
-     * the bridge could never run the service manager, while the idempotent
-     * ensure-running boundary then leaves that live session alone.
-     */
+    /** The required guest service/Python overlay is absent; no usable session yet. */
     SKIP_BRIDGE_NOT_SETTLED
 }

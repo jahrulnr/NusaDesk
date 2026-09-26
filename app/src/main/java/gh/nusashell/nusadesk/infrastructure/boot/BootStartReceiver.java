@@ -45,9 +45,8 @@ import java.nio.file.Path;
  * the same boundary anyway.</p>
  *
  * <p>Gate probing is lazy: the opt-in defaults to OFF, and a stock install
- * must not pay for filesystem reads (including the bridge overlay's digest
- * verification) on every boot, so no disk work happens until the user has
- * opted in.</p>
+ * must not pay for filesystem reads (the SSH overlay's digest verification)
+ * on every boot, so no disk work happens until the user has opted in.</p>
  */
 public final class BootStartReceiver extends BroadcastReceiver {
 
@@ -72,7 +71,7 @@ public final class BootStartReceiver extends BroadcastReceiver {
         boolean payloadReady();
         /** The curated OpenSSH add-on overlay is usable on disk. */
         boolean sshAddonPresent();
-        /** The guest service-bridge overlay verifies on disk. */
+        /** Required service/Python overlay is usable on disk. */
         boolean serviceBridgePresent();
     }
 
@@ -174,15 +173,9 @@ public final class BootStartReceiver extends BroadcastReceiver {
             return GuestSshDaemon.detect(rootfs, overlay) != null;
         }
 
-        /**
-         * The settled-bridge truth a boot can rely on. Add-on install
-         * outcomes are never persisted, so "absent" cannot be told apart
-         * from "failed" here; only a verified overlay settles the gate.
-         */
         @Override
         public boolean serviceBridgePresent() {
-            Path overlay = ProotPaths.activeAddonPath(
-                    context.getFilesDir().toPath(),
+            Path overlay = ProotPaths.activeAddonPath(context.getFilesDir().toPath(),
                     CuratedRuntimeCatalog.guestServiceBridge().getAddonId());
             return GuestServiceBridge.detect(overlay) != null;
         }

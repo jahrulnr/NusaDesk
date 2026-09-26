@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bottom scrim behind the pinned setup action (ADR-0057 layout amendment).
+     The launcher backdrop fades in towards the bottom edge so the button stays
+     readable while the interlocking pattern remains visible above it. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:endColor="#F20F191B"
+        android:startColor="#000F191B"
+        android:type="linear" />
+</shape>

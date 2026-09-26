@@ -67,6 +67,7 @@ import gh.nusashell.nusadesk.infrastructure.boot.BootAutostartPreferences;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogCatalog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTail;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestOptionalTools;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshDaemon;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotPaths;
@@ -95,6 +96,7 @@ import gh.nusashell.nusadesk.presentation.desktop.DesktopApp;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopHomeView;
 import gh.nusashell.nusadesk.presentation.desktop.LauncherEntry;
 import gh.nusashell.nusadesk.presentation.logs.LogsScreenView;
+import gh.nusashell.nusadesk.presentation.system.ServicesExtraState;
 import gh.nusashell.nusadesk.presentation.system.SystemBackupPageView;
 import gh.nusashell.nusadesk.presentation.system.SystemScreenView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
@@ -260,6 +262,12 @@ public final class MainActivity extends Activity {
     private RuntimeSnapshot currentSnapshot;
     private RuntimeSnapshot addonSnapshot;
     private RuntimeSnapshot serviceAddonSnapshot;
+    private RuntimeSnapshot usbAddonSnapshot;
+    private RuntimeSnapshot termuxAddonSnapshot;
+    /** Which independent toolkits this setup request explicitly selected.
+     * Main-thread only; never persisted as blanket consent. */
+    private boolean usbRequested;
+    private boolean termuxRequested;
     private GuestSshUiState guestSshState = GuestSshUiState.missing();
     private DesktopDestination activeDestination = DesktopDestination.HOME;
     private String activeWebAppId;
@@ -324,6 +332,8 @@ public final class MainActivity extends Activity {
         loadPersistedState();
         restoreShellState(savedInstanceState);
         refreshGuestSshState();
+        refreshMandatoryService();
+        refreshOptionalTools();
         refreshUserApps();
         refreshWorkspace();
         refreshBattery();
@@ -373,7 +383,12 @@ public final class MainActivity extends Activity {
         ensureRuntimeRunning();
         // Returning from the all-files access or battery settings pages is a
         // foreground event: re-read both grants/states so the workspace and
-        // battery cards tell the truth.
+        // battery cards tell the truth. The toolkit/service rows refresh too:
+        // a background session start (boot / package replace) reconciles the
+        // guest rootfs and may have adopted a pre-split toolkit install while
+        // this Activity was stopped.
+        refreshMandatoryService();
+        refreshOptionalTools();
         refreshWorkspace();
         refreshBattery();
         refreshBoot();
@@ -408,39 +423,29 @@ public final class MainActivity extends Activity {
         if (guestSshState.getKind() != GuestSshUiState.Kind.INSTALLED) {
             return;
         }
-        if (!serviceBridgeSettled()) {
-            // The session would start without its service manager: wait for
-            // the service bridge to land (or to fail, which still lets the
-            // SSH-only session start) instead of opening a session that can
-            // never autostart the user's enabled services.
+        if (!isServiceBridgeActiveOnDisk()) {
+            // Python/systemctl are required for a complete guest session.
+            // The two user choices only govern USB/ADB and Termux commands.
             return;
         }
         RuntimeHostService.ensureRunning(this);
     }
 
     /**
-     * The single setup pipeline's auto-continue path (ADR-0017). On an explicit
-     * Activity foreground, if the rootfs is active but the add-on is still
-     * missing — not failed, not installing, not installed — the same action
-     * that starts a fresh install runs only the add-on. It is idempotent (the
-     * install lock guards against a retry loop) and never starts a fresh
-     * rootfs install: that still starts from the one button.
+     * On a foreground resume a missing SSH or mandatory service bridge
+     * continues the serialized setup once, unless the previous attempt failed
+     * (then the user sees an explicit Retry action). The optional toolkits
+     * are never auto-installed on foreground.
      */
     private void continuePendingSetup() {
         if (currentSnapshot == null || currentSnapshot.getState() != RuntimeState.READY) {
             return;
         }
-        if (guestSshState.getKind() == GuestSshUiState.Kind.MISSING) {
-            startInstall();
-            return;
-        }
-        // The service bridge follows the same rule: missing and not already
-        // failed continues the pipeline once; a FAILED snapshot waits for the
-        // user's explicit install action rather than retrying in a loop.
-        if (!isServiceBridgeActiveOnDisk()
-                && (serviceAddonSnapshot == null
-                        || serviceAddonSnapshot.getState() != RuntimeState.FAILED)) {
-            startInstall();
+        if (guestSshState.getKind() == GuestSshUiState.Kind.MISSING
+                || (!isServiceBridgeActiveOnDisk()
+                    && (serviceAddonSnapshot == null
+                        || serviceAddonSnapshot.getState() != RuntimeState.FAILED))) {
+            startInstall(false, false);
         }
     }
 
@@ -583,11 +588,10 @@ public final class MainActivity extends Activity {
     // ---- Wiring ----
 
     private void wireLauncher() {
-        desktopHome.setOnInstallListener(view -> startInstall());
+        desktopHome.setOnInstallListener(view -> startInstall(
+                desktopHome.isUsbAdbSelected(), desktopHome.isTermuxSelected()));
         desktopHome.setOnEntryOpenListener(this::openEntry);
         desktopHome.setOnEntryEditListener(this::openEntryEditor);
-        desktopHome.setStorageRequirement(
-                catalogEntry.getCompressedBytes() + catalogEntry.getUncompressedBytes());
         desktopHome.setOnUpdateOpenListener(view -> onBannerInstall());
         desktopHome.setOnUpdateDismissListener(view -> dismissUpdateBanner());
     }
@@ -598,6 +602,10 @@ public final class MainActivity extends Activity {
 
     private void wireSystemScreen() {
         systemScreen.setRuntimeProfile(catalogEntry.getAppId(), catalogEntry.getVersion());
+        systemScreen.setOnToolkitInstallListener(GuestOptionalTools.Kind.USB_ADB,
+                view -> startInstall(true, false));
+        systemScreen.setOnToolkitInstallListener(GuestOptionalTools.Kind.TERMUX,
+                view -> startInstall(false, true));
         systemScreen.setOnHowItWorksListener(view -> contractDialog.show());
         systemScreen.setOnWorkspaceActionListener(view -> onWorkspaceAction());
         systemScreen.setOnOpenAppSettingsListener(view -> openAppSettings());
@@ -2210,22 +2218,17 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * The single setup pipeline (ADR-0017). One serialized orchestration on the
-     * install executor: if the curated rootfs is not active on disk, install it;
-     * when it succeeds, immediately install the guest-SSH add-on on the same
-     * executor. If the rootfs is already active but the add-on is missing, the
-     * same action runs only the add-on — a valid active rootfs is never
-     * re-downloaded. No parallel installers, no duplicate tap.
-     *
-     * <p>The install lock ({@code installInProgress}) makes the action
-     * idempotent: a second tap or an auto-continue while a pipeline is running
-     * is a no-op. A rootfs failure throws before the add-on runs, so a failed
-     * rootfs never leaves the add-on half-installed.</p>
+     * One serialized install path: required rootfs, SSH and Python/systemctl
+     * overlay first, then only the explicitly selected optional toolkits.
+     * Missing optional toolkits never auto-install on foreground or boot.
      */
-    private void startInstall() {
+    private void startInstall(boolean includeUsb, boolean includeTermux) {
         if (!installInProgress.compareAndSet(false, true)) {
             return;
         }
+        usbRequested = includeUsb;
+        termuxRequested = includeTermux;
+        refreshOptionalTools();
         installExecutor.execute(() -> {
             try {
                 if (!isRootfsActiveOnDisk()) {
@@ -2240,12 +2243,67 @@ public final class MainActivity extends Activity {
                     addonInstaller.install(serviceProfile, catalogEntry.getAppId(),
                             snapshot -> mainHandler.post(() -> onServiceAddonSnapshot(snapshot)));
                 }
+                if (includeUsb) {
+                    installOptionalTool(GuestOptionalTools.Kind.USB_ADB);
+                }
+                if (includeTermux) {
+                    installOptionalTool(GuestOptionalTools.Kind.TERMUX);
+                }
             } catch (RuntimeInstallationException ignored) {
-                // The installer has already persisted and published FAILED with its reason.
+                // The runtime/add-on installer already published a typed FAILED snapshot.
             } finally {
-                mainHandler.post(() -> installInProgress.set(false));
+                mainHandler.post(() -> {
+                    installInProgress.set(false);
+                    usbRequested = false;
+                    termuxRequested = false;
+                    refreshMandatoryService();
+                    refreshOptionalTools();
+                    if (activityStarted) {
+                        ensureRuntimeRunning();
+                    }
+                });
             }
         });
+    }
+
+    /** A failed optional file write leaves the other selected toolkit installable. */
+    private void installOptionalTool(GuestOptionalTools.Kind kind) {
+        Path rootfs = activeRootfs();
+        if (GuestOptionalTools.isInstalled(rootfs, kind)) {
+            return;
+        }
+        String label = kind == GuestOptionalTools.Kind.USB_ADB
+                ? "USB / ADB" : "Termux commands";
+        publishOptionalSnapshot(kind, RuntimeState.DOWNLOADING,
+                "Installing " + label);
+        try {
+            GuestOptionalTools.install(rootfs, installedVersionName(), kind);
+            publishOptionalSnapshot(kind, RuntimeState.READY, label + " installed");
+        } catch (IOException | RuntimeException failure) {
+            if (GuestOptionalTools.isInstalled(rootfs, kind)) {
+                // The files demonstrably landed (only the marker write failed,
+                // or the failure happened after them): reporting FAILED here
+                // would contradict the row state, which reads disk truth.
+                publishOptionalSnapshot(kind, RuntimeState.READY,
+                        label + " installed");
+                return;
+            }
+            publishOptionalSnapshot(kind, RuntimeState.FAILED,
+                    label + ": " + (failure.getMessage() == null
+                            ? "could not install" : failure.getMessage()));
+        }
+    }
+
+    private void publishOptionalSnapshot(GuestOptionalTools.Kind kind,
+            RuntimeState state, String detail) {
+        RuntimeSnapshot snapshot = new RuntimeSnapshot(
+                kind == GuestOptionalTools.Kind.USB_ADB ? "guest-usb-adb" : "guest-termux",
+                state, detail, 0, System.currentTimeMillis());
+        mainHandler.post(() -> onOptionalToolSnapshot(kind, snapshot));
+    }
+
+    private Path activeRootfs() {
+        return ProotPaths.activeRootfsPath(getFilesDir().toPath(), catalogEntry.getAppId());
     }
 
     private void onInstallSnapshot(RuntimeSnapshot snapshot) {
@@ -2310,19 +2368,34 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Receives one guest service-bridge install snapshot from the single setup
-     * pipeline. It shares the installer's phase surface and failure toast with
-     * the SSH add-on but never feeds {@code guestSshState}: the SSH component
-     * is what the terminal needs, the bridge is additive.
+     * Receives one required service-bridge install snapshot from the setup
+     * pipeline; it renders on the shared phase surface and keeps the launcher
+     * locked until the overlay is really active.
      */
     private void onServiceAddonSnapshot(RuntimeSnapshot snapshot) {
         serviceAddonSnapshot = snapshot;
-        desktopHome.renderAddonPhase(InstallPhaseSnapshot.addon(snapshot));
+        desktopHome.renderAddonPhase(InstallPhaseSnapshot.serviceAddon(snapshot));
+        refreshMandatoryService();
         if (snapshot.getState() == RuntimeState.FAILED) {
             Toast.makeText(this, snapshot.getDetail(), Toast.LENGTH_LONG).show();
         }
         if (activityStarted) {
             ensureRuntimeRunning();
+        }
+    }
+
+    /** Receives one optional toolkit provisioning snapshot. */
+    private void onOptionalToolSnapshot(GuestOptionalTools.Kind kind, RuntimeSnapshot snapshot) {
+        if (kind == GuestOptionalTools.Kind.USB_ADB) {
+            usbAddonSnapshot = snapshot;
+            desktopHome.renderAddonPhase(InstallPhaseSnapshot.usbAdb(snapshot));
+        } else {
+            termuxAddonSnapshot = snapshot;
+            desktopHome.renderAddonPhase(InstallPhaseSnapshot.termux(snapshot));
+        }
+        refreshOptionalTools();
+        if (snapshot.getState() == RuntimeState.FAILED) {
+            Toast.makeText(this, snapshot.getDetail(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -2352,8 +2425,9 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Whether the guest service-bridge overlay is active on disk, derived from
-     * the same detection the workload uses so pipeline and session agree.
+     * Whether the required guest service-bridge overlay is active on disk,
+     * derived from the same detection the workload uses so pipeline and
+     * session agree.
      */
     private boolean isServiceBridgeActiveOnDisk() {
         Path filesDir = getFilesDir().toPath();
@@ -2362,17 +2436,31 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Whether the service bridge is settled for session start: either its
-     * overlay is already active on disk, or its last install attempt failed
-     * (in which case the session still starts — SSH works without it, and the
-     * missing {@code systemctl} is honest). An unsettled bridge (installing,
-     * or never attempted) holds the session start so the first session can
-     * run its service manager.
+     * Pushes the required service overlay truth to the launcher readiness gate
+     * and the System page. The overlay is required for a complete session, so
+     * its absence keeps setup visible instead of unlocking the launcher.
      */
-    private boolean serviceBridgeSettled() {
-        return isServiceBridgeActiveOnDisk()
-                || (serviceAddonSnapshot != null
-                        && serviceAddonSnapshot.getState() == RuntimeState.FAILED);
+    private void refreshMandatoryService() {
+        boolean installed = isServiceBridgeActiveOnDisk();
+        desktopHome.setRuntimeServiceReady(installed);
+        systemScreen.renderRequiredService(installed);
+    }
+
+    /** Pushes both optional toolkit states to setup and System surfaces. */
+    private void refreshOptionalTools() {
+        Path rootfs = activeRootfs();
+        boolean usbInstalled = GuestOptionalTools.isInstalled(
+                rootfs, GuestOptionalTools.Kind.USB_ADB);
+        boolean termuxInstalled = GuestOptionalTools.isInstalled(
+                rootfs, GuestOptionalTools.Kind.TERMUX);
+        boolean busy = installInProgress.get();
+        desktopHome.setOptionalToolsOffered(!usbInstalled, !termuxInstalled);
+        desktopHome.setOptionalInstallActive(
+                (usbRequested || termuxRequested) && busy);
+        systemScreen.renderToolkit(GuestOptionalTools.Kind.USB_ADB,
+                ServicesExtraState.of(usbAddonSnapshot, usbInstalled, busy));
+        systemScreen.renderToolkit(GuestOptionalTools.Kind.TERMUX,
+                ServicesExtraState.of(termuxAddonSnapshot, termuxInstalled, busy));
     }
 
     private RuntimeSnapshot baseSnapshot(RuntimeState state) {

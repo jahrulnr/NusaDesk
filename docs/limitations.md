@@ -226,7 +226,13 @@ Each usable guest session ensures a concise, writable `/root/README.md`. The
 Android app owns this file, includes the installed APK version, and atomically
 regenerates it on session start when the app version changes or the content is
 stale. Guest users can read and edit it, but edits to this product-owned file
-may be replaced by a later app update. Other files under `/root` are not touched.
+may be replaced by a later app update. Other files under `/root` are not
+touched, with one seeded exception: `/root/.agents/` is populated once for AI
+agents working in the guest — a user-editable `AGENTS.md` plus starter skills —
+tracked by a digest record at `/var/lib/nusadesk/agent-seed.state`. A seeded
+file is replaced by a newer shipped copy only while it is byte-identical to
+what was installed; an edited file is never overwritten and a deleted one is
+never recreated (ADR-0056).
 
 ### Guest `/etc/os-release` contributor metadata
 
@@ -241,6 +247,21 @@ rewritten, and tools reading that path directly will see the original Ubuntu
 file.
 
 ### Android capability bridge and automation surface
+
+The guest-side toolkits are provisioned per user choice (ADR-0057): the
+required service/Python overlay installs with the core pipeline, while
+**USB / ADB driver** (`nusadesk-usb`, `nusadesk-usbd`, the `adb` wrapper)
+and **Termux commands** (`termux-*` clients) are separate opt-ins selected
+at first setup or later from System → One-click install. A toolkit the user
+never chose has no guest files at all; the shared `termux_compat` module
+that `android-cli` and the `nusadesk-*` capability clients import is core
+and present regardless of the Termux choice.
+
+A chosen toolkit is a managed install: its files are refreshed on session
+start and adopted from a pre-split install, and there is no uninstall path
+yet — deleting one generated file (while its marker or another marked file
+remains) lets the next session restore it. Removing the whole toolkit is
+future work, not a configuration surface.
 
 The first feasible slice is implemented (ADR-0030, ADR-0031): the existing
 `GuestSshdWorkload` starts a session-scoped host bridge on an ephemeral
@@ -267,8 +288,9 @@ typed getters plus `rejectUnknown` make a misspelled key fail closed as
   action that opens each missing grant; `permission.request` runs the
   platform runtime dialog or the matching Settings screen through the
   foreground host under a bounded 120 s wait.
-- The guest carries the full Termux:API client parity layer (ADR-0049): all
-  57 upstream `termux-*` commands are generated into `/usr/local/bin`, thin
+- When the optional Termux toolkit is installed (ADR-0057), the guest carries
+  the full Termux:API client parity layer (ADR-0049): its 57 upstream
+  `termux-*` commands are generated into `/usr/local/bin`, thin
   scripts over a shared `termux_compat` runtime that translate Termux flags
   into bridge calls and print the Termux JSON shape with upstream exit
   codes. The Termux:API app cannot be used by this product (it is
@@ -457,8 +479,9 @@ support.
 
 ### Termux:API parity surface is bounded by the platform and the hardware (ADR-0049)
 
-All 57 upstream `termux-*` client commands are installed in the guest and
-answered through the bridge; the limits below are contract, not polish:
+When the Termux toolkit is enabled (ADR-0057), all 57 upstream `termux-*`
+client commands are installed in the guest and answered through the bridge;
+the limits below are contract, not polish:
 
 - **Wifi cannot be toggled.** Android 10/API 29+ reserves the wifi enable
   switch to the system: `termux-wifi-enable` answers
@@ -506,9 +529,10 @@ freshest-provider pick).
 
 ### USB pass-through delivers a descriptor, not a device bus (ADR-0041)
 
-The guest has no `/dev/bus/usb` and never gets one through this product:
-Android does not expose usbfs nodes to apps, so `usb.open` can only deliver
-an already-consented device descriptor. What that means in practice:
+The limits below apply when the optional USB / ADB toolkit is installed
+(ADR-0057). The guest has no `/dev/bus/usb` and never gets one through this
+product: Android does not expose usbfs nodes to apps, so `usb.open` can only
+deliver an already-consented device descriptor. What that means in practice:
 
 - Every open shows the platform's own per-device consent dialog, so a
   headless or background trigger still needs the user to answer it; a denied
@@ -669,11 +693,10 @@ ensure-running boundary. What this still deliberately does **not** do:
   guarantee delivery or survival.
 - A boot trigger that finds an incomplete install does nothing: the receiver
   never installs or downloads — it logs a typed skip, and the next
-  app-visible launch runs the normal setup pipeline. A service bridge absent
-  at boot (never attempted, or failed — add-on install outcomes are not
-  persisted) also skips, because a session started without it could never
-  run the service manager and the idempotent boundary would then leave that
-  live session alone.
+  app-visible launch runs the normal setup pipeline. A missing required
+  service/Python overlay also skips (ADR-0057): a session would lack its
+  service manager, so boot waits for the user-visible setup instead of
+  starting a degraded session.
 - No in-app start/stop control. The ongoing notification and its `Stop` action
   remain because Android requires foreground work to be user-visible and
   stoppable. Tapping `Stop` while the app is already in the foreground leaves

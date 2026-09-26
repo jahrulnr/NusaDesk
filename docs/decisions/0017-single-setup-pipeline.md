@@ -11,6 +11,12 @@ the new pure presentation types `presentation/widget/InstallPhaseSnapshot`,
 `res/values/strings.xml`, and their tests. Presentation-only; no runtime,
 infrastructure, application, domain, manifest, or Gradle changes.
 
+Amended by ADR-0055, then by ADR-0057: the required core is rootfs +
+guest-SSH + the service/Python overlay, and auto-continue covers all three.
+The two optional toolkits (USB/ADB driver, Termux commands) are independent
+pipeline tails that run solely on explicit user selection from the setup
+card or their own action on the System page.
+
 ## Context
 
 The curated Ubuntu rootfs and the guest-SSH add-on were two separate setup

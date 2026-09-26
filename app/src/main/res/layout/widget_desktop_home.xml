@@ -163,18 +163,17 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
-        <!-- Setup: the single installer surface. Visible while either the
-             curated rootfs or the guest-SSH add-on is missing; gone once both
-             are active. One wizard, one thumb-reachable action — there is no
-             second "Next: add terminal component" card. -->
+        <!-- Setup: the single installer surface. Visible while any core
+             component is missing; gone once all are active. It sits directly
+             on the launcher backdrop — no card — so the patterned background
+             stays visible, and the wizard's action is pinned to the screen
+             bottom by DesktopHomeView. -->
         <LinearLayout
             android:id="@+id/setup_runtime_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/section_gap"
-            android:background="@drawable/card_surface"
             android:orientation="vertical"
-            android:padding="20dp"
             android:visibility="gone">
 
             <TextView

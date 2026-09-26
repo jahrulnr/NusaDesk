@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- System > One-click install page: the curated templates list (ADR-0043).
-     Every entry is honest about what exists today: built-in components state
-     "Active in every session" instead of offering a fake Install button, and
-     the trailing card explains that installable add-ons arrive with the
-     provisioning slice. Inflated into SystemInstallPageView. -->
+<!-- System > One-click install page: the curated components list
+     (ADR-0043, amended by ADR-0057). The first card is the core service
+     bridge (systemctl + Python): mandatory, installed by setup itself, so it
+     reports state only and carries no Install action. The USB/ADB driver and
+     Termux command compatibility cards are independent opt-ins, each with
+     its own real Install action and truthful state. The trailing card
+     explains there is no arbitrary package install. Inflated into
+     SystemInstallPageView. -->
 <merge xmlns:android="http://schemas.android.com/apk/res/android">
 
     <LinearLayout
@@ -24,6 +27,59 @@
             android:text="@string/system_install_body"
             android:textColor="@color/ink_secondary"
             android:textSize="13sp" />
+
+        <!-- The mandatory service bridge (core): setup installs it, so this
+             card reports its state only — never an Install action. The
+             optional toolkits below run on top of it. -->
+        <LinearLayout
+            android:id="@+id/system_install_services_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/card_surface"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:baselineAligned="false"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/system_install_services_title"
+                    android:textColor="@color/ink"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/system_install_services_state"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:paddingStart="8dp"
+                    android:paddingTop="5dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="5dp"
+                    android:text="@string/system_install_state_not_installed"
+                    android:textColor="@color/ink_secondary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/system_install_services_desc"
+                android:textColor="@color/ink_secondary"
+                android:textSize="12sp" />
+
+        </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -58,8 +114,8 @@
                     android:paddingTop="5dp"
                     android:paddingEnd="8dp"
                     android:paddingBottom="5dp"
-                    android:text="@string/system_install_state_builtin"
-                    android:textColor="@color/success"
+                    android:text="@string/system_install_state_not_installed"
+                    android:textColor="@color/ink_secondary"
                     android:textSize="11sp"
                     android:textStyle="bold" />
             </LinearLayout>
@@ -71,6 +127,30 @@
                 android:text="@string/system_install_usb_desc"
                 android:textColor="@color/ink_secondary"
                 android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/system_install_usb_detail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/ink_muted"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/system_install_usb_action"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/touch_target"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/button_secondary"
+                android:fontFamily="sans"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/system_install_action_install"
+                android:textAllCaps="false"
+                android:textColor="@color/primary_dark"
+                android:textSize="13sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <LinearLayout
@@ -106,8 +186,8 @@
                     android:paddingTop="5dp"
                     android:paddingEnd="8dp"
                     android:paddingBottom="5dp"
-                    android:text="@string/system_install_state_builtin"
-                    android:textColor="@color/success"
+                    android:text="@string/system_install_state_not_installed"
+                    android:textColor="@color/ink_secondary"
                     android:textSize="11sp"
                     android:textStyle="bold" />
             </LinearLayout>
@@ -119,6 +199,30 @@
                 android:text="@string/system_install_termux_desc"
                 android:textColor="@color/ink_secondary"
                 android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/system_install_termux_detail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/ink_muted"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/system_install_termux_action"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/touch_target"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/button_secondary"
+                android:fontFamily="sans"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/system_install_action_install"
+                android:textAllCaps="false"
+                android:textColor="@color/primary_dark"
+                android:textSize="13sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <LinearLayout

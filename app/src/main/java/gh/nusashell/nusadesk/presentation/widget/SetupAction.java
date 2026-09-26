@@ -15,6 +15,6 @@ public enum SetupAction {
     RETRY,
     /** A component is installing or auto-continuing; the action is disabled. */
     INSTALLING,
-    /** Both components are active; the setup surface is hidden. */
+    /** Every required component is active (rootfs + SSH + service overlay). */
     HIDDEN
 }

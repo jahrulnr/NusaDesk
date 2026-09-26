@@ -13,6 +13,7 @@ import gh.nusashell.nusadesk.application.backup.BackupResult;
 import gh.nusashell.nusadesk.domain.backup.LastBackupRecord;
 import gh.nusashell.nusadesk.domain.backup.LastBackupRun;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestOptionalTools;
 import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
 import gh.nusashell.nusadesk.presentation.GuestSshStatusAware;
@@ -186,6 +187,33 @@ public final class SystemScreenView extends FrameLayout
     /** Wires the boot card's single action on the Settings page. */
     public void setOnBootActionListener(OnClickListener listener) {
         settingsPage.setOnBootActionListener(listener);
+    }
+
+    /**
+     * Wires one optional toolkit's Install / Try again action (ADR-0057):
+     * {@code kind} selects the USB/ADB or the Termux row, and a tap only
+     * ever installs that toolkit.
+     */
+    public void setOnToolkitInstallListener(
+            GuestOptionalTools.Kind kind, OnClickListener listener) {
+        installPage.setOnToolkitInstallListener(kind, listener);
+    }
+
+    /**
+     * Renders the mandatory service bridge's presence on the One-click
+     * install page — a core component installed by setup itself, so the row
+     * reports state and offers no action.
+     */
+    public void renderRequiredService(boolean installed) {
+        installPage.renderRequiredService(installed);
+    }
+
+    /**
+     * Renders one optional toolkit's row on the One-click install page from
+     * its own derived state — never inferred from the service bridge's.
+     */
+    public void renderToolkit(GuestOptionalTools.Kind kind, ServicesExtraState state) {
+        installPage.renderToolkit(kind, state);
     }
 
     /** Wires the backup page's export/import actions on the Backup page. */

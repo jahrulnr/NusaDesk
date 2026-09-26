@@ -14,8 +14,8 @@ import java.nio.file.Path;
 
 /**
  * Focused tests for the generated USB driver daemon ({@code nusadesk-usbd}):
- * the locked shim protocol it serves and its installation through the shared
- * guest-file ensure path.
+ * the locked shim protocol it serves and its installation through the
+ * optional-tool install path.
  */
 public class GuestUsbDaemonWriterTest {
 
@@ -23,10 +23,11 @@ public class GuestUsbDaemonWriterTest {
     public final TemporaryFolder temporary = new TemporaryFolder();
 
     @Test
-    public void installsDaemonThroughSharedEnsurePath() throws Exception {
+    public void installsDaemonThroughOptionalInstall() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestOptionalTools.install(rootfs, "0.1.0",
+                        GuestOptionalTools.Kind.USB_ADB));
 
         Path daemon = rootfs.resolve(GuestUsbDaemonWriter.GUEST_DAEMON_RELATIVE_PATH);
         assertTrue("daemon must exist", Files.isRegularFile(daemon));
@@ -38,10 +39,11 @@ public class GuestUsbDaemonWriterTest {
         assertTrue(content.contains("App version: 0.1.0"));
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestOptionalTools.install(rootfs, "0.1.0",
+                        GuestOptionalTools.Kind.USB_ADB));
         Files.write(daemon, "stale".getBytes(StandardCharsets.UTF_8));
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.2.0"));
         assertTrue(new String(Files.readAllBytes(daemon), StandardCharsets.UTF_8)
                 .contains("App version: 0.2.0"));
     }

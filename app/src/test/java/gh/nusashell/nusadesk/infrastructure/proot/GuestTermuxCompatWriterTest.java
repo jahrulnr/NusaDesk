@@ -330,15 +330,29 @@ public class GuestTermuxCompatWriterTest {
     }
 
     @Test
-    public void legacyAwarenessEnsureStillInstallsScriptsAndDoc() throws Exception {
-        // Until the awareness writer delegates to GuestTermuxCompatWriter.ensure,
-        // its own ensureTermuxCompat path keeps installing the cataloged
-        // scripts and the doc page through the same canonical content.
+    public void awarenessEnsureKeepsCommandsOptInButModuleCore() throws Exception {
+        // The shared module is core — android-cli and the nusadesk-* clients
+        // import it — but the termux-* command set and its doc install only
+        // through the optional TERMUX bundle.
         Path rootfs = temporary.newFolder("rootfs").toPath();
         GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.1");
 
+        assertTrue(Files.isRegularFile(
+                rootfs.resolve(GuestTermuxCompatWriter.GUEST_MODULE_RELATIVE_PATH)));
         for (String command : GuestTermuxCompatWriter.COMMANDS) {
-            Path script = rootfs.resolve(GuestTermuxCompatWriter.guestRelativePath(command));
+            assertFalse(command + " must stay opt-in",
+                    Files.exists(rootfs.resolve(
+                            GuestTermuxCompatWriter.guestRelativePath(command))));
+        }
+        assertFalse(Files.exists(
+                rootfs.resolve(GuestTermuxCompatWriter.GUEST_DOC_RELATIVE_PATH)));
+
+        assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
+                GuestOptionalTools.install(rootfs, "0.2.1",
+                        GuestOptionalTools.Kind.TERMUX));
+        for (String command : GuestTermuxCompatWriter.COMMANDS) {
+            Path script = rootfs.resolve(
+                    GuestTermuxCompatWriter.guestRelativePath(command));
             assertTrue(command + " must be installed", Files.isRegularFile(script));
             assertTrue(command + " must be executable", Files.isExecutable(script));
         }

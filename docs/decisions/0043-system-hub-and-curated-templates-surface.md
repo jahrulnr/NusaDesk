@@ -8,6 +8,12 @@ its first *installable* entry (the USB driver's prebuilt artifacts) lands
 with the packaging slice, and the packaging rules are restated below so the
 two cannot drift apart.
 
+Amended by ADR-0055, then by ADR-0057: the page carries the required
+service/Python overlay as a core status line plus two independent opt-in
+actions — the USB / ADB driver and the Termux commands — each installable
+on its own and reported from its own guest state. The earlier wording that
+those toolkits are "built into every session" is superseded.
+
 ## Context
 
 The System screen had grown into one long scroll mixing runtime state,

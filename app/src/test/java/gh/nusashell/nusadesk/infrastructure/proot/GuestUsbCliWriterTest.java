@@ -19,9 +19,9 @@ import static org.junit.Assume.assumeTrue;
 /**
  * Focused tests for the generated {@code nusadesk-usb} CLI: the locked
  * {@code usb.list} / {@code usb.open} protocol markers, executable
- * installation through the shared ensure path, and a live round-trip over
- * a fake loopback bridge plus a fake abstract-socket {@code SCM_RIGHTS}
- * sender (skipped when python3 is not on PATH).
+ * installation through the optional-tool install path, and a live
+ * round-trip over a fake loopback bridge plus a fake abstract-socket
+ * {@code SCM_RIGHTS} sender (skipped when python3 is not on PATH).
  */
 public class GuestUsbCliWriterTest {
 
@@ -29,10 +29,11 @@ public class GuestUsbCliWriterTest {
     public final TemporaryFolder temporary = new TemporaryFolder();
 
     @Test
-    public void installsExecutableCliThroughSharedEnsurePath() throws Exception {
+    public void installsExecutableCliThroughOptionalInstall() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestOptionalTools.install(rootfs, "0.1.0",
+                        GuestOptionalTools.Kind.USB_ADB));
 
         Path cli = rootfs.resolve(GuestUsbCliWriter.GUEST_CLI_RELATIVE_PATH);
         assertTrue("CLI must exist", Files.isRegularFile(cli));
@@ -45,11 +46,12 @@ public class GuestUsbCliWriterTest {
 
         // Idempotent like the rest of the bundle.
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestOptionalTools.install(rootfs, "0.1.0",
+                        GuestOptionalTools.Kind.USB_ADB));
         // A stale copy is replaced on version change.
         Files.write(cli, "stale".getBytes(StandardCharsets.UTF_8));
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.2.0"));
         assertTrue(new String(Files.readAllBytes(cli), StandardCharsets.UTF_8)
                 .contains("App version: 0.2.0"));
     }
@@ -112,7 +114,8 @@ public class GuestUsbCliWriterTest {
         assumeTrue("python3 must be available for the live USB CLI round-trip",
                 interpreterAvailable());
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+        GuestOptionalTools.install(rootfs, "0.1.0",
+                GuestOptionalTools.Kind.USB_ADB);
         Path cli = rootfs.resolve(GuestUsbCliWriter.GUEST_CLI_RELATIVE_PATH);
         Path env = temporary.newFolder("env").toPath().resolve("android-bridge.env");
         Files.write(env, "placeholder".getBytes(StandardCharsets.UTF_8));

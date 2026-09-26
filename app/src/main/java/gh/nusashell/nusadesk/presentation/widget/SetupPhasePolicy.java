@@ -9,12 +9,9 @@ import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
  * install phase the unified surface should display and the one action it
  * should offer.
  *
- * <p>The rule is the product contract: the launcher unlocks only when both the
- * curated rootfs and the guest-SSH add-on are active, so the setup surface
- * stays visible while either is missing, never fakes a base rootfs READY for
- * launcher unlock, and never offers a second "Next: add terminal component"
- * action. Retry after an add-on failure runs only the add-on because a valid
- * active rootfs is never re-downloaded.</p>
+ * <p>The launcher unlocks only after the rootfs, guest SSH and required
+ * service/Python overlay are active. USB/ADB and Termux commands are
+ * independent options and do not affect core readiness.</p>
  *
  * <p>Pure Java with no Android imports so the combined policy is unit-tested
  * in plain JUnit.</p>
@@ -65,6 +62,47 @@ public final class SetupPhasePolicy {
             return SetupAction.HIDDEN;
         }
         if (rootfsState == RuntimeState.FAILED || addonFailed) {
+            return SetupAction.RETRY;
+        }
+        if (rootfsState == RuntimeState.NOT_INSTALLED) {
+            return SetupAction.START;
+        }
+        return SetupAction.INSTALLING;
+    }
+
+    /**
+     * Like {@link #phaseFor(RuntimeSnapshot, InstallPhaseSnapshot)}, but
+     * names the required service overlay when SSH is already available and
+     * its own first snapshot has not arrived yet.
+     */
+    public static InstallPhaseSnapshot phaseFor(
+            RuntimeSnapshot rootfs, InstallPhaseSnapshot addon, boolean sshInstalled) {
+        RuntimeState rootfsState = rootfs == null
+                ? RuntimeState.NOT_INSTALLED : rootfs.getState();
+        if (rootfsState != RuntimeState.READY) {
+            return phaseFor(rootfs, addon);
+        }
+        if (addon != null) {
+            return addon;
+        }
+        return sshInstalled
+                ? InstallPhaseSnapshot.serviceAddon(notInstalled())
+                : InstallPhaseSnapshot.addon(notInstalled());
+    }
+
+    /**
+     * The action for all mandatory installation components. Missing optional
+     * USB/ADB and Termux tooling never blocks the launcher.
+     */
+    public static SetupAction actionFor(RuntimeSnapshot rootfs,
+            boolean sshInstalled, boolean sshFailed,
+            boolean serviceInstalled, boolean serviceFailed) {
+        RuntimeState rootfsState = rootfs == null
+                ? RuntimeState.NOT_INSTALLED : rootfs.getState();
+        if (rootfsState == RuntimeState.READY && sshInstalled && serviceInstalled) {
+            return SetupAction.HIDDEN;
+        }
+        if (rootfsState == RuntimeState.FAILED || sshFailed || serviceFailed) {
             return SetupAction.RETRY;
         }
         if (rootfsState == RuntimeState.NOT_INSTALLED) {

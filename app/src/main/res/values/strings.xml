@@ -247,9 +247,16 @@
     <string name="system_install_usb_desc">The Linux adb sees USB devices attached to this device.</string>
     <string name="system_install_termux_title">Termux command compatibility</string>
     <string name="system_install_termux_desc">termux-* commands run inside the Linux session.</string>
-    <string name="system_install_state_builtin">Active in every session</string>
+    <string name="system_install_services_title">Core services: systemctl &amp; Python</string>
+    <string name="system_install_services_desc">Required foundation, installed with Linux setup — the service manager and Python runtime the tools below run on. It installs and retries with setup, so there is no separate Install action here.</string>
+    <string name="system_install_state_installed">Installed</string>
+    <string name="system_install_state_installing">Installing…</string>
+    <string name="system_install_state_failed">Install failed</string>
+    <string name="system_install_state_not_installed">Not installed</string>
+    <string name="system_install_action_install">Install</string>
+    <string name="system_install_action_retry">Try again</string>
     <string name="system_install_more_title">Installable add-ons</string>
-    <string name="system_install_more_body">Installable add-ons arrive with the provisioning slice. An entry only gains a real Install action once a curated template exists — there is no arbitrary package install.</string>
+    <string name="system_install_more_body">Only curated extras appear here — there is no arbitrary package install. Anything new joins this list with its own Install action once a pinned catalog entry exists.</string>
     <string name="system_about_title">About NusaDesk</string>
     <string name="system_github_title">GitHub page</string>
     <string name="system_github_desc">Source code, releases, and issue tracker.</string>
@@ -411,30 +418,11 @@
     <string name="system_backup_help_body">Backups are plain .tar.gz files and are not encrypted — keep yours somewhere private. A backup never contains the shared workspace folder (/root/nusadesk) or the guest\'s /proc, /sys, /dev, /run and /tmp. Restoring home or folders replaces each chosen folder wholesale instead of merging file by file. For a fully consistent backup, stop the Linux session first.</string>
 
     <!-- Installer wizard -->
-    <string name="wizard_welcome_title">Set up your Linux desktop</string>
     <string name="wizard_welcome_body">A pinned Ubuntu Base 24.04.5 ARM64 system is downloaded over HTTPS, verified against a catalog digest, and stored privately on this device. Nothing is executed during setup.</string>
-    <string name="wizard_requirement_storage">About %1$s of app storage</string>
-    <string name="wizard_requirement_storage_generic">Enough app-private storage</string>
-    <string name="wizard_requirement_abi">An arm64 device</string>
-    <string name="wizard_requirement_network">An internet connection</string>
-    <string name="wizard_fact_private_title">Private by default</string>
-    <string name="wizard_fact_private_body">Linux files stay inside this app.</string>
-    <string name="wizard_fact_verified_title">Verified before run</string>
-    <string name="wizard_fact_verified_body">Every download is checked before activation.</string>
-    <string name="wizard_fact_background_title">Ready for the background</string>
-    <string name="wizard_fact_background_body">Linux keeps running while you use your apps.</string>
-    <string name="wizard_fact_number_one">01</string>
-    <string name="wizard_fact_number_two">02</string>
-    <string name="wizard_fact_number_three">03</string>
-    <string name="wizard_download_title">Downloading Linux</string>
-    <string name="wizard_verify_title">Verifying the download</string>
-    <string name="wizard_extract_title">Preparing private files</string>
-    <string name="wizard_addon_pending_title">Adding terminal component</string>
-    <string name="wizard_addon_download_title">Downloading the terminal component</string>
-    <string name="wizard_addon_verify_title">Verifying the terminal component</string>
-    <string name="wizard_addon_extract_title">Preparing the terminal component</string>
-    <string name="wizard_ready_title">Linux is ready</string>
-    <string name="wizard_failed_title">Setup needs attention</string>
+    <string name="wizard_extras_title">OPTIONAL TOOLS</string>
+    <string name="wizard_extras_hint">Pick what you need now; you can install either one later from System → One-click install.</string>
+    <string name="wizard_extra_usb_label">USB / ADB driver</string>
+    <string name="wizard_extra_termux_label">Termux command compatibility</string>
     <string name="wizard_progress_desc">Setup progress: %1$d%%</string>
     <string name="wizard_indeterminate_desc">Working…</string>
 
