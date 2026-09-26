@@ -751,28 +751,38 @@ remains the fallback. The limitations are deliberate:
 ### Terminal tabs and terminal-command apps (ADR-0054)
 
 The terminal is a set of host-owned sessions (ADR-0033 extended): an initial
-shell tab plus tabs opened from the surface's options menu or from a launcher
-terminal-command app. Every tab, including the initial shell, can be closed. A
-clean guest `exit` closes its tab; if all tabs close, Linux keeps running and
-the surface shows an empty-terminal prompt while ⋮ still offers `New`.
+shell tab plus tabs opened from the terminal's own options menu. Every tab,
+including the initial shell, can be closed. A clean guest `exit` closes its
+tab; if all tabs close, Linux keeps running and the surface shows an
+empty-terminal prompt while ⋮ still offers `New`.
+
+A launcher terminal-command app is a second kind of terminal surface, not a tab
+of the built-in terminal (ADR-0054, isolation amendment): it opens in a window
+of its own titled after the app, owns exactly its session, and its options menu
+is a single `Close`. The built-in terminal lists its shell tabs only, so one app
+can never appear inside another surface's menu.
+
 The bounds are deliberate:
 
 - **Five tabs at a time.** Every tab is a real `WebView` running xterm, so the
-  cap protects memory on a phone; at the cap the `New` action is hidden and an
-  open attempt answers a typed `TAB_LIMIT` reason. The top-level ⋮ list is just
-  `New` and numbered tabs; tapping one opens its `Open` / `Close` choices.
+  cap protects memory on a phone; it counts every host session, shell or command
+  app, and at the cap the terminal's `New` action is hidden and an open attempt
+  answers a typed `TAB_LIMIT` reason. The terminal's ⋮ list is just `New` and
+  its shell tabs, numbered 1, 2, …; tapping one opens its `Open` / `Close`
+  choices.
 - **No scrollback restore.** A tab keeps its own scrollback while it is alive,
   but Activity recreation, process death, and tab switching by close/reopen
   start from an empty screen — the same limitation ADR-0033 documented. Guest
   `tmux`/`screen` remains the answer for durable scrollback.
-- **One live tab per command app.** Opening a command app twice selects the tab
-  it already has instead of starting a second copy; a clean command exit closes
-  that tab automatically, or close it manually to start fresh.
-- **A command app is a foreground command, not a service.** A clean command
-  exit closes its terminal tab automatically. A transport drop is different:
-  that tab stays open with an explicit reconnect action, which re-runs the
-  command on a fresh PTY; nothing restarts it automatically, and nothing runs
-  it at boot or in the background on its own.
+- **One live session per command app.** Opening a command app again returns to
+  its own window, whose live session is selected instead of duplicated; a clean
+  exit closes the session and the window shows its idle state, and `Close` in
+  its menu ends it manually.
+- **A command app is a foreground command, not a service.** A clean exit closes
+  its session automatically. A transport drop is different: its window stays
+  open with an explicit reconnect action, which re-runs the command on a fresh
+  PTY; nothing restarts it automatically, and nothing runs it at boot or in the
+  background on its own.
 - **The notification reports the selected tab.** With several tabs open, the
   terminal line and the Reconnect action describe the tab the surface is on, not
   every tab at once.
@@ -787,9 +797,10 @@ The bounds are deliberate:
 - **App-private registration.** Terminal-command apps live in the app's own
   private preferences, like web apps: they are not part of the guest backup
   (ADR-0044), are not visible to Linux, and are removed with the app's data.
-- **Deleting an app does not close its live tab.** The tab keeps running until
-  it is closed and remains labelled `Terminal N`; the deleted app definition no
-  longer appears in the launcher.
+- **Deleting an app closes its session.** The app's window and its live session
+  end with the definition: an isolated surface exposes exactly one app, so a
+  session it could no longer reach would be unclosable. Removing the definition
+  never deletes anything inside Linux.
 
 ### Native-code distribution
 

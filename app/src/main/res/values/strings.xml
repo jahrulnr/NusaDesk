@@ -104,6 +104,12 @@
     <string name="terminal_menu_close">Close</string>
     <string name="terminal_no_tabs_title">No open terminals</string>
     <string name="terminal_no_tabs_body">Open a new terminal from the options menu.</string>
+    <!-- A terminal-command app's own surface: its tab is the whole window, so
+         the idle state points back at its launcher tile instead of the
+         terminal's New action (ADR-0054, isolation amendment). -->
+    <string name="terminal_app_idle_title">Command not running</string>
+    <string name="terminal_app_idle_body">Open it again from All apps to start a new session.</string>
+    <string name="terminal_app_delete_confirm_body">“%1$s” is removed from the launcher and its terminal session is closed.</string>
     <!-- The number here is the tab cap, a build constant, so the noun is
          always plural and a plural resource would resolve to this same
          string. PluralsCandidate is the heuristic this deliberately
@@ -196,7 +202,7 @@
     <string name="app_form_type_label">Type</string>
     <string name="app_form_type_web">Web app</string>
     <string name="app_form_type_command">Terminal command</string>
-    <string name="terminal_app_tile_open_desc">%1$s. Double tap to open it in the terminal, long press to edit.</string>
+    <string name="terminal_app_tile_open_desc">%1$s. Double tap to open it in its own terminal, long press to edit.</string>
     <string name="terminal_app_tile_locked_desc">%1$s. Finish Linux setup to open it.</string>
     <string name="terminal_form_body">Name the app and give the command it runs inside Linux. Opening the app starts that command in its own terminal.</string>
     <string name="terminal_field_command">Command</string>

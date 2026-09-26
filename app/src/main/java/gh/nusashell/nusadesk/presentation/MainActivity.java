@@ -98,6 +98,7 @@ import gh.nusashell.nusadesk.presentation.logs.LogsScreenView;
 import gh.nusashell.nusadesk.presentation.system.SystemBackupPageView;
 import gh.nusashell.nusadesk.presentation.system.SystemScreenView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
+import gh.nusashell.nusadesk.presentation.terminal.TerminalSurfaceScope;
 import gh.nusashell.nusadesk.presentation.update.UpdateInstallDialog;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppTabStack;
@@ -176,6 +177,14 @@ public final class MainActivity extends Activity {
     private final Map<DesktopDestination, View> fixedSurfaces =
             new EnumMap<>(DesktopDestination.class);
     private final Map<String, WebAppSurfaceView> webAppSurfaces = new LinkedHashMap<>();
+
+    /**
+     * One retained terminal surface per launcher terminal-command app
+     * (ADR-0054, isolation amendment). The desktop isolates apps: a command
+     * app's session opens in a window of its own instead of a tab inside the
+     * built-in terminal, so the terminal can never present another app.
+     */
+    private final Map<String, TerminalAppView> terminalAppSurfaces = new LinkedHashMap<>();
     /** Decoded favicons by web-app id. In memory only; never written anywhere. */
     private final Map<String, Bitmap> favicons = new HashMap<>();
     /** The exact app each favicon request belongs to, so a stale result is dropped. */
@@ -254,6 +263,9 @@ public final class MainActivity extends Activity {
     private GuestSshUiState guestSshState = GuestSshUiState.missing();
     private DesktopDestination activeDestination = DesktopDestination.HOME;
     private String activeWebAppId;
+
+    /** Active terminal-command app surface, or {@code null} for any other. */
+    private String activeTerminalAppId;
     private boolean activityStarted;
 
     @Override
@@ -690,6 +702,7 @@ public final class MainActivity extends Activity {
     private void showShell() {
         activeDestination = DesktopDestination.HOME;
         activeWebAppId = null;
+        activeTerminalAppId = null;
         desktopHome.setVisibility(View.VISIBLE);
         appSurfaceHost.setVisibility(View.GONE);
         requestMissingFavicons();
@@ -700,6 +713,7 @@ public final class MainActivity extends Activity {
         dismissLauncherInput();
         activeDestination = destination;
         activeWebAppId = null;
+        activeTerminalAppId = null;
         desktopHome.setVisibility(View.GONE);
         appSurfaceHost.setVisibility(View.VISIBLE);
         View surface = fixedSurfaceFor(destination);
@@ -709,12 +723,24 @@ public final class MainActivity extends Activity {
         for (WebAppSurfaceView other : webAppSurfaces.values()) {
             other.setVisibility(View.GONE);
         }
+        for (TerminalAppView other : terminalAppSurfaces.values()) {
+            other.setVisibility(View.GONE);
+        }
         appSurfaceHost.setAppTitle(destination.getTitleRes());
         appSurfaceHost.setMenuActions(Collections.emptyList());
         if (destination == DesktopDestination.TERMINAL) {
+            // Isolation (ADR-0054 amendment): the terminal owns the shell tabs
+            // only, and showing it brings one of them back to the front — a
+            // command app's tab stays in its own surface.
+            TerminalTabsSnapshot snapshot = TerminalTabsBus.getInstance().current();
+            TerminalTabSnapshot visible = TerminalSurfaceScope.shellTabs().visible(snapshot);
+            TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
+            if (port != null && visible != null) {
+                port.select(visible.getId());
+            }
             // The terminal's options menu is its tab set, re-rendered on every
             // tab change by the surface's own listener.
-            renderTerminalMenu(TerminalTabsBus.getInstance().current());
+            renderTerminalMenu(snapshot);
         }
         if (destination == DesktopDestination.LOGS) {
             // Re-scan on every open: log files appear and rotate while the
@@ -728,6 +754,7 @@ public final class MainActivity extends Activity {
         dismissLauncherInput();
         activeDestination = DesktopDestination.HOME;
         activeWebAppId = definition.getId().value();
+        activeTerminalAppId = null;
         desktopHome.setVisibility(View.GONE);
         appSurfaceHost.setVisibility(View.VISIBLE);
         WebAppSurfaceView surface = webAppSurfaceFor(definition);
@@ -736,6 +763,9 @@ public final class MainActivity extends Activity {
         }
         for (WebAppSurfaceView other : webAppSurfaces.values()) {
             other.setVisibility(other == surface ? View.VISIBLE : View.GONE);
+        }
+        for (TerminalAppView other : terminalAppSurfaces.values()) {
+            other.setVisibility(View.GONE);
         }
         appSurfaceHost.setAppTitle(definition.getDisplayName());
         renderWebAppMenu(definition, surface);
@@ -790,7 +820,7 @@ public final class MainActivity extends Activity {
                 openAppForm(null, null);
                 return;
             case TERMINAL_APP:
-                openTerminalCommandApp(entry.getTerminalApp());
+                showTerminalApp(entry.getTerminalApp());
                 return;
             case WEB_APP:
                 WebAppDefinition definition = definitionFor(entry.getId());
@@ -820,17 +850,38 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Opens the terminal-command app: shows the terminal surface and asks the
-     * host for that app's tab. When Linux is not running yet the surface's own
-     * waiting state is the whole answer — no tab is created, and nothing is
-     * queued to run later.
+     * Opens a launcher terminal-command app in a surface of its own. The
+     * desktop shell isolates apps (ADR-0054, isolation amendment): the
+     * command's session is the window — titled after the app, with its own
+     * options menu — never a tab inside the built-in terminal, so the terminal
+     * can not present itself as a way to open other apps. When Linux is not
+     * running yet the surface's own waiting state is the whole answer — no tab
+     * is created, and nothing is queued to run later.
      */
-    private void openTerminalCommandApp(TerminalCommandApp app) {
+    private void showTerminalApp(TerminalCommandApp app) {
         if (app == null) {
             refreshUserApps();
             return;
         }
-        showSurface(DesktopDestination.TERMINAL);
+        dismissLauncherInput();
+        activeDestination = DesktopDestination.HOME;
+        activeWebAppId = null;
+        activeTerminalAppId = app.getId().value();
+        desktopHome.setVisibility(View.GONE);
+        appSurfaceHost.setVisibility(View.VISIBLE);
+        TerminalAppView surface = terminalAppSurfaceFor(app);
+        for (View other : fixedSurfaces.values()) {
+            other.setVisibility(View.GONE);
+        }
+        for (WebAppSurfaceView other : webAppSurfaces.values()) {
+            other.setVisibility(View.GONE);
+        }
+        for (TerminalAppView other : terminalAppSurfaces.values()) {
+            other.setVisibility(other == surface ? View.VISIBLE : View.GONE);
+        }
+        appSurfaceHost.setAppTitle(app.getDisplayName());
+        renderTerminalAppMenu(app.getId().value(), TerminalTabsBus.getInstance().current());
+
         TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
         if (port == null) {
             return; // the host service is gone; the surface states Linux is not running
@@ -840,6 +891,51 @@ public final class MainActivity extends Activity {
         } catch (TerminalTabException failure) {
             renderTerminalTabFailure(failure);
         }
+    }
+
+    /** Creates or reuses the retained surface for one terminal-command app. */
+    private TerminalAppView terminalAppSurfaceFor(TerminalCommandApp app) {
+        String id = app.getId().value();
+        TerminalAppView surface = terminalAppSurfaces.get(id);
+        if (surface == null) {
+            surface = new TerminalAppView(this);
+            surface.setTabScope(TerminalSurfaceScope.commandApp(id));
+            surface.setOnGoToDesktopListener(view -> showShell());
+            surface.setOnTabsChangedListener(snapshot -> {
+                if (id.equals(activeTerminalAppId)) {
+                    renderTerminalAppMenu(id, snapshot);
+                }
+            });
+            surface.setTerminalDependencies(
+                    TerminalTabsRegistry.getInstance(), TerminalTabsBus.getInstance());
+            terminalAppSurfaces.put(id, surface);
+            appSurfaceHost.getSurfaceContainer().addView(surface, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        return surface;
+    }
+
+    /**
+     * The options menu of one terminal-command app's surface. The surface owns
+     * exactly one tab, so the whole choice is whether to close it; there is no
+     * {@code New} — this window is the app, not a tab host — and no other
+     * app's tab can ever appear here.
+     */
+    private void renderTerminalAppMenu(String appId, TerminalTabsSnapshot snapshot) {
+        TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
+        List<AppSurfaceHostView.MenuAction> actions = new ArrayList<>();
+        if (port != null) {
+            for (TerminalTabSnapshot tab : TerminalSurfaceScope.commandApp(appId)
+                    .inScope(snapshot)) {
+                if (tab.isClosable()) {
+                    String tabId = tab.getId();
+                    actions.add(new AppSurfaceHostView.MenuAction(
+                            R.string.terminal_menu_close, () -> port.close(tabId)));
+                }
+            }
+        }
+        appSurfaceHost.setMenuActions(actions);
     }
 
     /** The user-visible half of a refused tab action; a cap gets its own line. */
@@ -894,8 +990,10 @@ public final class MainActivity extends Activity {
 
     /**
      * Keeps the top-level terminal menu small: one action to create a tab, then
-     * one name per open tab. Opening the tab row presents its own Open/Close
-     * choice instead of duplicating close entries for every tab here.
+     * one name per open shell tab — a command app's tab belongs to its own
+     * surface and must not be offered here (ADR-0054, isolation amendment).
+     * Opening the tab row presents its own Open/Close choice instead of
+     * duplicating close entries for every tab here.
      */
     private void renderTerminalMenu(TerminalTabsSnapshot snapshot) {
         TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
@@ -909,7 +1007,7 @@ public final class MainActivity extends Activity {
                     R.string.terminal_menu_new, this::openNewTerminal));
         }
         if (snapshot != null) {
-            for (TerminalTabSnapshot tab : snapshot.getTabs()) {
+            for (TerminalTabSnapshot tab : TerminalSurfaceScope.shellTabs().inScope(snapshot)) {
                 String tabId = tab.getId();
                 String label = terminalTabLabel(tab);
                 actions.add(new AppSurfaceHostView.MenuAction(
@@ -1016,6 +1114,7 @@ public final class MainActivity extends Activity {
      */
     private TerminalAppView createTerminalSurface() {
         TerminalAppView terminal = new TerminalAppView(this);
+        terminal.setTabScope(TerminalSurfaceScope.shellTabs());
         terminal.setOnGoToDesktopListener(view -> showShell());
         terminal.setOnTabsChangedListener(snapshot -> {
             if (activeDestination == DesktopDestination.TERMINAL) {
@@ -1128,8 +1227,12 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onCommandAppDeleted(String commandAppId) {
-                // A live tab for the deleted app keeps running until it is
-                // closed, exactly as ADR-0054 documents.
+                // The app is gone, so its window and its session go with it:
+                // an isolated surface exposes exactly one app, and a tab it
+                // could no longer reach would be unclosable (ADR-0054
+                // amendment).
+                closeCommandAppTab(commandAppId);
+                discardTerminalAppSurface(commandAppId);
                 refreshUserApps();
                 showShell();
             }
@@ -1173,6 +1276,32 @@ public final class MainActivity extends Activity {
         }
         appSurfaceHost.getSurfaceContainer().removeView(surface);
         surface.release();
+    }
+
+    /** Closes a deleted terminal app's tab, if its session is still live. */
+    private void closeCommandAppTab(String commandAppId) {
+        TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
+        if (port == null) {
+            return;
+        }
+        for (TerminalTabSnapshot tab : TerminalSurfaceScope.commandApp(commandAppId)
+                .inScope(port.snapshot())) {
+            port.close(tab.getId());
+        }
+    }
+
+    /** Removes a deleted terminal app's retained surface and its WebViews. */
+    private void discardTerminalAppSurface(String commandAppId) {
+        TerminalAppView surface = terminalAppSurfaces.remove(commandAppId);
+        if (surface == null) {
+            return;
+        }
+        if (commandAppId.equals(activeTerminalAppId)) {
+            activeTerminalAppId = null;
+        }
+        appSurfaceHost.getSurfaceContainer().removeView(surface);
+        // Detaching releases the surface's bridges; the session itself is the
+        // tab the caller closed above.
     }
 
     /** The registry's current definition for an id, or {@code null} when it is gone. */

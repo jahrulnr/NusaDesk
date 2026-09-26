@@ -103,6 +103,14 @@ public final class TerminalAppView extends FrameLayout
     private TabsListener tabsListener;
 
     private TerminalTabsSnapshot tabsSnapshot = TerminalTabsSnapshot.empty();
+    /**
+     * Which tabs this surface owns (ADR-0054, isolation amendment). The
+     * built-in terminal keeps the shell tabs; a launcher terminal-command
+     * app's surface owns only its own tab. Out-of-scope tabs are never
+     * rendered here and never given a WebView, so one app's session can never
+     * appear inside another surface.
+     */
+    private TerminalSurfaceScope scope = TerminalSurfaceScope.shellTabs();
     private HostRuntimeStatus hostStatus;
     /** Last size reported by the visible terminal page; replayed to every tab. */
     private int lastCols = INITIAL_COLS;
@@ -140,7 +148,7 @@ public final class TerminalAppView extends FrameLayout
         bannerText = findViewById(R.id.banner_text);
         bannerAction = findViewById(R.id.banner_action);
 
-        keyRow.setListener(sequence -> sendInput(tabsSnapshot.getSelectedTabId(), sequence));
+        keyRow.setListener(sequence -> sendInput(visibleTabId(), sequence));
         bannerAction.setOnClickListener(view -> reconnectSelectedTab());
         updateUi();
     }
@@ -160,6 +168,20 @@ public final class TerminalAppView extends FrameLayout
             TerminalTabsRegistry tabsRegistry, TerminalTabsBus tabsBus) {
         this.tabsRegistry = tabsRegistry;
         this.tabsBus = tabsBus;
+        updateUi();
+    }
+
+    /**
+     * Sets which tabs this surface owns (see {@link TerminalSurfaceScope}).
+     * Called before the surface is attached; the bridges are reconciled right
+     * away so a scope change can never leave an out-of-scope WebView behind.
+     */
+    public void setTabScope(TerminalSurfaceScope scope) {
+        if (scope == null) {
+            throw new IllegalArgumentException("scope must not be null");
+        }
+        this.scope = scope;
+        reconcileBridges(tabsSnapshot, tabsSnapshot);
         updateUi();
     }
 
@@ -214,7 +236,8 @@ public final class TerminalAppView extends FrameLayout
                 bridges.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<String, TerminalBridgeView> entry = it.next();
-            if (next.tab(entry.getKey()) == null) {
+            TerminalTabSnapshot currentTab = next.tab(entry.getKey());
+            if (currentTab == null || !scope.includes(currentTab)) {
                 TerminalSessionPort port = tabPort(entry.getKey());
                 if (port != null) {
                     port.setOutputListener(null);
@@ -226,7 +249,7 @@ public final class TerminalAppView extends FrameLayout
         }
 
         List<String> newBridges = new ArrayList<>();
-        for (TerminalTabSnapshot tab : next.getTabs()) {
+        for (TerminalTabSnapshot tab : scope.inScope(next)) {
             if (!bridges.containsKey(tab.getId())) {
                 TerminalBridgeView bridge = new TerminalBridgeView(getContext());
                 bridge.setListener(new TabBridgeListener(tab.getId()));
@@ -246,10 +269,13 @@ public final class TerminalAppView extends FrameLayout
             }
         }
 
-        String selectedId = next.getSelectedTabId();
-        boolean selectionChanged =
-                !Objects.equals(selectedId, previous.getSelectedTabId());
-        for (TerminalTabSnapshot tab : next.getTabs()) {
+        TerminalTabSnapshot visible = scope.visible(next);
+        String selectedId = visible == null ? null : visible.getId();
+        TerminalTabSnapshot previousVisible = scope.visible(previous);
+        String previousVisibleId =
+                previousVisible == null ? null : previousVisible.getId();
+        boolean selectionChanged = !Objects.equals(selectedId, previousVisibleId);
+        for (TerminalTabSnapshot tab : scope.inScope(next)) {
             TerminalBridgeView bridge = bridges.get(tab.getId());
             boolean selected = tab.getId().equals(selectedId);
             bridge.setVisibility(selected ? VISIBLE : GONE);
@@ -295,6 +321,17 @@ public final class TerminalAppView extends FrameLayout
         return port == null ? null : port.tab(tabId);
     }
 
+    /** The in-scope tab this surface shows; {@code null} when there is none. */
+    private TerminalTabSnapshot visibleTab() {
+        return scope.visible(tabsSnapshot);
+    }
+
+    /** {@link #visibleTab()}'s id, or {@code null} when there is no tab. */
+    private String visibleTabId() {
+        TerminalTabSnapshot visible = visibleTab();
+        return visible == null ? null : visible.getId();
+    }
+
     /**
      * Explicit re-attach of the selected tab after its shell dropped while the
      * runtime stayed up. A no-op when the runtime is not actually running.
@@ -304,7 +341,7 @@ public final class TerminalAppView extends FrameLayout
         if (snapshot == null || hostStatus.getState() != SessionState.RUNNING) {
             return;
         }
-        TerminalSessionPort port = tabPort(tabsSnapshot.getSelectedTabId());
+        TerminalSessionPort port = tabPort(visibleTabId());
         if (port != null) {
             port.reconnect();
         }
@@ -340,18 +377,18 @@ public final class TerminalAppView extends FrameLayout
         super.onVisibilityChanged(changedView, visibility);
         if (changedView == this && visibility == VISIBLE) {
             // A hidden view loses focus, and the container may have changed
-            // size while this surface was hidden: every tab shares this one
-            // geometry, so replay it to all live sessions, then refit and
-            // refocus the visible bridge so xterm and its PTY agree again and
-            // a hardware Enter reaches the terminal rather than whichever
-            // control was focused last.
-            for (TerminalTabSnapshot tab : tabsSnapshot.getTabs()) {
+            // size while this surface was hidden: every in-scope tab shares
+            // this one geometry, so replay it to the surface's live sessions,
+            // then refit and refocus the visible bridge so xterm and its PTY
+            // agree again and a hardware Enter reaches the terminal rather
+            // than whichever control was focused last.
+            for (TerminalTabSnapshot tab : scope.inScope(tabsSnapshot)) {
                 TerminalSessionPort port = tabPort(tab.getId());
                 if (port != null) {
                     port.resize(lastCols, lastRows);
                 }
             }
-            TerminalBridgeView selected = bridges.get(tabsSnapshot.getSelectedTabId());
+            TerminalBridgeView selected = bridges.get(visibleTabId());
             if (selected != null) {
                 selected.fit();
                 selected.focus();
@@ -364,7 +401,8 @@ public final class TerminalAppView extends FrameLayout
     /**
      * Renders the honest state from the two inputs this surface owns nothing
      * of: the host runtime status and the latest tab snapshot. The attach
-     * panel shows whenever the runtime is not running or no tab exists yet;
+     * panel shows whenever the runtime is not running or no in-scope tab
+     * exists;
      * the banner shows when the selected tab's shell is gone while the runtime
      * stays up; the key row is live only while the selected tab runs; and each
      * bridge's overlay mirrors its own tab's connection state.
@@ -372,16 +410,22 @@ public final class TerminalAppView extends FrameLayout
     private void updateUi() {
         SessionState session = sessionState();
         boolean sessionRunning = isSessionRunning();
-        TerminalTabSnapshot selected = tabsSnapshot.selected();
+        TerminalTabSnapshot selected = visibleTab();
         TerminalSessionState selectedState =
                 selected == null ? null : selected.getStatus().getState();
+        boolean scopeEmpty = scope.inScope(tabsSnapshot).isEmpty();
 
-        boolean showAttach = !sessionRunning || tabsSnapshot.isEmpty();
+        boolean showAttach = !sessionRunning || scopeEmpty;
         attachPanel.setVisibility(showAttach ? VISIBLE : GONE);
         if (showAttach) {
-            if (sessionRunning && tabsSnapshot.isEmpty()) {
-                attachTitle.setText(R.string.terminal_no_tabs_title);
-                attachBody.setText(R.string.terminal_no_tabs_body);
+            if (sessionRunning && scopeEmpty) {
+                if (scope.isCommandAppScope()) {
+                    attachTitle.setText(R.string.terminal_app_idle_title);
+                    attachBody.setText(R.string.terminal_app_idle_body);
+                } else {
+                    attachTitle.setText(R.string.terminal_no_tabs_title);
+                    attachBody.setText(R.string.terminal_no_tabs_body);
+                }
                 attachAction.setVisibility(GONE);
             } else {
                 renderAttachPanel(session);
@@ -445,7 +489,7 @@ public final class TerminalAppView extends FrameLayout
      * connection states are drawn — never to fake a live terminal.
      */
     private void renderBridgeOverlays() {
-        for (TerminalTabSnapshot tab : tabsSnapshot.getTabs()) {
+        for (TerminalTabSnapshot tab : scope.inScope(tabsSnapshot)) {
             TerminalBridgeView bridge = bridges.get(tab.getId());
             if (bridge == null) {
                 continue;
@@ -529,7 +573,7 @@ public final class TerminalAppView extends FrameLayout
             // fixed 80x24 here would undo the fit and leave the guest PTY
             // disagreeing with xterm. Hidden tabs skip this: they have no
             // geometry and must not take focus.
-            if (!tabId.equals(tabsSnapshot.getSelectedTabId())) {
+            if (!tabId.equals(visibleTabId())) {
                 return;
             }
             TerminalBridgeView bridge = bridges.get(tabId);
@@ -545,7 +589,7 @@ public final class TerminalAppView extends FrameLayout
             // accessory key row may have armed; the row clears them once used.
             // Only the visible tab consumes them — a hidden bridge cannot be
             // the one the user was typing into.
-            boolean selected = tabId.equals(tabsSnapshot.getSelectedTabId());
+            boolean selected = tabId.equals(visibleTabId());
             sendInput(tabId, selected && keyRow != null
                     ? keyRow.applyPendingModifiers(data)
                     : data);
@@ -557,12 +601,12 @@ public final class TerminalAppView extends FrameLayout
             // share this surface's one container size, so the new size is
             // applied to every live session and cached for tabs that open a
             // PTY later.
-            if (!tabId.equals(tabsSnapshot.getSelectedTabId())) {
+            if (!tabId.equals(visibleTabId())) {
                 return;
             }
             lastCols = cols;
             lastRows = rows;
-            for (TerminalTabSnapshot tab : tabsSnapshot.getTabs()) {
+            for (TerminalTabSnapshot tab : scope.inScope(tabsSnapshot)) {
                 TerminalSessionPort port = tabPort(tab.getId());
                 if (port != null) {
                     port.resize(cols, rows);

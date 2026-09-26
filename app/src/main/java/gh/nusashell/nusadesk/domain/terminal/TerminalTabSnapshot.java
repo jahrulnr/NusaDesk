@@ -73,7 +73,10 @@ public final class TerminalTabSnapshot {
         return command;
     }
 
-    /** Display ordinal across all terminal tabs (1, 2, …), not a session identity. */
+    /**
+     * Display ordinal within the tab's own kind (shell tabs number 1, 2, …
+     * on the sequence the terminal's menu shows), not a session identity.
+     */
     public int getDisplayOrdinal() {
         return displayOrdinal;
     }

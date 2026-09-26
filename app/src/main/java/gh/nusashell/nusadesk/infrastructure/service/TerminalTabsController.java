@@ -46,11 +46,13 @@ import java.util.function.Consumer;
  * <p>Tab ids: the initial root is {@value #SHELL_TAB_ID}; other tabs get
  * monotonic {@code tab-N} ids that are never reused, so a stale reference can
  * never name a different live session. Display ordinals
- * ({@link TerminalTabSnapshot#getDisplayOrdinal()}) are a display counter scoped
- * to the current tab set and apply to <em>every</em> tab kind, shell or
- * command: the initial root is 1 and each additional shell or command tab
- * takes the next ordinal, never reusing one; the count restarts when a new
- * runtime session replaces the whole set.</p>
+ * ({@link TerminalTabSnapshot#getDisplayOrdinal()}) are display counters scoped
+ * to the current tab set, one per tab kind: the initial root is 1 and each
+ * additional shell tab takes the next shell ordinal, never reusing one, so the
+ * terminal's menu — which shows the shell tabs only (ADR-0054, isolation
+ * amendment) — numbers them without gaps. Command tabs count on their own
+ * sequence; no surface displays it. Both counters restart when a new runtime
+ * session replaces the whole set.</p>
  *
  * <p>Threading mirrors {@link TerminalSessionController}: all internal state
  * is mutated on the main thread, so the controller is not thread-safe by
@@ -88,7 +90,16 @@ public final class TerminalTabsController implements TerminalTabsPort {
     private String runtimeSessionId;
     private HostRuntimeStatus lastRuntimeStatus;
     private int nextTabSeq = 1;
-    private int nextDisplayOrdinal = 2;
+    /**
+     * Display counters, one per tab kind. Shell ordinals are what the
+     * terminal's own menu shows, so they count shell tabs only: a launcher
+     * command app's tab lives in a surface of its own and must not leave a gap
+     * in that numbering (ADR-0054, isolation amendment). Command ordinals stay
+     * monotonic for the same reason tabs never reuse one; no surface shows
+     * them.
+     */
+    private int nextShellDisplayOrdinal = 2;
+    private int nextCommandDisplayOrdinal = 1;
 
     /**
      * @param transportFactory source of one fresh SSH transport per tab session
@@ -186,7 +197,7 @@ public final class TerminalTabsController implements TerminalTabsPort {
                     "at most " + MAX_TABS + " terminal tabs");
         }
         Tab tab = addTab(newTabId(), TerminalTabKind.SHELL, null, null,
-                nextDisplayOrdinal++, true);
+                nextShellDisplayOrdinal++, true);
         select(tab.id);
         return tab.snapshot();
     }
@@ -237,7 +248,7 @@ public final class TerminalTabsController implements TerminalTabsPort {
                     "at most " + MAX_TABS + " terminal tabs");
         }
         Tab tab = addTab(newTabId(), TerminalTabKind.COMMAND, commandAppId,
-                validated.value(), nextDisplayOrdinal++, true);
+                validated.value(), nextCommandDisplayOrdinal++, true);
         select(tab.id);
         return tab.snapshot();
     }
@@ -278,9 +289,10 @@ public final class TerminalTabsController implements TerminalTabsPort {
 
     /** The initial root tab: id {@value #SHELL_TAB_ID}, display ordinal 1. */
     private void openRootShellTab() {
-        // Display ordinals are a counter scoped to this tab set: a new runtime
-        // session restarts it because every tab was just replaced.
-        nextDisplayOrdinal = 2;
+        // Display ordinals are counters scoped to this tab set: a new runtime
+        // session restarts them because every tab was just replaced.
+        nextShellDisplayOrdinal = 2;
+        nextCommandDisplayOrdinal = 1;
         Tab tab = addTab(SHELL_TAB_ID, TerminalTabKind.SHELL, null, null, 1, true);
         selectedTabId = tab.id;
         publishSnapshot();

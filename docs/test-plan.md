@@ -305,40 +305,48 @@ Device pass (Samsung SM-G970F, Android 12/API 31, arm64,
 ## Terminal tabs and command apps (ADR-0054)
 
 The terminal owns several host sessions (an initial closable shell tab plus tabs
-from the options menu or a launcher terminal-command app), and a launcher entry
-can carry a user-authored guest command. JVM-locked by `TerminalTabsControllerTest`,
+opened from its own options menu), and a launcher entry can carry a
+user-authored guest command that opens in a terminal surface of its own
+(ADR-0054, isolation amendment). JVM-locked by `TerminalTabsControllerTest`,
 `TerminalSessionControllerTest`, `TerminalCommandTest`,
 `TerminalCommandRegistryTest`, `TerminalCommandRecordCodecTest`,
-`LauncherModelTest`, `LauncherIconPolicyTest`, and `AppFormErrorTest`; the
-interaction claims below were checked on the S10e where marked PASS.
+`TerminalSurfaceScopeTest`, `LauncherModelTest`, `LauncherIconPolicyTest`, and
+`AppFormErrorTest`; the interaction claims below were checked on the S10e where
+marked PASS.
 
 | ID | Case | Expected result |
 | --- | --- | --- |
 | TTB-001 | Open the terminal with Linux running | One shell tab exists; the compact options menu shows `New` and `Terminal 1` |
 | TTB-002 | `New` from the options menu | A second shell tab opens as `Terminal 2`, with its own scrollback after switching away and back |
 | TTB-003 | Tap a numbered tab in the options menu, then `Open` | The selected tab renders its own session; typing reaches only that tab; other tabs' output continues in their scrollback |
-| TTB-004 | Add a terminal-command app (`docker exec -it …` style) and tap its tile | The terminal surface opens on a new numbered tab (`Terminal N`); the command runs with a PTY; no typing needed |
-| TTB-005 | Tap the same command app tile again while its tab is live | The existing tab is selected; no second copy opens |
-| TTB-006 | Guest command exits (the device probe uses `q` in `top`) | That tab closes automatically; the previous tab becomes selected; other tabs are unaffected |
+| TTB-004 | Add a terminal-command app (`docker exec -it …` style) and tap its tile | The app opens in a terminal surface of its own, titled after the app; the command runs with a PTY; no typing needed |
+| TTB-005 | Tap the same command app tile again while its session is live | The same window is returned to and its live session is selected; no second session opens |
+| TTB-006 | Guest command exits (the device probe uses `q` in `top`) | That session closes automatically and the window shows its idle state; the terminal and other apps are unaffected |
 | TTB-007 | Open tabs up to the cap (5) | `New` disappears from the top-level menu; a refused open answers the tab-limit message instead of a silent no-op |
 | TTB-008 | Tap a terminal name, then `Close` | The tab closes, the previous tab becomes selected, and the WebView is released; the initial shell is closable too |
 | TTB-009 | Rotate, background, and return with tabs open | Tabs keep their sessions; the selected tab is restored; geometry refits (PTY agrees with xterm) |
 | TTB-010 | Notification while a command tab is selected | The terminal line and Reconnect action describe the selected tab; runtime Stop closes every tab |
 | TTB-011 | Add/edit/delete a terminal-command app in the Add form | Fields are ordered Name → Image → Type dropdown → Port/Command; invalid values land as field errors; delete removes the tile |
-| TTB-012 | Command-app tile with a deleted app (stale launcher state) | Opening reconciles the launcher instead of opening a stale app; a live tab for a deleted app remains open and labelled `Terminal N` |
+| TTB-012 | Command-app tile with a deleted app (stale launcher state) | Opening reconciles the launcher instead of opening a stale app; deleting an app closes its session and window (TTB-021) |
 | TTB-013 | Leave ⋮ open while a new tab transitions `CONNECTING` → `RUNNING` | The visible menu item still invokes the action whose label it showed; it cannot retarget by list index |
 | TTB-014 | Add a command app, open the image picker, and let Android recreate the Activity | The form restores its kind, name, command/port, and persisted image token before the picker result is delivered |
 | TTB-015 | Close the only open tab | Empty-terminal state appears; ⋮ still contains `New`; opening it creates the next numbered tab while Linux keeps running |
 | TTB-016 | Type `exit` in a shell tab | Only that tab closes automatically; previous tab is selected, or empty-terminal state appears if it was the last tab |
 | TTB-017 | Change Type in the Add form | One compact Spinner replaces the two always-visible radio rows; each choice swaps the field group |
 | TTB-018 | Tap a tab name, choose `Open` for a non-current tab | That numbered tab becomes selected and shows its own scrollback |
+| TTB-019 | Open a terminal-command app while the terminal has tabs | The app opens in its own window (title = app name, options menu = `Close`); the terminal's menu still lists only its shell tabs, and its numbering has no gaps |
+| TTB-020 | Return to the terminal after using a command app | The terminal returns to one of its own shell tabs (selection follows the visible surface); the app's window keeps its session meanwhile |
+| TTB-021 | Delete a terminal-command app while its session is live | The session ends, the window is discarded, and the terminal's menu shows no trace of it |
 
 Device pass (Samsung SM-G970F, Android 12/API 31, arm64, 2026-09-25;
 QA-debuggable APK signed with the installed release key so existing guest data
 was preserved). This pass predates the compact-menu refinement documented
-below: TTB-012 records the earlier menu's command-derived label (`top`). The
-final compact menu labels every tab by ordinal (`Terminal N`); the earlier
-label observation is historical and is not a claim about the final UI.
+below and the 2026-09-26 isolation amendment, under which a command app opens
+in a surface of its own: TTB-012 records the earlier menu's command-derived
+label (`top`), and TTB-004/005/006/012's expected results above are updated to
+the isolated model. The final compact menu labels every terminal tab by ordinal
+(`Terminal N`); the earlier label observation is historical and is not a claim
+about the final UI.
 
 | Case | Result |
 | --- | --- |
@@ -378,6 +386,22 @@ used the installed release signing key, preserving guest data):
 The QA command app was deleted, all test tabs were closed, and the pre-existing
 guest/runtime remained intact. Screen timeout and stay-on-while-plugged-in
 settings were restored.
+
+### Isolation pass: one surface per terminal-command app
+
+Device pass (Samsung SM-G970F, Android 12/API 31, arm64, 2026-09-26; QA build
+signed with the installed release key, guest data preserved):
+
+| Case | Result |
+| --- | --- |
+| TTB-004/019 | PASS — opening `Top` showed a window titled `Top` whose options menu is a single `Close`; the terminal's menu stayed `New` + `Terminal 1` |
+| TTB-005/020 | PASS — reopening `Top` returned to the same live session (`top` PID unchanged), and showing the terminal re-selected its own shell tab |
+| TTB-006 (idle) | PASS — `Close` ended the `top` process and the window showed `Command not running`; reopening started a fresh session (new PID) |
+| Numbering | PASS — `New` in the terminal produced `Terminal 1` / `Terminal 2` with no gap while the app's sessions had consumed their own counters |
+| TTB-021 | PASS — a temporary `QAtmp` app (`sleep 600`): deleting it closed the `sleep` process, removed the tile, and left the terminal's menu with its own tabs only |
+
+The temporary app and all test sessions were removed; the guest/runtime was
+preserved.
 
 
 ## Guest log cases (ADR-0034)

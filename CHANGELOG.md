@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-09-26
+
+### Fixed
+
+- Isolate launcher terminal-command apps in surfaces of their own (ADR-0054
+  amendment, NusaDesk issue #2). Opening one used to insert its tab into the
+  built-in terminal, so the terminal's options menu listed — and could open —
+  another app's session, and the terminal read as a way to open other apps.
+  Each app now opens a window titled after it, owns exactly its own session,
+  and its options menu is a single `Close`; the terminal lists its shell tabs
+  only, and an idling app window says "Command not running". A
+  `TerminalSurfaceScope` decides what each surface owns: a tab of another
+  scope is never rendered, never given a WebView, and never listed.
+- Deleting a terminal-command app now closes its live session and discards its
+  window; the delete confirmation says so. Going back to All apps still only
+  hides the window, and a later open returns to the same live session.
+
+### Changed
+
+- Display ordinals are counted per tab kind: the terminal's `New` keeps
+  numbering its shell tabs `Terminal 1`, `Terminal 2`, … without gaps, because
+  a command app's session (which no surface numbers) no longer consumes one of
+  those numbers.
+
 ## [0.10.1] - 2026-09-26
 
 ### Fixed

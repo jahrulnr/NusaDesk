@@ -200,13 +200,40 @@ command API.
   action); it does not enumerate tabs. Closing one tab is a surface action and
   does not stop the guest runtime.
 - A command app is a foreground command, not a service. A clean exit closes its
-  tab automatically. If the transport drops, the numbered tab offers the
+  session automatically. If the transport drops, the app's own window offers the
   generic `Reconnect terminal` action, which re-runs the command on a fresh PTY;
   nothing restarts it automatically.
 - Command apps live in the app's own private preferences, so they are neither
   part of the guest backup (ADR-0044) nor visible to Linux.
-- Deleting a command app while its tab is live leaves the PTY running until it
-  is closed; the live tab remains labelled `Terminal N`, and the deleted app
-  definition no longer appears in the launcher.
+- Deleting a command app closes its window and its live session (see the
+  amendment below); the deleted app definition no longer appears in the
+  launcher.
 - A command that needs no PTY (a pure pipe, for example) still gets one, which
   can change a command's own behavior compared with a non-interactive run.
+
+## Amendment (2026-09-26): launcher terminal apps are isolated in their own surfaces
+
+The shared tab menu was wrong for a desktop that isolates apps: opening a
+terminal-command app inserted its tab into the built-in terminal, so the
+terminal's options menu listed — and let the user open — another app's session.
+Each launcher terminal-command app now opens in a surface of its own, exactly
+like a web app: the window is titled after the app, its session is the only tab
+that surface owns, and its options menu is a single `Close`.
+
+Consequences recorded here:
+
+- `TerminalSurfaceScope` decides what a surface owns. The terminal's options
+  menu and each surface's bridge set are built from it, and a tab of another
+  scope is never rendered, never given a WebView, and never listed; showing the
+  terminal re-selects one of its own tabs.
+- Display ordinals are counted per tab kind now: `New` numbers the terminal's
+  shell tabs 1, 2, … without gaps, and a command app's session (which no surface
+  numbers) cannot consume one of those numbers.
+- A command app's window states its own idle case — "Command not running" —
+  and points back at its launcher tile; a dropped session keeps the surface's
+  own reconnect banner.
+- Deleting a terminal-command app now closes its live tab and discards its
+  surface: an isolated surface exposes exactly one app, so a tab it could no
+  longer reach would be unclosable. This supersedes the "the tab keeps running"
+  consequence above. Closing the *window* (going back to All apps) does not
+  close the session; a later open returns to the same live tab.

@@ -472,7 +472,10 @@ public final class AppFormView extends ScrollView {
         new AlertDialog.Builder(context)
                 .setTitle(R.string.webapp_delete_confirm_title)
                 .setMessage(getContext().getString(
-                        R.string.webapp_delete_confirm_body, nameInput.getText().toString().trim()))
+                        kind == Kind.COMMAND
+                                ? R.string.terminal_app_delete_confirm_body
+                                : R.string.webapp_delete_confirm_body,
+                        nameInput.getText().toString().trim()))
                 .setPositiveButton(R.string.webapp_delete_confirm_action, (dialog, which) -> {
                     if (kind == Kind.COMMAND) {
                         commands.delete(editingId);

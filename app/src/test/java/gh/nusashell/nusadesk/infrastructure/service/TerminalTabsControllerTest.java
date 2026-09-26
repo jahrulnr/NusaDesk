@@ -257,7 +257,7 @@ public class TerminalTabsControllerTest {
     }
 
     @Test
-    public void displayOrdinalsAreMonotonicAndCommandTabsShareTheSequence() throws Exception {
+    public void displayOrdinalsAreMonotonicWithinTheirOwnKind() throws Exception {
         controller.onRuntimeStatus(running(SESSION));
         TerminalTabSnapshot second = controller.openShell();
         controller.close(second.getId());
@@ -265,11 +265,14 @@ public class TerminalTabsControllerTest {
         TerminalTabSnapshot third = controller.openShell();
         TerminalTabSnapshot command = controller.openOrSelectCommand("app-1", "uptime");
 
+        // Shell ordinals are the terminal's own numbering: a command app's tab
+        // lives in its own surface and must not leave a gap in it (ADR-0054,
+        // isolation amendment). Command tabs count on their own sequence.
         assertEquals(3, third.getDisplayOrdinal());
-        assertEquals("command tabs consume the same display sequence, not 0", 4,
+        assertEquals("command tabs count separately, from one", 1,
                 command.getDisplayOrdinal());
         assertEquals(3, last().tab("tab-2").getDisplayOrdinal());
-        assertEquals(4, last().tab(command.getId()).getDisplayOrdinal());
+        assertEquals(1, last().tab(command.getId()).getDisplayOrdinal());
     }
 
     @Test
