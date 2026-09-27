@@ -40,6 +40,7 @@ import gh.nusashell.nusadesk.application.runtime.RuntimeStateStore;
 import gh.nusashell.nusadesk.application.terminal.TerminalCommandRegistry;
 import gh.nusashell.nusadesk.application.terminal.TerminalTabException;
 import gh.nusashell.nusadesk.application.terminal.TerminalTabsPort;
+import gh.nusashell.nusadesk.application.webapp.WebAppCredentialStore;
 import gh.nusashell.nusadesk.application.webapp.WebAppRegistry;
 import gh.nusashell.nusadesk.application.workspace.WorkspaceStore;
 import gh.nusashell.nusadesk.domain.backup.BackupMode;
@@ -58,6 +59,8 @@ import gh.nusashell.nusadesk.domain.terminal.TerminalTabsSnapshot;
 import gh.nusashell.nusadesk.domain.update.ApkDigest;
 import gh.nusashell.nusadesk.domain.update.ReleaseVersion;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
+import gh.nusashell.nusadesk.domain.webapp.WebAppId;
+import gh.nusashell.nusadesk.domain.webapp.WebAppSignInCredential;
 import gh.nusashell.nusadesk.domain.workspace.WorkspaceFolder;
 import gh.nusashell.nusadesk.infrastructure.backup.BackupDocumentAccess;
 import gh.nusashell.nusadesk.infrastructure.backup.GuestBackupTransfer;
@@ -86,6 +89,7 @@ import gh.nusashell.nusadesk.infrastructure.update.HttpAssetSource;
 import gh.nusashell.nusadesk.infrastructure.update.PackageInstallerBridge;
 import gh.nusashell.nusadesk.infrastructure.update.UpdateCheckPrefs;
 import gh.nusashell.nusadesk.infrastructure.update.UpdateNotifier;
+import gh.nusashell.nusadesk.infrastructure.webapp.KeystoreWebAppCredentialStore;
 import gh.nusashell.nusadesk.infrastructure.webapp.SharedPreferencesWebAppStore;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppFaviconFetcher;
 import gh.nusashell.nusadesk.infrastructure.workspace.SharedPreferencesWorkspaceStore;
@@ -102,6 +106,8 @@ import gh.nusashell.nusadesk.presentation.system.SystemScreenView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalSurfaceScope;
 import gh.nusashell.nusadesk.presentation.update.UpdateInstallDialog;
+import gh.nusashell.nusadesk.presentation.webapp.WebAppSignInCard;
+import gh.nusashell.nusadesk.presentation.webapp.WebAppSignInCoordinator;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppTabStack;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
@@ -179,6 +185,16 @@ public final class MainActivity extends Activity {
     private final Map<DesktopDestination, View> fixedSurfaces =
             new EnumMap<>(DesktopDestination.class);
     private final Map<String, WebAppSurfaceView> webAppSurfaces = new LinkedHashMap<>();
+    /**
+     * The sign-in card and its responder for one retained web-app surface,
+     * keyed by app id exactly like {@link #webAppSurfaces}. The card is a child
+     * of its surface, so it shares the surface's visibility switching for free;
+     * the coordinator is the {@code HttpAuthResponder} that surface's
+     * WebViewClient delegates an owned-origin challenge to (ADR-0058).
+     */
+    private final Map<String, WebAppSignInCard> webAppSignInCards = new LinkedHashMap<>();
+    private final Map<String, WebAppSignInCoordinator> webAppSignInCoordinators =
+            new LinkedHashMap<>();
 
     /**
      * One retained terminal surface per launcher terminal-command app
@@ -212,6 +228,7 @@ public final class MainActivity extends Activity {
     private WebAppRegistry webAppRegistry;
     private TerminalCommandRegistry terminalCommandRegistry;
     private WebAppFaviconFetcher faviconFetcher;
+    private WebAppCredentialStore webAppCredentialStore;
     private WorkspaceStore workspaceStore;
     private WorkspaceFolderAccess workspaceAccess;
     private BackupDocumentAccess backupDocumentAccess;
@@ -320,6 +337,9 @@ public final class MainActivity extends Activity {
         updatePrefs = new UpdateCheckPrefs(this);
         updateNotifier = new UpdateNotifier(this);
         faviconFetcher = new WebAppFaviconFetcher();
+        // One vault-backed store answers both the per-surface sign-in
+        // challenges and the favicon fetch; secrets never leave it in plaintext.
+        webAppCredentialStore = KeystoreWebAppCredentialStore.inAppStorage(this);
         mainHandler = new Handler(Looper.getMainLooper());
         contractDialog = new FoundationContractDialog(this);
 
@@ -1228,6 +1248,9 @@ public final class MainActivity extends Activity {
             @Override
             public void onWebAppDeleted(String webAppId) {
                 discardWebAppSurface(webAppId);
+                // Removing the app must not leave its saved sign-in behind on
+                // the device; the vault entry is keyed by the app's stable id.
+                clearWebAppCredential(webAppId);
                 forgetFavicon(webAppId);
                 refreshUserApps();
                 showShell();
@@ -1272,13 +1295,77 @@ public final class MainActivity extends Activity {
                 }
             }
         });
-        activeSurface.bind(definition, probeExecutor);
+        activeSurface.bind(definition, probeExecutor,
+                webAppSignInFor(id, definition, activeSurface));
         return activeSurface;
     }
 
-    /** Removes a deleted app's retained surface and releases its WebView. */
+    /**
+     * The sign-in responder bound to one app's surface.
+     *
+     * <p>The card is created once with the surface as its root, so it appears
+     * and disappears with that surface and needs no visibility bookkeeping of
+     * its own. The coordinator is rebuilt whenever the definition being bound
+     * differs from the one the surface already holds: the endpoint it answers
+     * for lives inside that immutable definition, so an edit that changes the
+     * port must produce a new responder rather than leave challenges answered
+     * against a stale origin. The stored credential is keyed by the stable
+     * {@link WebAppId}, so a rename or a port edit keeps it.</p>
+     */
+    private WebAppSignInCoordinator webAppSignInFor(
+            String webAppId, WebAppDefinition definition, WebAppSurfaceView surface) {
+        WebAppSignInCard card = webAppSignInCards.get(webAppId);
+        if (card == null) {
+            card = new WebAppSignInCard(surface);
+            webAppSignInCards.put(webAppId, card);
+        }
+        // The card wears the same icon the launcher tile shows, so the prompt
+        // names the app that is asking for a password. A null bitmap leaves the
+        // NusaDesk mark, and applyFavicon() upgrades it once the launcher has
+        // decoded one for the tile.
+        card.setAppIcon(favicons.get(webAppId));
+        WebAppSignInCoordinator coordinator = webAppSignInCoordinators.get(webAppId);
+        WebAppDefinition bound = surface.getDefinition();
+        if (coordinator == null || bound == null || !bound.equals(definition)) {
+            coordinator = new WebAppSignInCoordinator(definition, webAppCredentialStore,
+                    card, surface, probeExecutor, mainHandler);
+            webAppSignInCoordinators.put(webAppId, coordinator);
+        }
+        return coordinator;
+    }
+
+    /**
+     * Forgets a removed app's saved sign-in, inline with the registry delete.
+     *
+     * <p>The registry's delete is synchronous and cannot fail, so the vault
+     * clear runs on the same call instead of a queued task that
+     * {@link #onDestroy()} could cut before it ran — a dropped task is exactly
+     * the way a deleted app's password would get left behind. The clear removes
+     * one SharedPreferences entry without touching the keystore, the same order
+     * of work as the commit this delete path already performs on the main
+     * thread. A vault failure is swallowed: the app is already gone, and an
+     * orphaned entry can never be read again because nothing is keyed by that
+     * id once the registry no longer lists it.</p>
+     */
+    private void clearWebAppCredential(String webAppId) {
+        if (!WebAppId.isValid(webAppId)) {
+            return;
+        }
+        try {
+            webAppCredentialStore.clear(WebAppId.of(webAppId));
+        } catch (RuntimeException clearFailed) {
+            // Deliberate no-op, documented above.
+        }
+    }
+
+    /**
+     * Removes a deleted app's retained surface — its WebView plus the sign-in
+     * collaborators that can no longer answer for it.
+     */
     private void discardWebAppSurface(String webAppId) {
         WebAppSurfaceView surface = webAppSurfaces.remove(webAppId);
+        webAppSignInCoordinators.remove(webAppId);
+        webAppSignInCards.remove(webAppId);
         if (surface == null) {
             return;
         }
@@ -1360,7 +1447,12 @@ public final class MainActivity extends Activity {
         }
         faviconRequests.put(webAppId, requestKey);
         faviconExecutor.execute(() -> {
-            Bitmap favicon = faviconFetcher.fetch(definition);
+            // The stored sign-in is read on this same worker thread: a vault
+            // decrypt must never run on the main thread, and a missing entry
+            // leaves the request exactly as unauthenticated as before.
+            WebAppSignInCredential credential =
+                    webAppCredentialStore.find(definition.getId());
+            Bitmap favicon = faviconFetcher.fetch(definition, credential);
             mainHandler.post(() -> applyFavicon(webAppId, requestKey, favicon));
         });
     }
@@ -1386,6 +1478,12 @@ public final class MainActivity extends Activity {
             return;
         }
         favicons.put(webAppId, favicon);
+        // The sign-in card and the tile share this decode: a card that is
+        // already up should not need a second fetch for the same image.
+        WebAppSignInCard card = webAppSignInCards.get(webAppId);
+        if (card != null) {
+            card.setAppIcon(favicon);
+        }
         desktopHome.setFavicons(new HashMap<>(favicons));
     }
 

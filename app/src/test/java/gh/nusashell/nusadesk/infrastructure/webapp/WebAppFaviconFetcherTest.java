@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import gh.nusashell.nusadesk.domain.webapp.GuestPortPolicy;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.webapp.WebAppId;
+import gh.nusashell.nusadesk.domain.webapp.WebAppSignInCredential;
 
 import org.junit.Test;
 
@@ -268,6 +269,118 @@ public class WebAppFaviconFetcherTest {
         assertTrue(WebAppFaviconFetcher.DEFAULT_READ_TIMEOUT_MILLIS <= 3_000);
     }
 
+    @Test
+    public void aStoredCredentialAnswersTheAppOwnAuthChallenge() throws Exception {
+        byte[] icon = new byte[] {9, 9, 9};
+        try (TestServer server = TestServer.start(TestServer.basicAuth(
+                "Basic dXNlcjpwYXNz",
+                TestServer.routes(
+                        "/", TestServer.html("<html><head><link rel=\"icon\" "
+                                + "href=\"./nusashell-mark.png\" type=\"image/png\"></head></html>"),
+                        "/nusashell-mark.png", TestServer.ok(icon),
+                        "/favicon.ico", TestServer.ok(new byte[] {7, 7}))))) {
+            FakeDecoder decoder = new FakeDecoder(new WebAppFaviconFetcher.Size(512, 512));
+            WebAppSignInCredential stored = new WebAppSignInCredential(
+                    WebAppId.of("fixture"), "user", "pass");
+
+            fetcher(decoder).fetch(webApp(server.port()), stored);
+
+            // The same server answers 401 without the pair and 200 with it, so
+            // the document, the declared icon, and the fallback all get through.
+            assertEquals(3, server.requestCount());
+            for (int index = 0; index < 3; index++) {
+                assertEquals("Basic dXNlcjpwYXNz",
+                        server.requestHeaderAt(index, "Authorization"));
+            }
+            assertEquals("GET /nusashell-mark.png HTTP/1.1", server.requestLineAt(1));
+            assertEquals("both candidates reach the decoder", 2, decoder.decodeCalls.get());
+            assertEquals("the fallback's bytes are the last decode", 2, decoder.decodedLength);
+        }
+    }
+
+    @Test
+    public void withoutACredentialTheSameProtectedAppYieldsNoImage() throws Exception {
+        try (TestServer server = TestServer.start(TestServer.basicAuth(
+                "Basic dXNlcjpwYXNz", TestServer.ok(new byte[] {9, 9, 9})))) {
+            FakeDecoder decoder = new FakeDecoder(new WebAppFaviconFetcher.Size(32, 32));
+
+            assertNull(fetcher(decoder).fetch(webApp(server.port())));
+            assertNull(fetcher(decoder).fetch(webApp(server.port()), null));
+
+            // Four anonymous requests, none carrying the header: a null
+            // credential is byte-for-byte the anonymous fetch.
+            assertEquals(4, server.requestCount());
+            for (int index = 0; index < 4; index++) {
+                assertNull("no credential must send no Authorization header",
+                        server.requestHeaderAt(index, "Authorization"));
+            }
+            assertEquals(0, decoder.boundsCalls.get());
+            assertEquals(0, decoder.decodeCalls.get());
+        }
+    }
+
+    @Test
+    public void aWrongCredentialIsStillSilentAndReadsNoImageBody() throws Exception {
+        try (TestServer server = TestServer.start(TestServer.basicAuth(
+                "Basic dXNlcjpwYXNz", TestServer.ok(new byte[] {9, 9, 9})))) {
+            FakeDecoder decoder = new FakeDecoder(new WebAppFaviconFetcher.Size(32, 32));
+            WebAppSignInCredential stale = new WebAppSignInCredential(
+                    WebAppId.of("fixture"), "user", "wrong-pass");
+
+            assertNull(fetcher(decoder).fetch(webApp(server.port()), stale));
+
+            // The pair was offered — and refused — so each answer stays a 401:
+            // the body is never read and nothing is decoded, exactly like a 404.
+            assertEquals(2, server.requestCount());
+            assertEquals("Basic dXNlcjp3cm9uZy1wYXNz",
+                    server.requestHeaderAt(0, "Authorization"));
+            assertEquals("Basic dXNlcjp3cm9uZy1wYXNz",
+                    server.requestHeaderAt(1, "Authorization"));
+            assertEquals(0, decoder.boundsCalls.get());
+            assertEquals(0, decoder.decodeCalls.get());
+        }
+    }
+
+    @Test
+    public void aCredentialStoredForADifferentAppIsRefused() {
+        try {
+            new WebAppFaviconFetcher().fetch(webApp(8_080),
+                    new WebAppSignInCredential(WebAppId.of("other-app"), "u", "p"));
+            assertTrue("a pair must never be offered to an app it is not stored for", false);
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+    }
+
+    @Test
+    public void theBasicHeaderEncodesTheUtf8PairExactly() {
+        // Pinned literally so a wrong charset, a missing colon, or a wrong
+        // scheme name cannot hide behind an equivalent-looking encoding.
+        assertEquals("Basic dTpw",
+                WebAppFaviconFetcher.basicAuthorizationHeader("u", "p"));
+        assertEquals("Basic bnVzYTpwOnNzIHdvcmQ=",
+                WebAppFaviconFetcher.basicAuthorizationHeader("nusa", "p:ss word"));
+        // UTF-8, not a single-byte charset: ä encodes as two bytes.
+        assertEquals("Basic dTpww6Rzcw==",
+                WebAppFaviconFetcher.basicAuthorizationHeader("u", "päss"));
+    }
+
+    @Test
+    public void theBasicHeaderRejectsMissingParts() {
+        try {
+            WebAppFaviconFetcher.basicAuthorizationHeader(null, "p");
+            assertTrue("a missing username must be rejected", false);
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            WebAppFaviconFetcher.basicAuthorizationHeader("u", null);
+            assertTrue("a missing password must be rejected", false);
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+    }
+
     private static void assertRejected(
             WebAppFaviconFetcher.Decoder decoder, int connectTimeout, int readTimeout) {
         try {
@@ -323,12 +436,15 @@ public class WebAppFaviconFetcherTest {
     private static final class TestServer implements Closeable {
 
         interface Responder {
-            void respond(String requestLine, OutputStream out) throws IOException;
+            void respond(String requestLine, java.util.Map<String, String> headers,
+                    OutputStream out) throws IOException;
         }
 
         private final ServerSocket serverSocket;
         private final Thread thread;
         private final List<String> requestLines =
+                Collections.synchronizedList(new ArrayList<>());
+        private final List<java.util.Map<String, String>> requestHeads =
                 Collections.synchronizedList(new ArrayList<>());
         private volatile boolean closed;
 
@@ -362,21 +478,40 @@ public class WebAppFaviconFetcherTest {
             for (int i = 0; i + 1 < pairs.length; i += 2) {
                 byPath.put((String) pairs[i], (Responder) pairs[i + 1]);
             }
-            return (requestLine, out) -> {
+            return (requestLine, headers, out) -> {
                 Responder inner = byPath.get(pathOf(requestLine));
                 if (inner == null) {
                     writeHead(out, "404 Not Found", "Content-Length: 0\r\n");
                     out.flush();
                     return;
                 }
-                inner.respond(requestLine, out);
+                inner.respond(requestLine, headers, out);
+            };
+        }
+
+        /**
+         * Answers {@code 401} — with a {@code WWW-Authenticate: Basic}
+         * challenge — until a request carries exactly
+         * {@code expectedAuthorization}, then delegates. This is how an app
+         * that protects its own endpoint behaves (ADR-0058).
+         */
+        static Responder basicAuth(String expectedAuthorization, Responder responder) {
+            return (requestLine, headers, out) -> {
+                if (!expectedAuthorization.equals(headers.get("authorization"))) {
+                    writeHead(out, "401 Unauthorized",
+                            "WWW-Authenticate: Basic realm=\"fixture\"\r\n"
+                                    + "Content-Length: 0\r\n");
+                    out.flush();
+                    return;
+                }
+                responder.respond(requestLine, headers, out);
             };
         }
 
         /** A document response, so the fetcher can read its icon declarations. */
         static Responder html(String body) {
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            return (requestLine, out) -> {
+            return (requestLine, headers, out) -> {
                 writeHead(out, "200 OK", "Content-Length: " + bytes.length + "\r\n"
                         + "Content-Type: text/html; charset=utf-8\r\n");
                 out.write(bytes);
@@ -393,7 +528,7 @@ public class WebAppFaviconFetcherTest {
         }
 
         static Responder ok(byte[] body) {
-            return (requestLine, out) -> {
+            return (requestLine, headers, out) -> {
                 writeHead(out, "200 OK", "Content-Length: " + body.length + "\r\n"
                         + "Content-Type: image/png\r\n");
                 out.write(body);
@@ -402,14 +537,14 @@ public class WebAppFaviconFetcherTest {
         }
 
         static Responder status(int code, String reason) {
-            return (requestLine, out) -> {
+            return (requestLine, headers, out) -> {
                 writeHead(out, code + " " + reason, "Content-Length: 0\r\n");
                 out.flush();
             };
         }
 
         static Responder declaredLength(int declaredBytes) {
-            return (requestLine, out) -> {
+            return (requestLine, headers, out) -> {
                 writeHead(out, "200 OK", "Content-Length: " + declaredBytes + "\r\n"
                         + "Content-Type: image/png\r\n");
                 out.flush();
@@ -417,7 +552,7 @@ public class WebAppFaviconFetcherTest {
         }
 
         static Responder undeclaredBody(int bodyBytes) {
-            return (requestLine, out) -> {
+            return (requestLine, headers, out) -> {
                 writeHead(out, "200 OK", "Content-Type: image/png\r\n");
                 byte[] chunk = new byte[8 * 1024];
                 int written = 0;
@@ -430,7 +565,7 @@ public class WebAppFaviconFetcherTest {
         }
 
         static Responder neverAnswers() {
-            return (requestLine, out) -> {
+            return (requestLine, headers, out) -> {
                 try {
                     Thread.sleep(10_000);
                 } catch (InterruptedException interrupted) {
@@ -463,12 +598,28 @@ public class WebAppFaviconFetcherTest {
             }
         }
 
+        /**
+         * The value of request header {@code name} on request {@code index}, or
+         * {@code null} when the request did not carry it. Header names are
+         * matched case-insensitively.
+         */
+        String requestHeaderAt(int index, String name) {
+            synchronized (requestHeads) {
+                if (index >= requestHeads.size()) {
+                    return null;
+                }
+                return requestHeads.get(index)
+                        .get(name.toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+
         private void serve(Responder responder) {
             while (!closed) {
                 try (Socket socket = serverSocket.accept()) {
-                    String requestLine = readRequestHead(socket);
+                    java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
+                    String requestLine = readRequestHead(socket, headers);
                     try (OutputStream out = socket.getOutputStream()) {
-                        responder.respond(requestLine, out);
+                        responder.respond(requestLine, headers, out);
                     }
                 } catch (IOException expected) {
                     // The client disconnected or the server was closed mid-answer.
@@ -479,7 +630,8 @@ public class WebAppFaviconFetcherTest {
             }
         }
 
-        private String readRequestHead(Socket socket) throws IOException {
+        private String readRequestHead(
+                Socket socket, java.util.Map<String, String> headers) throws IOException {
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
             String requestLine = reader.readLine();
@@ -489,8 +641,14 @@ public class WebAppFaviconFetcherTest {
             requestLines.add(requestLine.trim());
             String line;
             while ((line = reader.readLine()) != null && !line.isEmpty()) {
-                // Headers are read so the client's request is fully consumed.
+                int colon = line.indexOf(':');
+                if (colon > 0) {
+                    headers.put(line.substring(0, colon).trim()
+                                    .toLowerCase(java.util.Locale.ROOT),
+                            line.substring(colon + 1).trim());
+                }
             }
+            requestHeads.add(headers);
             return requestLine.trim();
         }
 

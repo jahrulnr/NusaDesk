@@ -4,6 +4,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
+import gh.nusashell.nusadesk.domain.webapp.WebAppSignInCredential;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -11,6 +12,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 
@@ -30,6 +32,16 @@ import java.util.List;
  * accepts the response and {@link BitmapFactory} actually decodes it,
  * downsampled so the bitmap's memory is bounded by the tile rather than by
  * whatever the server sent.</p>
+ *
+ * <p>An app may protect its own endpoint with HTTP Basic auth (ADR-0058).
+ * {@link #fetch(WebAppDefinition, WebAppSignInCredential)} then attaches the
+ * stored sign-in pair — the same pair the WebView answers that challenge with —
+ * as an {@code Authorization} header, so a protected app still gets its own
+ * icon instead of staying a monogram. The pair is only ever attached to
+ * requests on the app's own generated {@code 127.0.0.1} endpoint and must
+ * belong to that app's id, so it can never be offered to another origin or
+ * another app. Without a pair, a {@code 401} is just another unusable
+ * response — the same answer as a {@code 404}.</p>
  *
  * <p>Every failure — unreachable, timed out, redirected, wrong status, too
  * large, not an image, undecodable — is the same answer: {@code null}. A tile
@@ -131,34 +143,76 @@ public final class WebAppFaviconFetcher {
      * decodes wins, and a document that cannot be read simply means the fallback
      * is tried.</p>
      *
+     * <p>Equivalent to {@link #fetch(WebAppDefinition, WebAppSignInCredential)}
+     * with no stored pair.</p>
+     *
      * @param definition the registered app; its port is already validated
      * @return the decoded, dimension-bounded image, or {@code null} when neither
      *         source has a usable favicon
      * @throws IllegalArgumentException when no definition is given
      */
     public Bitmap fetch(WebAppDefinition definition) {
+        return fetch(definition, null);
+    }
+
+    /**
+     * Fetches one app's favicon once, offering the app's stored sign-in pair
+     * when the app protects its own endpoint with HTTP Basic auth.
+     *
+     * <p>{@code credential} is the same stored pair the WebView uses to answer
+     * the app's own auth challenge (ADR-0058): one user sign-in unlocks both
+     * the surface and the tile icon. It is sent as an {@code Authorization:
+     * Basic} header on every request this fetch makes, and every request stays
+     * on the app's generated {@code 127.0.0.1} endpoint, so the pair is only
+     * ever offered to the app it belongs to — a pair stored under a different
+     * app id is refused outright rather than sent.</p>
+     *
+     * <p>A {@code null} credential is exactly the anonymous fetch: no header
+     * is added, and a {@code 401} — like any other non-200 — is simply "no
+     * favicon", so the tile keeps its monogram. A pair the server rejects is
+     * the same silent {@code null}; a stale or wrong secret must never become
+     * a user-visible error. The pair is never logged here.</p>
+     *
+     * @param definition the registered app; its port is already validated
+     * @param credential the sign-in pair stored for this app, or {@code null}
+     * @return the decoded, dimension-bounded image, or {@code null} when
+     *         neither source has a usable favicon
+     * @throws IllegalArgumentException when no definition is given, or when
+     *         {@code credential} belongs to a different app
+     */
+    public Bitmap fetch(WebAppDefinition definition, WebAppSignInCredential credential) {
         if (definition == null) {
             throw new IllegalArgumentException("definition must not be null");
         }
+        if (credential != null && !credential.getWebAppId().equals(definition.getId())) {
+            throw new IllegalArgumentException(
+                    "credential must belong to the app being fetched");
+        }
+        String authorization = credential == null
+                ? null
+                : basicAuthorizationHeader(credential.getUsername(), credential.getPassword());
         String origin = definition.getEndpointUrl();
-        for (String declared : declaredIconUrls(origin)) {
-            Bitmap image = fetchImage(declared);
+        for (String declared : declaredIconUrls(origin, authorization)) {
+            Bitmap image = fetchImage(declared, authorization);
             if (image != null) {
                 return image;
             }
         }
-        return fetchImage(WebAppFaviconEndpoint.forDefinition(definition));
+        return fetchImage(WebAppFaviconEndpoint.forDefinition(definition), authorization);
     }
 
     /**
      * Reads the app's own document and returns the same-origin icon URLs it
      * declares. A document that is unreachable, non-200, oversized, or without a
      * usable declaration yields no candidates — never an error.
+     *
+     * @param authorization the {@code Authorization} header value to attach, or
+     *                      {@code null} for an anonymous request
      */
-    private List<String> declaredIconUrls(String origin) {
+    private List<String> declaredIconUrls(String origin, String authorization) {
         HttpURLConnection connection = null;
         try {
-            connection = open(origin);
+            connection = open(origin, authorization);
             if (!FaviconResponsePolicy.isUsableStatus(connection.getResponseCode())) {
                 return Collections.emptyList();
             }
@@ -176,11 +230,16 @@ public final class WebAppFaviconFetcher {
         }
     }
 
-    /** One bounded image fetch: status, byte cap, dimensions, and decode. */
-    private Bitmap fetchImage(String url) {
+    /**
+     * One bounded image fetch: status, byte cap, dimensions, and decode.
+     *
+     * @param authorization the {@code Authorization} header value to attach, or
+     *                      {@code null} for an anonymous request
+     */
+    private Bitmap fetchImage(String url, String authorization) {
         HttpURLConnection connection = null;
         try {
-            connection = open(url);
+            connection = open(url, authorization);
             int status = connection.getResponseCode();
             if (!FaviconResponsePolicy.isUsableStatus(status)) {
                 return null;
@@ -212,7 +271,7 @@ public final class WebAppFaviconFetcher {
         }
     }
 
-    private HttpURLConnection open(String url) throws IOException {
+    private HttpURLConnection open(String url, String authorization) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setConnectTimeout(connectTimeoutMillis);
         connection.setReadTimeout(readTimeoutMillis);
@@ -222,7 +281,39 @@ public final class WebAppFaviconFetcher {
         connection.setRequestMethod("GET");
         connection.setRequestProperty("Connection", "close");
         connection.setUseCaches(false);
+        // The stored sign-in pair answers the app's own Basic challenge and is
+        // attached only here — every URL handed in is on the app's generated
+        // 127.0.0.1 endpoint. It is never logged and never written anywhere.
+        if (authorization != null) {
+            connection.setRequestProperty("Authorization", authorization);
+        }
         return connection;
+    }
+
+    /**
+     * Builds the {@code Authorization} header value for one stored pair:
+     * {@code Basic} followed by the Base64 of {@code username + ":" + password}
+     * in UTF-8 (RFC 7617).
+     *
+     * <p>{@code java.util.Base64} rather than {@code android.util.Base64}: the
+     * project's other encoders already use it, the minSdk (29) is well above
+     * the API 26 that added it, and it runs on a plain JVM — which is the only
+     * reason this encoding can be pinned byte-for-byte in a unit test. That
+     * matters because a silent encoding mistake turns a stored sign-in into a
+     * permanent 401 that looks exactly like a wrong password.</p>
+     *
+     * <p>The returned value is a secret in transit: callers attach it to the
+     * request and never log, persist, or reflect it.</p>
+     *
+     * @throws IllegalArgumentException when either part is missing
+     */
+    static String basicAuthorizationHeader(String username, String password) {
+        if (username == null || password == null) {
+            throw new IllegalArgumentException("username and password must not be null");
+        }
+        String pair = username + ":" + password;
+        return "Basic " + Base64.getEncoder().encodeToString(
+                pair.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-27
+
+### Fixed
+
+- A launcher web app that protects its own loopback endpoint with HTTP Basic
+  auth is now usable instead of being reported as broken (ADR-0058). The
+  endpoint probe already treated the `401` as proof of life, but the WebView
+  never answered the challenge: the platform default checked an empty
+  `WebViewDatabase` and cancelled the load, and the surface then rendered
+  "could not be shown · HTTP 401" with a *Try again* action that could never
+  succeed. A reachable app that merely wants a username and password now
+  renders its own **Sign in required** state and a native sign-in card — the
+  app's own icon, its name, the server's realm, username, password, submit,
+  and a *Remember this sign-in* checkbox — and the app's page loads once the
+  challenge is answered. The card is closed by a page that actually arrives,
+  never by the submit tap, so a wrong password shows one rejection instead of
+  flickering the surface twice. A remembered pair is encrypted through the
+  existing Android Keystore vault, is scoped to that one app, is reused for the
+  launcher tile's icon request, and is cleared when the app is removed; a wrong
+  one is recovered by re-submitting, with the username prefilled. The sign-in
+  UI is a native view on purpose: the web-app surface still registers no
+  JavaScript interface, and the password never enters the WebView renderer.
+  Known limit: a challenge carries no port, so it is pinned to the owned host
+  only (`SECURITY.md`). Device-verified on the S10e (API 31) — WA-028..033 in
+  `docs/test-plan.md`; the cross-port challenge case (WA-034) remains a
+  recorded limitation, not a result.
+
 ## [0.11.0] - 2026-09-27
 
 ### Added

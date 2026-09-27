@@ -44,4 +44,31 @@ public class WebAppWindowPolicyContractTest {
         assertTrue(source.contains("current.newWebViewClient"));
         assertTrue(source.contains("handleBack()"));
     }
+
+    /**
+     * Guards the auth-challenge wiring that a JVM suite cannot execute: the
+     * surface hands the sign-in responder into every tab's client, the
+     * wrapping client forwards the challenge (it is registered in place of the
+     * boundary's client, so without the forward the challenge silently dies),
+     * and a 401 on the own origin becomes AUTH_REQUIRED instead of a failure.
+     */
+    @Test
+    public void httpAuthChallengesReachTheResponderAndBecomeTheirOwnState() throws Exception {
+        String source = source(
+                "app/src/main/java/gh/nusashell/nusadesk/presentation/webapp/WebAppSurfaceView.java");
+
+        assertTrue(source.contains("implements WebAppSignInState"));
+        assertTrue(source.contains("AUTH_REQUIRED"));
+        assertTrue(source.contains("signInResponder"));
+        assertTrue(source.contains("onReceivedHttpAuthRequest"));
+        assertTrue(source.contains("delegate.onReceivedHttpAuthRequest"));
+        assertTrue(source.contains("statusCode == 401"));
+        assertTrue(source.contains("ERROR_AUTHENTICATION"));
+        assertTrue(source.contains("showSignInRequired()"));
+        assertTrue(source.contains("hideSignInRequired()"));
+        // The delegating client must forward a finished page, or the sign-in
+        // card that now waits for one could never be dismissed.
+        assertTrue(source.contains("onPageFinished"));
+        assertTrue(source.contains("handlePageLoaded()"));
+    }
 }

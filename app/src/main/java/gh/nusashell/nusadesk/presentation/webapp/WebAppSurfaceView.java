@@ -8,6 +8,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
+import android.webkit.HttpAuthHandler;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -24,6 +25,7 @@ import android.widget.TextView;
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.ExternalLinkHandler;
+import gh.nusashell.nusadesk.infrastructure.runtimehost.HttpAuthResponder;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackWebViewClient;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.WebViewFailureListener;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppReadinessObserver;
@@ -49,9 +51,11 @@ import java.util.concurrent.ExecutorService;
  * leave for the system browser, and no JavaScript interface is registered.</p>
  *
  * <p>Every state is explicit and recoverable — probing, unreachable, failed
- * (blocked navigation or a dead renderer), and loaded — and every non-loaded
- * state offers the one action that can change it. Reachability is not health:
- * the surface never claims the app itself is working.</p>
+ * (blocked navigation or a dead renderer), sign-in required, and loaded — and
+ * every non-loaded state offers the one action that can change it.
+ * Reachability is not health: the surface never claims the app itself is
+ * working, and an app that answers with an auth challenge is never reported
+ * as broken — {@link #AUTH_REQUIRED} is a state of its own (ADR-0058).</p>
  *
  * <p>Surface lifecycle: the WebView is created lazily on the first reachable
  * probe and retained while the surface is switched by visibility, so scrollback
@@ -59,10 +63,10 @@ import java.util.concurrent.ExecutorService;
  * definition keeps the live page; re-binding to a changed definition, or
  * retrying, starts a fresh probe and a fresh load.</p>
  */
-public final class WebAppSurfaceView extends FrameLayout {
+public final class WebAppSurfaceView extends FrameLayout implements WebAppSignInState {
 
     /** What the surface currently shows. */
-    public enum State { PROBING, UNREACHABLE, FAILED, LOADED }
+    public enum State { PROBING, UNREACHABLE, FAILED, LOADED, AUTH_REQUIRED }
 
     /**
      * Receives the moment this app's own endpoint proved reachable, before the
@@ -97,6 +101,7 @@ public final class WebAppSurfaceView extends FrameLayout {
     private WebAppDefinition definition;
     private WebAppWebViewBoundary boundary;
     private ExecutorService probeExecutor;
+    private HttpAuthResponder signInResponder;
     /** Alias for the permanent root tab, retained for existing surface logic. */
     private WebView webView;
     private State state = State.PROBING;
@@ -204,6 +209,12 @@ public final class WebAppSurfaceView extends FrameLayout {
      * to the launcher. UI thread only.
      */
     public boolean handleBack() {
+        // A pending sign-in prompt owns Back first: the challenge it is
+        // answering is still open, so the gesture must cancel it before it
+        // reaches page history, a child tab, or the shell.
+        if (signInResponder != null && signInResponder.handleBack()) {
+            return true;
+        }
         WebView selected = tabWebViews.get(tabStack.selectedTabId());
         if (selected != null && selected.canGoBack()) {
             selected.goBack();
@@ -222,15 +233,23 @@ public final class WebAppSurfaceView extends FrameLayout {
      * live page, so returning from the launcher does not throw the app's state
      * away; anything else re-probes and reloads.
      *
-     * @param definition the registered app
-     * @param executor   background executor for the bounded probe
+     * @param definition      the registered app
+     * @param executor        background executor for the bounded probe
+     * @param signInResponder answers the app's own HTTP auth challenges; every
+     *                        tab's WebView client forwards its challenge here,
+     *                        so a sign-in prompt belongs to the whole surface
+     * @throws IllegalArgumentException when any argument is null
      */
-    public void bind(WebAppDefinition definition, ExecutorService executor) {
+    public void bind(WebAppDefinition definition, ExecutorService executor,
+                     HttpAuthResponder signInResponder) {
         if (definition == null) {
             throw new IllegalArgumentException("definition must not be null");
         }
         if (executor == null) {
             throw new IllegalArgumentException("executor must not be null");
+        }
+        if (signInResponder == null) {
+            throw new IllegalArgumentException("signInResponder must not be null");
         }
         boolean sameApp = definition.equals(this.definition);
         if (!sameApp) {
@@ -240,6 +259,7 @@ public final class WebAppSurfaceView extends FrameLayout {
         this.definition = definition;
         this.boundary = new WebAppWebViewBoundary(definition);
         this.probeExecutor = executor;
+        this.signInResponder = signInResponder;
         if (sameApp && state == State.LOADED && webView != null) {
             render();
             return;
@@ -260,6 +280,13 @@ public final class WebAppSurfaceView extends FrameLayout {
     }
 
     private void startProbe() {
+        // A fresh load supersedes whatever the previous one was waiting for.
+        // The responder is told first, so a sign-in challenge parked from an
+        // abandoned navigation is cancelled instead of outliving it and
+        // answering the next submission into a dead handler.
+        if (signInResponder != null) {
+            signInResponder.reset();
+        }
         state = State.PROBING;
         failureDetail = null;
         render();
@@ -322,7 +349,8 @@ public final class WebAppSurfaceView extends FrameLayout {
         created.getSettings().setSupportMultipleWindows(true);
         created.getSettings().setJavaScriptCanOpenWindowsAutomatically(false);
         created.setWebViewClient(new SurfaceWebViewClient(
-                current.newWebViewClient(externalLinkHandler(), failureListener(tabId))));
+                current.newWebViewClient(
+                        externalLinkHandler(), failureListener(tabId), signInResponder)));
         created.setWebChromeClient(new SurfaceWebChromeClient(tabId, current));
         return created;
     }
@@ -353,12 +381,23 @@ public final class WebAppSurfaceView extends FrameLayout {
             return new WebViewFailureListener() {
                 @Override
                 public void onLoadError(int errorCode, String description, String failingUrl) {
-                    showFailure(description);
+                    // ERROR_AUTHENTICATION is the load abandoned by a refused
+                    // or cancelled challenge — an app asking to be signed into,
+                    // not a broken one.
+                    if (errorCode == WebViewClient.ERROR_AUTHENTICATION) {
+                        showSignInRequired();
+                    } else {
+                        showFailure(description);
+                    }
                 }
 
                 @Override
                 public void onHttpError(int statusCode, String failingUrl) {
-                    showFailure("HTTP " + statusCode);
+                    if (statusCode == 401) {
+                        showSignInRequired();
+                    } else {
+                        showFailure("HTTP " + statusCode);
+                    }
                 }
 
                 @Override
@@ -372,6 +411,11 @@ public final class WebAppSurfaceView extends FrameLayout {
                 }
             };
         }
+        // A child tab follows the same rule for every HTTP error, including a
+        // 401: the sign-in card belongs to the whole surface, not to a popup,
+        // so an auth-protected child closes like any other failed page. Its
+        // challenge still ran through the surface's responder first, so a
+        // submitted pair is already stored before the tab goes away.
         return new WebViewFailureListener() {
             @Override
             public void onLoadError(int errorCode, String description, String failingUrl) {
@@ -404,6 +448,37 @@ public final class WebAppSurfaceView extends FrameLayout {
             state = State.FAILED;
             render();
         });
+    }
+
+    // ---- Sign-in state (WebAppSignInState) ----
+
+    /**
+     * Renders "this app needs a sign-in". Driven by the surface's
+     * {@link HttpAuthResponder} when a challenge cannot be answered silently;
+     * the native card sits on top while it is up, so the same state also backs
+     * the cancelled prompt. UI thread only.
+     */
+    @Override
+    public void showSignInRequired() {
+        if (released) {
+            return;
+        }
+        state = State.AUTH_REQUIRED;
+        render();
+    }
+
+    /**
+     * Optimistically returns to {@link State#LOADED} so the page resumes the
+     * moment an answer is sent. A rejected answer re-enters
+     * {@link #showSignInRequired()} through the next challenge. UI thread only.
+     */
+    @Override
+    public void hideSignInRequired() {
+        if (released) {
+            return;
+        }
+        state = State.LOADED;
+        render();
     }
 
     /**
@@ -530,12 +605,35 @@ public final class WebAppSurfaceView extends FrameLayout {
             }
         }
 
+        /**
+         * A finished page is the only proof that a submitted sign-in was
+         * accepted, so it is what closes the card. The responder is asked
+         * rather than the state being flipped directly: it knows whether a pair
+         * was still in flight, and a plain page load with no sign-in pending
+         * must leave the surface exactly as it found it.
+         */
+        @Override
+        public void onPageFinished(WebView view, String url) {
+            delegate.onPageFinished(view, url);
+            if (signInResponder != null && signInResponder.handlePageLoaded()) {
+                hideSignInRequired();
+            }
+        }
+
         @Override
         public void onReceivedHttpError(
                 WebView view, WebResourceRequest request, WebResourceResponse response) {
             if (request != null && request.isForMainFrame()) {
                 delegate.onReceivedHttpError(view, request, response);
             }
+        }
+
+        @Override
+        public void onReceivedHttpAuthRequest(
+                WebView view, HttpAuthHandler handler, String host, String realm) {
+            // Not main-frame filtered: the delegate's own host policy already
+            // scopes the answer to the app's origin, whatever frame asked.
+            delegate.onReceivedHttpAuthRequest(view, handler, host, realm);
         }
 
         @Override
@@ -554,6 +652,7 @@ public final class WebAppSurfaceView extends FrameLayout {
         }
         String name = current.getDisplayName();
         stateAction.setVisibility(GONE);
+        stateAction.setText(R.string.webapp_state_retry);
         stateProgress.setVisibility(GONE);
         switch (state) {
             case PROBING:
@@ -578,6 +677,16 @@ public final class WebAppSurfaceView extends FrameLayout {
                         R.string.webapp_state_failed_body, failureText()));
                 stateAction.setVisibility(VISIBLE);
                 break;
+            case AUTH_REQUIRED:
+                statePanel.setVisibility(VISIBLE);
+                stateTitle.setText(getContext().getString(
+                        R.string.webapp_state_signin_title, name));
+                stateBody.setText(R.string.webapp_state_signin_body);
+                // "Sign in" re-drives the load so the server challenges again
+                // and the card reappears — the same retry the other states get.
+                stateAction.setText(R.string.webapp_state_signin_action);
+                stateAction.setVisibility(VISIBLE);
+                break;
             case LOADED:
             default:
                 statePanel.setVisibility(GONE);
@@ -597,6 +706,9 @@ public final class WebAppSurfaceView extends FrameLayout {
             return;
         }
         released = true;
+        if (signInResponder != null) {
+            signInResponder.reset();
+        }
         destroyWebView();
     }
 

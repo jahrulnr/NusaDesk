@@ -3,18 +3,23 @@ package gh.nusashell.nusadesk.infrastructure.runtimehost;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 /**
- * Pure routing tests for {@link LoopbackWebViewClient#route}. These exercise the
- * exact-origin decision mapping without instantiating the Android
- * {@code WebViewClient} (which requires an Android runtime). The underlying
- * classification is covered by {@code LoopbackNavigationPolicyTest} in the
- * domain layer; here we assert the WebViewClient maps each decision to the
- * correct WebView action.
+ * Pure routing and challenge tests for {@link LoopbackWebViewClient}. These
+ * exercise the exact-origin decision mapping and the auth-challenge gate
+ * without instantiating the Android {@code WebViewClient} (which requires an
+ * Android runtime). The underlying classifications are covered by
+ * {@code LoopbackNavigationPolicyTest} in the domain layer; here we assert the
+ * WebViewClient maps each decision to the correct WebView action.
  */
 public class LoopbackWebViewClientRouteTest {
     private final LoopbackNavigationPolicy policy =
             new LoopbackNavigationPolicy("http://127.0.0.1:8080");
+    private final LoopbackAuthChallengePolicy authPolicy =
+            new LoopbackAuthChallengePolicy("http://127.0.0.1:8080");
 
     @Test
     public void ownedOriginLoadsInWebView() {
@@ -68,5 +73,41 @@ public class LoopbackWebViewClientRouteTest {
     public void unparseableUrlIsBlocked() {
         assertEquals(LoopbackWebViewClient.Action.BLOCK,
                 LoopbackWebViewClient.route(policy, "ht tp://broken"));
+    }
+
+    @Test
+    public void ownedHostChallengeMayBeAnswered() {
+        assertTrue(LoopbackWebViewClient.mayAnswerChallenge(authPolicy, "127.0.0.1"));
+    }
+
+    @Test
+    public void nullHostChallengeIsRefused() {
+        assertFalse(LoopbackWebViewClient.mayAnswerChallenge(authPolicy, null));
+    }
+
+    @Test
+    public void anotherLoopbackHostChallengeIsRefused() {
+        // The owned host is exactly 127.0.0.1: other loopback spellings and
+        // other loopback addresses are not it.
+        assertFalse(LoopbackWebViewClient.mayAnswerChallenge(authPolicy, "localhost"));
+        assertFalse(LoopbackWebViewClient.mayAnswerChallenge(authPolicy, "127.0.0.2"));
+        assertFalse(LoopbackWebViewClient.mayAnswerChallenge(authPolicy, "::1"));
+        assertFalse(LoopbackWebViewClient.mayAnswerChallenge(authPolicy, "[::1]"));
+    }
+
+    @Test
+    public void lanAddressChallengeIsRefused() {
+        assertFalse(LoopbackWebViewClient.mayAnswerChallenge(authPolicy, "192.168.1.10"));
+    }
+
+    @Test
+    public void publicHostnameChallengeIsRefused() {
+        assertFalse(LoopbackWebViewClient.mayAnswerChallenge(authPolicy, "example.com"));
+    }
+
+    @Test
+    public void nullAuthPolicyThrows() {
+        assertThrows(IllegalArgumentException.class,
+                () -> LoopbackWebViewClient.mayAnswerChallenge(null, "127.0.0.1"));
     }
 }

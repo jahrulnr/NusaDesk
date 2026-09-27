@@ -118,6 +118,36 @@ and persistence.
 | WA-025 | `window.close()` from a child tab | Only that child tab closes; the root tab cannot be closed |
 | WA-026 | Background/script popup or fifth child popup | The request is refused; existing tabs and the root page remain unchanged |
 | WA-027 | Child opens another loopback port or external HTTPS link | The other loopback origin is blocked; external HTTPS leaves through the system browser |
+| WA-028 | Open an app whose server answers `401` with `WWW-Authenticate: Basic` (ADR-0058) | The surface reports an explicit needs-sign-in state and the native sign-in card; it never claims the app "could not be shown", never shows a bare `HTTP 401`, and no browser error page appears |
+| WA-029 | Submit a correct username and password on the card | The app's own page renders and the state panel is gone; the card is dismissed |
+| WA-030 | Sign in with "remember on this device", then force-stop and relaunch | The stored pair answers the challenge and the page renders with no card; the password is not readable in app-private storage in plaintext |
+| WA-031 | Submit a wrong password | The card returns stating the sign-in was rejected and does not loop; correcting the password in the same card succeeds |
+| WA-032 | Remove an auth-protected app from the launcher | The stored credential is cleared together with the app's record, so nothing is left on the device |
+| WA-033 | Auth-protected app on the launcher after a successful sign-in | The tile shows the icon the app declares, because the same stored pair answers the bounded same-origin favicon request |
+| WA-034 | A page served by app A references a subresource on another loopback port that challenges for credentials | **Known limitation (ADR-0058):** a challenge carries no port, so it is pinned to the owned host only and may be answered with app A's stored pair. Record what actually happens; do not treat this as a pass |
+
+**Run 2026-09-27, Samsung S10e (SM-G970F, API 31, arm64).** A throwaway
+Basic-auth fixture was served from inside the live guest on `127.0.0.1:18099`
+(`/proc/net/tcp` showed `0100007F:46B3` state `0A` owned by the app uid), and
+the app was registered as a web app on that port.
+
+| Case | Result |
+| --- | --- |
+| WA-028 | PASS. Opening the tile rendered the native sign-in card (app mark, `Sign in to QA auth`, the realm `NusaDesk QA` read from `WWW-Authenticate`, username, password, remember, Cancel/Sign in) over the `QA auth needs a sign-in` panel. No `could not be shown`, no `HTTP 401`, no browser error page. Back dismissed the card and left that panel with its one `Sign in` action |
+| WA-029 | PASS. `demo:s3cret` → the guest log recorded `GET / … auth=AUTH-OK` and the app's own page rendered (`QA auth app` / `signed-in page rendered`) |
+| WA-030 | PASS. Force-stop + relaunch opened the tile straight to the page with no card: the guest log recorded `AUTH-OK` for both `GET /` and `GET /icon.png` |
+| WA-031 | PASS. A wrong pair produced `AUTH-FAIL`, the card stayed up and re-rendered with `That sign-in was not accepted…` and a live form — no automatic repeat, no loop. The card's `Forget saved sign-in` action was cut from this slice, so recovery is re-submitting the corrected password (the username is prefilled) or removing the app |
+| WA-032 | PASS. `shared_prefs/session_credentials.xml` held `webapp.<uuid>.blob` before the removal and nothing after it; only `local-ssh-bridge` remained |
+| WA-033 | PASS. The launcher tile swapped `tile_monogram` for `tile_image`, and the guest log shows `/icon.png` answered with the stored credential |
+| WA-034 | NOT EXERCISED. Recorded as a known limitation, not a result |
+| at rest | `s3cret` appears in no SharedPreferences file; the pair is stored as `webapp.<uuid>` with `type=PASSWORD` and a Base64 AES-GCM blob in the same Keystore vault as the SSH credential |
+
+Device-only evidence that unit tests could not produce: the real
+`onReceivedHttpAuthRequest` → `proceed` → rendered-page cycle, the Back
+gesture actually reaching the card, and IME behaviour while the card is up.
+Two defects were found only here — an `OnKeyListener` on the card that could
+never receive Back, and a card that dismissed on submit and reopened on
+refusal, which flashed the surface twice per wrong password.
 
 ### Regression checks tied to shipped defects
 

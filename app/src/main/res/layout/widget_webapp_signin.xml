@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Native sign-in card for an auth-protected web app (ADR-0058). This is a
+     plain View overlay, never a dialog window and never an injected page: the
+     WebView's exact-origin and no-JavaScript-bridge rules stay untouched, and
+     the username/password live in native widgets where the page cannot reach
+     them. The root is an opaque full-size scrim so the aborted load behind it
+     is never visible, and it is clickable so touches cannot fall through to
+     the WebView. Inflated and attached by WebAppSignInCard. -->
+<!-- The Overdraw check assumes the inflated root is the window root, whose
+     background would sit on top of a theme background. It is not: this is a
+     child overlay added to the web-app surface, directly above a WebView. The
+     opaque background is what hides the aborted 401 load behind the card and
+     what stops touches falling through to the page, so it is required paint,
+     not redundant paint. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:clickable="true"
+    android:fillViewport="true"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
+    android:scrollbars="none"
+    tools:ignore="Overdraw">
+
+    <!-- fillViewport plus the card's own center gravity centers the card when
+         it is shorter than the screen and lets the whole form scroll when font
+         scaling or rotation makes it taller. The card's screen margin is a
+         margin rather than padding so the outer wrapper could be dropped: it
+         sized itself from the root width, which this does not change. The
+         width cap is applied to webapp_signin_card in code, the same
+         min(screen - margins, nusadesk_dialog_max_width) rule the capability
+         dialogs use. -->
+    <LinearLayout
+        android:id="@+id/webapp_signin_card"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_gravity="center"
+    android:layout_margin="@dimen/nusadesk_dialog_screen_margin"
+    android:background="@drawable/nusadesk_dialog_surface"
+    android:orientation="vertical"
+    android:padding="@dimen/nusadesk_dialog_padding">
+
+            <LinearLayout
+                style="@style/Widget.LinuxWrapper.AppTileIcon">
+
+                <!-- The app's own icon once the launcher has decoded one for
+                     its tile; the layout's src is the NusaDesk mark, which is
+                     also the fallback the code restores. -->
+                <ImageView
+                    android:id="@+id/webapp_signin_icon"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:importantForAccessibility="no"
+                    android:scaleType="centerInside"
+                    android:src="@mipmap/ic_launcher" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/webapp_signin_title"
+                style="@style/Widget.LinuxWrapper.DialogTitle"
+                android:gravity="center"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:paddingTop="12dp" />
+
+            <TextView
+                android:id="@+id/webapp_signin_body"
+                style="@style/Widget.LinuxWrapper.DialogMessage"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/webapp_signin_realm"
+                style="@style/Widget.LinuxWrapper.DialogMessage"
+                android:gravity="center"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/webapp_signin_rejected"
+                style="@style/Widget.LinuxWrapper.FieldError"
+                android:gravity="center"
+                android:visibility="gone" />
+
+            <TextView
+                style="@style/Widget.LinuxWrapper.FieldLabel"
+                android:layout_marginTop="16dp"
+                android:labelFor="@id/webapp_signin_username"
+                android:text="@string/webapp_signin_username" />
+
+            <EditText
+                android:id="@+id/webapp_signin_username"
+                style="@style/Widget.LinuxWrapper.FieldInput"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="text|textNoSuggestions" />
+
+            <TextView
+                android:id="@+id/webapp_signin_username_error"
+                style="@style/Widget.LinuxWrapper.FieldError"
+                android:visibility="gone" />
+
+            <TextView
+                style="@style/Widget.LinuxWrapper.FieldLabel"
+                android:layout_marginTop="12dp"
+                android:labelFor="@id/webapp_signin_password"
+                android:text="@string/webapp_signin_password" />
+
+            <EditText
+                android:id="@+id/webapp_signin_password"
+                style="@style/Widget.LinuxWrapper.FieldInput"
+                android:imeOptions="actionDone"
+                android:importantForAutofill="no"
+                android:inputType="textPassword" />
+
+            <TextView
+                android:id="@+id/webapp_signin_password_error"
+                style="@style/Widget.LinuxWrapper.FieldError"
+                android:visibility="gone" />
+
+            <CheckBox
+                android:id="@+id/webapp_signin_remember"
+                style="@style/Widget.LinuxWrapper.DialogChoice"
+                android:layout_marginTop="8dp"
+                android:text="@string/webapp_signin_remember" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="end"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/webapp_signin_cancel"
+                    style="@style/Widget.LinuxWrapper.DialogButtonNeutral"
+                    android:layout_marginEnd="@dimen/nusadesk_dialog_button_gap"
+                    android:text="@string/webapp_signin_cancel" />
+
+                <Button
+                    android:id="@+id/webapp_signin_submit"
+                    style="@style/Widget.LinuxWrapper.DialogButtonPrimary"
+                    android:text="@string/webapp_signin_submit" />
+            </LinearLayout>
+    </LinearLayout>
+</ScrollView>

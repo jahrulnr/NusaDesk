@@ -3,7 +3,7 @@
 ## Project status
 
 NusaDesk is an Android/Linux workspace. The current
-version is `0.11.0`. Runtime evidence covers the core runtime (Ubuntu Base
+version is `0.11.1`. Runtime evidence covers the core runtime (Ubuntu Base
 install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
 Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
 Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
@@ -16,7 +16,12 @@ command contract — device state, text/notifications, speech and dialog,
 capture, storage/SAF/share, comms (SMS send, telephony call, keystore, job
 scheduler), the sensor catalogue, wifi reads, infrared, media playback, NFC,
 USB, and fingerprint — each device-verified per
-`docs/evidence/termux-parity-matrix.md`. The 0.8.0 capability surface
+`docs/evidence/termux-parity-matrix.md`. The web-app HTTP sign-in path
+(ADR-0058) — a native card, per-app credentials in the Keystore vault, and the
+challenge policy that answers only the owned host — was device-verified on that
+same S10e (WA-028..033 in `docs/test-plan.md`); its one unresolved case, a
+challenge that cannot be pinned to a port, is recorded as a limitation rather
+than a result. The 0.8.0 capability surface
 (ADR-0050/0051/0052) was verified with the S10e and the S7 Edge as each other's
 peer: the Bluetooth modules (BLE advertise/scan, GATT client against the other
 phone's GATT server, RFCOMM echo, discovery, pairing), the wifi extras (a real
@@ -66,7 +71,7 @@ especially issues involving:
 - archive extraction escaping app-private storage or creating unsafe file types;
 - bypassing the fixed loopback or exact-origin WebView boundaries;
 - unintended access to another local web-app port or external host;
-- SSH host-key, credential, or Keystore handling;
+- SSH host-key, credential, web-app sign-in credential, or Keystore handling;
 - process supervision, orphan guest processes, stale PID files, or false
   `RUNNING`/readiness states;
 - secrets exposed in logs, URLs, process arguments, APK resources, or crash
@@ -127,6 +132,29 @@ The following are deliberate properties of the current design:
   generated loopback origin. Different loopback ports are blocked, external
   links leave for the system browser, and no broad JavaScript interface is
   registered.
+- **Web-app HTTP sign-in is answered per app, never through
+  `WebViewDatabase`.** A registered app may protect its own endpoint with
+  HTTP Basic auth; the challenge is answered only when it names the exact
+  host the WebView owns — always the literal `127.0.0.1` for a registered
+  app — and is refused for any other host. `WebViewDatabase` is never used,
+  because it stores credentials in plaintext. A remembered pair lives in the
+  same AES-256-GCM `AndroidKeyStore` vault as the SSH credentials under the
+  per-app id `webapp.<webAppId>`, is tried at most once per surface open, and
+  is forgotten when the app is removed; a pair is entered only in response to
+  the app's own challenge, never collected in the Add/Edit form. The sign-in
+  card is a native View: no JavaScript bridge was added for it, and the
+  password goes from the field to the vault without entering the WebView
+  renderer (ADR-0058).
+- **A WebView auth challenge cannot be pinned to a port.** The platform
+  reports a challenged host and realm but no port, and the public
+  `HttpAuthHandler` exposes only `cancel()`, `proceed(String, String)`, and
+  `useHttpAuthUsernamePassword()`. Every registered app shares the host
+  `127.0.0.1`, so a page served by one app that references a subresource on
+  another app's port would be answered with the first app's stored pair if
+  that port challenges the fetch. The practical exposure is bounded — the
+  referring page is content the user installed in their own guest and could
+  already read the same password off the guest filesystem — but the limit is
+  real and is recorded in ADR-0058 rather than claimed solved.
 - **The runtime is app-visible.** Linux starts from an Activity foreground
   event and remains visible through an Android foreground-service notification.
   There is no boot or silent LAN autostart path.

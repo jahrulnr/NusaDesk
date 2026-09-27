@@ -3,21 +3,47 @@ package gh.nusashell.nusadesk.infrastructure.webapp;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.webapp.WebAppId;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackNavigationPolicy;
+import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackWebViewClient;
+import gh.nusashell.nusadesk.infrastructure.runtimehost.WebViewFailureListener;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
 
 /**
- * Pure tests for the per-app WebView boundary. Only the origin decisions are
- * exercised here; the Android {@code WebViewClient} and {@code WebSettings} are
- * built by the same boundary but require an Android runtime to instantiate.
+ * Tests for the per-app WebView boundary. The origin decisions are pure and are
+ * exercised directly; the {@code WebViewClient} wiring tests run under
+ * Robolectric because instantiating the client's {@code WebViewClient}
+ * superclass needs an Android runtime.
  */
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 29)
 public class WebAppWebViewBoundaryTest {
     private final WebAppWebViewBoundary boundary = boundaryFor(8080);
     private final WebAppWebViewBoundary otherApp = boundaryFor(9090);
+
+    private static final WebViewFailureListener NO_FAILURES = new WebViewFailureListener() {
+        @Override
+        public void onLoadError(int errorCode, String description, String failingUrl) {
+        }
+
+        @Override
+        public void onHttpError(int statusCode, String failingUrl) {
+        }
+
+        @Override
+        public void onBlockedNavigation(String url) {
+        }
+
+        @Override
+        public void onRenderProcessGone() {
+        }
+    };
 
     private static WebAppWebViewBoundary boundaryFor(int guestPort) {
         return new WebAppWebViewBoundary(new WebAppDefinition(
@@ -120,5 +146,34 @@ public class WebAppWebViewBoundaryTest {
     public void exposesTheDefinitionItGuards() {
         assertNotNull(boundary.getDefinition());
         assertEquals(8080, boundary.getDefinition().getGuestPort());
+    }
+
+    @Test
+    public void newWebViewClientBuildsTheBoundaryClient() {
+        LoopbackWebViewClient client = boundary.newWebViewClient(
+                uri -> { }, NO_FAILURES, (host, realm, answer) -> { });
+        assertNotNull(client);
+    }
+
+    @Test
+    public void newWebViewClientRejectsMissingCollaborators() {
+        try {
+            boundary.newWebViewClient(null, NO_FAILURES, (host, realm, answer) -> { });
+            fail();
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            boundary.newWebViewClient(uri -> { }, null, (host, realm, answer) -> { });
+            fail();
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            boundary.newWebViewClient(uri -> { }, NO_FAILURES, null);
+            fail();
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
     }
 }

@@ -4,6 +4,8 @@ import android.webkit.WebView;
 
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.ExternalLinkHandler;
+import gh.nusashell.nusadesk.infrastructure.runtimehost.HttpAuthResponder;
+import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackAuthChallengePolicy;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackNavigationPolicy;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackWebViewClient;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackWebViewConfig;
@@ -24,6 +26,10 @@ import gh.nusashell.nusadesk.infrastructure.runtimehost.WebViewFailureListener;
  *       the WebView for the system browser;</li>
  *   <li>{@code file}, {@code content}, {@code javascript}, {@code data},
  *       {@code blob} and non-blank {@code about:} URLs are blocked;</li>
+ *   <li>an HTTP auth challenge is answered through a supplied
+ *       {@link HttpAuthResponder} only when it names the app's own host;
+ *       a challenge naming anything else is cancelled, and
+ *       {@code WebViewDatabase} is never consulted (ADR-0058);</li>
  *   <li>no JavaScript interface is registered, and file / universal
  *       file-from-URL access stays disabled.</li>
  * </ul>
@@ -42,6 +48,7 @@ import gh.nusashell.nusadesk.infrastructure.runtimehost.WebViewFailureListener;
 public final class WebAppWebViewBoundary {
     private final WebAppDefinition definition;
     private final LoopbackNavigationPolicy navigationPolicy;
+    private final LoopbackAuthChallengePolicy authChallengePolicy;
     private final LoopbackWebViewConfig webViewConfig = new LoopbackWebViewConfig();
 
     /**
@@ -54,6 +61,7 @@ public final class WebAppWebViewBoundary {
         }
         this.definition = definition;
         this.navigationPolicy = new LoopbackNavigationPolicy(definition.getEndpointUrl());
+        this.authChallengePolicy = new LoopbackAuthChallengePolicy(definition.getEndpointUrl());
     }
 
     /** The app this boundary guards. */
@@ -95,10 +103,17 @@ public final class WebAppWebViewBoundary {
     /**
      * Builds the {@link LoopbackWebViewClient} that enforces {@link #classify(String)}
      * for this app. External URLs go to {@code externalHandler}; blocked
-     * navigations and load/render failures go to {@code failureListener}.
+     * navigations and load/render failures go to {@code failureListener}; and an
+     * HTTP auth challenge naming this app's host is handed to
+     * {@code authResponder} while a challenge naming anything else is
+     * cancelled — {@code WebViewDatabase} is never consulted.
      */
     public LoopbackWebViewClient newWebViewClient(
-            ExternalLinkHandler externalHandler, WebViewFailureListener failureListener) {
-        return new LoopbackWebViewClient(navigationPolicy, externalHandler, failureListener);
+            ExternalLinkHandler externalHandler,
+            WebViewFailureListener failureListener,
+            HttpAuthResponder authResponder) {
+        return new LoopbackWebViewClient(
+                navigationPolicy, externalHandler, failureListener,
+                authChallengePolicy, authResponder);
     }
 }

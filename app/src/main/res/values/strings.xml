@@ -155,7 +155,9 @@
 
     <!-- Add / edit web app. The user names an app, may pick an image, and enters
          the guest port it serves on. The endpoint is generated from that port;
-         there is no URL field, and no host, credential, or profile input. -->
+         there is no URL field, and no host, credential, or profile input —
+         an app that asks for sign-in is handled later, on demand, by the
+         native webapp_signin_* card (ADR-0058). -->
     <string name="webapp_add_title">Add app</string>
     <string name="launcher_add_label">Add</string>
     <string name="webapp_add_desc">Add app. Register a local web app by name, image, and port.</string>
@@ -226,6 +228,25 @@
     <string name="webapp_state_retry">Try again</string>
     <string name="webapp_state_blocked">The page tried to open an address that is not this app.</string>
     <string name="webapp_state_crashed">The page stopped responding.</string>
+    <string name="webapp_state_signin_title">%1$s needs a sign-in</string>
+    <string name="webapp_state_signin_body">The app is running, but it asks for a username and password before it opens.</string>
+    <string name="webapp_state_signin_action">Sign in</string>
+
+    <!-- On-demand sign-in card for an app that protects its own endpoint
+         (ADR-0058). The pair goes only to this app; a remembered pair is kept
+         encrypted and can be forgotten again. -->
+    <string name="webapp_signin_title">Sign in to %1$s</string>
+    <string name="webapp_signin_body">This app requires permission access.</string>
+    <string name="webapp_signin_realm">The app calls this sign-in “%1$s”.</string>
+    <string name="webapp_signin_username">Username</string>
+    <string name="webapp_signin_password">Password</string>
+    <string name="webapp_signin_submit">Sign in</string>
+    <string name="webapp_signin_cancel">Cancel</string>
+    <string name="webapp_signin_remember">Remember this sign-in</string>
+    <string name="webapp_signin_checking">Checking…</string>
+    <string name="webapp_signin_error_username">Enter a username (at most 256 characters).</string>
+    <string name="webapp_signin_error_password">Enter a password.</string>
+    <string name="webapp_signin_rejected">That sign-in was not accepted. Check the username and password, then try again.</string>
 
     <!-- Linux system screen: a hub with three grouped pages (ADR-0043) —
          Settings, One-click install, and About NusaDesk. Each sub-page carries
