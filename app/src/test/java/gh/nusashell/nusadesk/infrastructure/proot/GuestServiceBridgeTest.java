@@ -1,5 +1,8 @@
 package gh.nusashell.nusadesk.infrastructure.proot;
 
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
 import gh.nusashell.nusadesk.domain.runtime.VendoredFile;
 
@@ -82,10 +85,78 @@ public class GuestServiceBridgeTest {
     }
 
     @Test
+    public void inspectSeparatesNeverInstalledFromDamaged() throws Exception {
+        // Never installed: the documented opt-out, no complaint owed.
+        assertEquals(GuestServiceBridge.Absence.NOT_INSTALLED,
+                GuestServiceBridge.inspect(null).getAbsence());
+        assertEquals(GuestServiceBridge.Absence.NOT_INSTALLED,
+                GuestServiceBridge.inspect(overlay.getRoot().toPath()).getAbsence());
+
+        // An overlay directory that exists but cannot serve the bridge is a
+        // different state: the rootfs symlinks point into it, so the guest
+        // sees a `systemctl` that exists and fails. That must not read as an
+        // intentional opt-out.
+        touch(overlay.getRoot(), "usr/bin/python3.12");
+        GuestServiceBridge.Detection halfWired =
+                GuestServiceBridge.inspect(overlay.getRoot().toPath());
+        assertEquals(GuestServiceBridge.Absence.CORRUPT, halfWired.getAbsence());
+        assertNull(halfWired.getBridge());
+        assertEquals("a failing member is named so the log is actionable",
+                "usr/bin/systemctl", halfWired.getDetail());
+
+        // The mirror case pins the rule in both directions: whichever half is
+        // missing, the overlay is damaged rather than absent.
+        Files.delete(overlay.getRoot().toPath().resolve("usr/bin/python3.12"));
+        touch(overlay.getRoot(), "usr/bin/systemctl");
+        GuestServiceBridge.Detection otherHalf =
+                GuestServiceBridge.inspect(overlay.getRoot().toPath());
+        assertEquals(GuestServiceBridge.Absence.CORRUPT, otherHalf.getAbsence());
+        assertEquals(CuratedRuntimeCatalog.guestServiceBridge().getEntrypoint(),
+                otherHalf.getDetail());
+        Files.delete(overlay.getRoot().toPath().resolve("usr/bin/systemctl"));
+
+        // A complete overlay is usable and detect() agrees with inspect().
+        bridge();
+        GuestServiceBridge.Detection complete =
+                GuestServiceBridge.inspect(overlay.getRoot().toPath());
+        assertNull(complete.getAbsence());
+        assertNotNull(complete.getBridge());
+        assertEquals("", complete.getDetail());
+        assertNotNull(GuestServiceBridge.detect(overlay.getRoot().toPath()));
+    }
+
+    @Test
+    public void inspectCallsAStaleVendoredMemberDamageNotAbsence() throws Exception {
+        assertNotNull(bridge());
+        Path runtime = overlay.getRoot().toPath()
+                .resolve("usr/local/lib/nusadesk/compose/lw_compose_runtime.py");
+        byte[] pinnedBytes = Files.readAllBytes(runtime);
+        try {
+            Files.write(runtime, "tampered".getBytes(StandardCharsets.UTF_8));
+
+            GuestServiceBridge.Detection detection =
+                    GuestServiceBridge.inspect(overlay.getRoot().toPath());
+
+            assertEquals(GuestServiceBridge.Absence.CORRUPT, detection.getAbsence());
+            assertEquals("usr/local/lib/nusadesk/compose/lw_compose_runtime.py",
+                    detection.getDetail());
+        } finally {
+            Files.write(runtime, pinnedBytes);
+        }
+    }
+
+    @Test
     public void detectFindsCompleteOverlay() throws Exception {
         GuestServiceBridge bridge = bridge();
         assertNotNull(bridge);
-        assertEquals("/opt/lw-services/usr/bin/systemctl", bridge.getBinaryPath());
+        // Attribution follows the script, not the entrypoint: the entrypoint
+        // is a shell wrapper whose path never reaches the interpreter's
+        // cmdline. Both paths are still pinned, because the entrypoint is what
+        // the launcher wires and binds.
+        assertEquals("/opt/lw-services/usr/lib/nusadesk/systemctl3.py",
+                bridge.getBinaryPath());
+        assertEquals("/opt/lw-services/usr/bin/systemctl",
+                GuestServiceBridge.SYSTEMCTL_GUEST_PATH);
         assertEquals("/opt/lw-services/usr/bin/python3.12",
                 GuestServiceBridge.PYTHON_GUEST_PATH);
         assertTrue(bridge.requiresFakeRoot());
@@ -368,10 +439,12 @@ public class GuestServiceBridgeTest {
 
         // Each product entrypoint is bound at its literal conventional path
         // with the no-dereference (!) marker, after the directory bind, so a
-        // real or foreign guest file/symlink can never shadow it.
+        // real or foreign guest file/symlink can never shadow it. The
+        // interpreter pair is deliberately absent: the entrypoint is a wrapper
+        // that names it by absolute overlay path, and binding it would make an
+        // apt install write through the guest path into the overlay.
         for (String guestPath : Arrays.asList(
-                "/usr/bin/systemctl", "/usr/bin/service",
-                "/usr/bin/python3", "/usr/bin/python3.12")) {
+                "/usr/bin/systemctl", "/usr/bin/service")) {
             int index = indexOfGuestPath(binds, guestPath);
             assertTrue("missing strict bind for " + guestPath, index > 0);
             ProotBindMount bind = binds.get(index);
@@ -394,7 +467,24 @@ public class GuestServiceBridgeTest {
 
         assertTrue(indexOfGuestPath(binds, "/usr/bin/service") < 0);
         assertTrue(indexOfGuestPath(binds, "/usr/bin/systemctl") > 0);
-        assertTrue(indexOfGuestPath(binds, "/usr/bin/python3.12") > 0);
+    }
+
+    @Test
+    public void theInterpreterStaysGuestOwnedSoAptCannotWriteIntoTheOverlay() throws Exception {
+        GuestServiceBridge bridge = bridge();
+
+        List<ProotBindMount> binds = bridge.requiredBinds();
+
+        // A strict bind makes the overlay member the file a guest write lands
+        // on, so `apt install python3.12` wrote through /usr/bin/python3.12
+        // into the overlay and replaced a pinned member — which is how the
+        // bridge ended up failing its own verification. The wrapper execs the
+        // overlay interpreter by absolute path, so these paths do not need to
+        // be ours; leaving them guest-owned keeps apt's writes in the rootfs.
+        assertTrue("the interpreter must not be strict-bound",
+                indexOfGuestPath(binds, "/usr/bin/python3") < 0);
+        assertTrue("the interpreter must not be strict-bound",
+                indexOfGuestPath(binds, "/usr/bin/python3.12") < 0);
     }
 
     @Test
@@ -424,16 +514,21 @@ public class GuestServiceBridgeTest {
 
     @Test
     public void pidFileMatchCoversInitProcessCommandLine() {
-        // The init process's /proc cmdline is
-        // "python3.12 /opt/lw-services/usr/bin/systemctl init"; the containment
-        // test on the script path identifies it.
+        // The running manager's /proc cmdline is
+        // "python3.12 /opt/lw-services/usr/lib/nusadesk/systemctl3.py init":
+        // the entrypoint is a shell wrapper, so what survives into the
+        // interpreter's cmdline is the SCRIPT path, and attribution must use
+        // that or the host stops recognising its own manager.
         String cmdline = "/opt/lw-services/usr/bin/python3.12 "
-                + "/opt/lw-services/usr/bin/systemctl init";
+                + GuestServiceBridge.SYSTEMCTL_SCRIPT_GUEST_PATH + " init";
         assertTrue(GuestSshdPidFile.matchesDaemon(
-                cmdline, GuestServiceBridge.SYSTEMCTL_GUEST_PATH));
+                cmdline, GuestServiceBridge.SYSTEMCTL_SCRIPT_GUEST_PATH));
         assertFalse(GuestSshdPidFile.matchesDaemon(
                 "/opt/lw-services/usr/bin/python3.12 -c pass",
-                GuestServiceBridge.SYSTEMCTL_GUEST_PATH));
+                GuestServiceBridge.SYSTEMCTL_SCRIPT_GUEST_PATH));
+        assertFalse("the entrypoint is not what the interpreter is given",
+                GuestSshdPidFile.matchesDaemon(
+                        cmdline, GuestServiceBridge.SYSTEMCTL_GUEST_PATH));
     }
 
     private GuestServiceBridge bridge() throws Exception {
@@ -463,6 +558,32 @@ public class GuestServiceBridgeTest {
         Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
     }
 
+    @Test
+    public void theSystemctlEntrypointNamesTheInterpreterByAbsoluteOverlayPath()
+            throws Exception {
+        // The point of the wrapper is that resolving the interpreter never
+        // goes through PATH, where anything the guest installs can answer.
+        // Composing the expected path from the catalog constant is what keeps
+        // a future overlay move honest: the digest pin would still match and
+        // only this test would notice the bridge had been left pointing at a
+        // path that no longer exists.
+        Path wrapper = assetsDir().resolve(vendored("usr/bin/systemctl").getAssetPath());
+        List<String> lines = Files.readAllLines(wrapper, StandardCharsets.UTF_8);
+
+        assertEquals("#!/bin/sh", lines.get(0));
+        String interpreter = CuratedRuntimeCatalog.SERVICES_OVERLAY_GUEST_DIR
+                + "/usr/bin/python3.12";
+        String script = CuratedRuntimeCatalog.SERVICES_OVERLAY_GUEST_DIR
+                + "/usr/lib/nusadesk/systemctl3.py";
+        String exec = lines.stream()
+                .map(String::trim)
+                .filter(line -> line.startsWith("exec "))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "the wrapper must exec the interpreter: " + wrapper));
+        assertEquals("exec " + interpreter + " " + script + " \"$@\"", exec);
+    }
+
     private VendoredFile vendored(String overlayPath) {
         for (VendoredFile vendored
                 : CuratedRuntimeCatalog.guestServiceBridge().getVendoredFiles()) {
@@ -471,6 +592,44 @@ public class GuestServiceBridgeTest {
             }
         }
         throw new AssertionError("no vendored member at " + overlayPath);
+    }
+
+    @Test
+    public void noAssetHandsTheSystemctlEntrypointToAnInterpreter() throws Exception {
+        // The entrypoint is a product shell wrapper that picks the interpreter
+        // itself. An asset that instead runs `python3.12 <entrypoint>` would be
+        // feeding a shell script to Python. That is exactly how the session
+        // supervisor and the user-manager launcher broke the manager the moment
+        // the wrapper landed — a device-only failure, because these are shell
+        // assets no Java test executed. Pin the class of mistake here.
+        Path assets = assetsDir();
+        Path services = assets.resolve("services");
+        Pattern interpreter = Pattern.compile("\\bpython3(\\.12)?\\b");
+        try (Stream<Path> files = Files.walk(services)) {
+            for (Path file : files.filter(Files::isRegularFile).collect(Collectors.toList())) {
+                String name = file.getFileName().toString();
+                if (!name.startsWith("lw-") || name.endsWith(".service")) {
+                    continue;
+                }
+                List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                for (int i = 0; i < lines.size(); i++) {
+                    String line = lines.get(i);
+                    if (line.trim().startsWith("#")) {
+                        continue;
+                    }
+                    if (!interpreter.matcher(line).find()) {
+                        continue;
+                    }
+                    // The vendored script's own path is the correct operand;
+                    // the wired entrypoint path is not.
+                    assertFalse(name + ":" + (i + 1)
+                                    + " passes the systemctl entrypoint to an interpreter;"
+                                    + " invoke the entrypoint instead: " + line.trim(),
+                            line.contains("/usr/bin/systemctl")
+                                    && !line.contains("nusadesk/systemctl3.py"));
+                }
+            }
+        }
     }
 
     private static Path assetsDir() {

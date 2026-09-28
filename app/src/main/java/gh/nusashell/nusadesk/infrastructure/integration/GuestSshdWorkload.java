@@ -22,7 +22,9 @@ import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTrim;
 import gh.nusashell.nusadesk.infrastructure.logs.SessionLogWriter;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestAwarenessReadmeWriter;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestEphemeralStateCleaner;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestBaseExtras;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestSystemdBusFace;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshdBindFailureException;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshDaemon;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshdPidFile;
@@ -278,11 +280,33 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                     + "guest-native SSH session");
             return;
         }
-        // The service bridge is additive: the SSH session does not depend on
-        // it, so an absent overlay only means no `systemctl`, not a failure.
+        // The service bridge is additive for the SSH session, but an overlay
+        // that exists and fails verification is NOT the same as one that was
+        // never installed: every wiring symlink points into it, so the guest
+        // sees a `systemctl` that exists and fails. That state is reported
+        // rather than started silently, because a session that looks complete
+        // and has no working service manager is exactly the intermittency this
+        // check exists to remove.
         Path serviceOverlay = ProotPaths.activeAddonPath(
                 filesDir, CuratedRuntimeCatalog.guestServiceBridge().getAddonId());
-        GuestServiceBridge bridge = GuestServiceBridge.detect(serviceOverlay);
+        GuestServiceBridge.Detection serviceBridge = GuestServiceBridge.inspect(serviceOverlay);
+        if (serviceBridge.getAbsence() == GuestServiceBridge.Absence.CORRUPT) {
+            Log.w(TAG, "guest service bridge overlay failed verification at "
+                    + serviceBridge.getDetail()
+                    + "; systemctl/service are broken until the add-on is reinstalled");
+        }
+        GuestServiceBridge bridge = serviceBridge.getBridge();
+        // Base extras (CA certificates) are purely additive: without the add-on
+        // the guest keeps whatever trust store the rootfs shipped, which is
+        // none at all, so a guest installed before this add-on still starts.
+        Path baseExtrasOverlay = ProotPaths.activeAddonPath(
+                filesDir, CuratedRuntimeCatalog.guestBaseExtras().getAddonId());
+        GuestBaseExtras baseExtras = GuestBaseExtras.detect(baseExtrasOverlay);
+        // The D-Bus face is additive in the same way: without it the guest
+        // simply has no session bus, which is the pre-existing behaviour.
+        Path dbusFaceOverlay = ProotPaths.activeAddonPath(
+                filesDir, CuratedRuntimeCatalog.guestSystemdBusFace().getAddonId());
+        GuestSystemdBusFace dbusFace = GuestSystemdBusFace.detect(dbusFaceOverlay);
 
         // A previous session (or a crashed host process) can leave a live guest
         // daemon behind: killing the PRoot tracer does not kill its tracee, so
@@ -324,7 +348,34 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                 // before any guest process can ask for them.
                 bridge.wireInto(rootfs);
             }
-            GuestAwarenessReadmeWriter.ensure(rootfs, appVersion());
+            if (baseExtras != null) {
+                // Generates the PEM bundle from the overlay's pinned Mozilla
+                // sources, then links the bundle and the openssl surface into
+                // the rootfs at their conventional paths. Additive: a guest
+                // without the add-on simply has no trust store, so a wiring
+                // failure degrades HTTPS rather than refusing the session.
+                try {
+                    baseExtras.wireInto(rootfs);
+                } catch (IOException e) {
+                    Log.w(TAG, "guest base extras (CA certificates) could not be "
+                            + "wired; HTTPS installs will fail until the add-on "
+                            + "is reinstalled: " + e.getMessage());
+                }
+            }
+            if (dbusFace != null) {
+                // Wires the session bus, the org.freedesktop.systemd1 provider
+                // and the busctl shim, and enables the provider's user unit.
+                // Runs after the bridge because the provider delegates to the
+                // bridge's systemctl and reads the members it installs.
+                try {
+                    dbusFace.wireInto(rootfs);
+                } catch (IOException e) {
+                    Log.w(TAG, "guest systemd D-Bus face could not be wired; "
+                            + "CLIs that require a session bus will refuse "
+                            + "until the add-on is reinstalled: " + e.getMessage());
+                }
+            }
+
             writeDaemonConfig(rootfs, daemon);
             PublicKey hostKey = ensureHostKey(rootfs, daemon);
             // Between "boots" the previous session log becomes boot.log.1 and

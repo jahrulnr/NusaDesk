@@ -24,11 +24,12 @@ import gh.nusashell.nusadesk.infrastructure.proot.GuestOptionalTools;
 
 /**
  * The One-click install page renders each curated component truthfully
- * (ADR-0055): the mandatory service bridge reports its state with no
- * Install action, while the USB/ADB and Termux toolkits each carry their
- * own independent Install / Try again action, state pill, and detail line —
- * one toolkit's state never bleeds into the other's. Driven through
- * {@link SystemScreenView} so the host-facing delegation is covered too.
+ * (ADR-0055): the mandatory service bridge and base extras report their
+ * state with no Install action, while the USB/ADB, Termux, and D-Bus face
+ * extras each carry their own independent Install / Try again action,
+ * state pill, and detail line — one extra's state never bleeds into
+ * another's. Driven through {@link SystemScreenView} so the host-facing
+ * delegation is covered too.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = {29, 31})
@@ -78,6 +79,97 @@ public class SystemInstallPageViewTest {
                         .getText().toString());
         assertFalse(containsButton(
                 screen.findViewById(R.id.system_install_services_card)));
+    }
+
+    @Test
+    public void theCoreBaseExtrasRowNeverOffersAnAction() {
+        SystemScreenView screen = screen();
+
+        screen.renderBaseExtras(true);
+        assertEquals("Installed",
+                ((TextView) screen.findViewById(R.id.system_install_base_state))
+                        .getText().toString());
+        assertFalse("a core component has no Install button",
+                containsButton(screen.findViewById(R.id.system_install_base_card)));
+
+        screen.renderBaseExtras(false);
+        assertEquals("Not installed",
+                ((TextView) screen.findViewById(R.id.system_install_base_state))
+                        .getText().toString());
+        assertFalse(containsButton(
+                screen.findViewById(R.id.system_install_base_card)));
+    }
+
+    @Test
+    public void dbusFaceRowRendersIndependentlyAndReachesItsListener() {
+        SystemScreenView screen = screen();
+        AtomicBoolean dbusTapped = new AtomicBoolean();
+        AtomicBoolean usbTapped = new AtomicBoolean();
+        screen.setOnDbusFaceInstallListener(view -> dbusTapped.set(true));
+        screen.setOnToolkitInstallListener(GuestOptionalTools.Kind.USB_ADB,
+                view -> usbTapped.set(true));
+
+        screen.renderDbusFace(toolkit(null, false, false));
+        screen.renderToolkit(GuestOptionalTools.Kind.USB_ADB,
+                toolkit(null, true, false));
+
+        assertEquals("Not installed",
+                ((TextView) screen.findViewById(R.id.system_install_dbus_state))
+                        .getText().toString());
+        Button action = screen.findViewById(R.id.system_install_dbus_action);
+        assertEquals(View.VISIBLE, action.getVisibility());
+        assertTrue(action.isEnabled());
+        assertEquals("Install", action.getText().toString());
+
+        screen.findViewById(R.id.system_install_dbus_action).performClick();
+        assertTrue(dbusTapped.get());
+        assertFalse(usbTapped.get());
+
+        // An installed face hides its action, exactly like a toolkit.
+        screen.renderDbusFace(toolkit(null, true, false));
+        assertEquals("Installed",
+                ((TextView) screen.findViewById(R.id.system_install_dbus_state))
+                        .getText().toString());
+        assertEquals(View.GONE, action.getVisibility());
+    }
+
+    @Test
+    public void aFailedDbusFaceShowsRetryAndItsReason() {
+        SystemScreenView screen = screen();
+        screen.renderDbusFace(toolkit(RuntimeState.FAILED, false, false));
+
+        assertEquals("Install failed",
+                ((TextView) screen.findViewById(R.id.system_install_dbus_state))
+                        .getText().toString());
+        Button action = screen.findViewById(R.id.system_install_dbus_action);
+        assertEquals(View.VISIBLE, action.getVisibility());
+        assertTrue("a failed optional add-on offers retry", action.isEnabled());
+        assertEquals("Try again", action.getText().toString());
+        TextView detail = screen.findViewById(R.id.system_install_dbus_detail);
+        assertEquals(View.VISIBLE, detail.getVisibility());
+        assertEquals("install detail", detail.getText().toString());
+    }
+
+    @Test
+    public void anInstallingDbusFaceHidesItsActionAndShowsProgress() {
+        SystemScreenView screen = screen();
+        screen.renderDbusFace(toolkit(RuntimeState.DOWNLOADING, false, false));
+
+        assertEquals("Installing…",
+                ((TextView) screen.findViewById(R.id.system_install_dbus_state))
+                        .getText().toString());
+        assertEquals(View.GONE,
+                screen.findViewById(R.id.system_install_dbus_action).getVisibility());
+        assertEquals(View.VISIBLE,
+                screen.findViewById(R.id.system_install_dbus_detail).getVisibility());
+    }
+
+    @Test
+    public void aBusyPipelineDisablesTheDbusFaceAction() {
+        SystemScreenView screen = screen();
+        screen.renderDbusFace(toolkit(null, false, true));
+        assertFalse(((Button) screen.findViewById(R.id.system_install_dbus_action))
+                .isEnabled());
     }
 
     @Test

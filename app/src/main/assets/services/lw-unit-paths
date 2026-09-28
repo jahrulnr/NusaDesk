@@ -1,0 +1,35 @@
+# Unit-file search directories for the guest service bridge (ADR-0024).
+#
+# This file is the single source of truth both faces of the bridge read:
+# the lw-systemctl wrapper answers `show --property=UnitPath --value` from
+# it, and lw-systemd-dbus-provider composes the Manager.UnitPath reply from
+# it. Edit the list here, never inside either consumer.
+#
+# One "scope:path" entry per line; '#' starts a comment, blank lines are
+# ignored, and entries stay in the vendored systemctl3.py's own scan order:
+# every `user:` line first (its _user_folders), then every `system:` line
+# (its _system_folders). A --user lookup searches both groups in that order
+# — user_folders() then system_folders() — while a system lookup searches
+# only the `system:` group.
+#
+# {XDG_CONFIG_HOME}, {XDG_DATA_HOME} and {XDG_RUNTIME_DIR} are expanded by
+# each consumer per invocation, matching the vendored script's
+# expand_path(): XDG_CONFIG_HOME or $HOME/.config, XDG_DATA_HOME or
+# $HOME/.local/share, XDG_RUNTIME_DIR or /run/user/$UID. SYSTEMD_UNIT_PATH
+# is not reflected — the bus face cannot see the caller's environment, so
+# both consumers answer with the built-in list only.
+user:{XDG_CONFIG_HOME}/systemd/user
+user:/etc/systemd/user
+user:{XDG_RUNTIME_DIR}/systemd/user
+user:/run/systemd/user
+user:/var/run/systemd/user
+user:{XDG_DATA_HOME}/systemd/user
+user:/usr/local/lib/systemd/user
+user:/usr/lib/systemd/user
+user:/lib/systemd/user
+system:/etc/systemd/system
+system:/run/systemd/system
+system:/var/run/systemd/system
+system:/usr/local/lib/systemd/system
+system:/usr/lib/systemd/system
+system:/lib/systemd/system

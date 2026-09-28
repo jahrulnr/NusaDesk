@@ -46,7 +46,10 @@ public class GuestUserServiceManagerAssetTest {
         // built-in default (multi-user.target) never exists in a user set.
         assertTrue(script.contains("export SYSTEMD_DEFAULT_TARGET=default.target"));
         assertTrue("the manager must replace the shell, so signals reach it",
-                script.contains("exec /usr/bin/python3.12 /usr/bin/systemctl --user init"));
+                script.contains("exec /usr/bin/systemctl --user init"));
+        assertFalse("the entrypoint picks the interpreter; naming one here would "
+                        + "feed the product wrapper to Python",
+                script.contains("python3.12 /usr/bin/systemctl"));
     }
 
     @Test

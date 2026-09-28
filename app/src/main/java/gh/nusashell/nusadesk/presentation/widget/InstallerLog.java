@@ -17,12 +17,14 @@ import java.util.regex.Pattern;
  * <p>Each install phase produces one log line. Rootfs phases use the phase
  * word ({@code download}, {@code verify}, {@code extract}, {@code ready},
  * {@code error}); add-on phases carry their own component tag — {@code ssh}
- * for the essential terminal component, {@code svc} for the opt-in guest
- * services extra (ADR-0057) — so the components never blur together in the
- * same terminal. Consecutive snapshots in the same component and phase do
- * not produce duplicate lines; the download percent is parsed from the
- * detail and surfaced through the progress bar instead of spamming the log.
- * History is bounded to {@link #MAX_LINES} lines so the viewport never grows
+ * for the essential terminal component, {@code svc} for the required
+ * service bridge, {@code base} for the required base extras, {@code usb},
+ * {@code termux}, and {@code dbus} for the opt-in extras (ADR-0057) — so
+ * the components never blur together in the same terminal. Consecutive
+ * snapshots in the same component and phase do not produce duplicate
+ * lines; the download percent is parsed from the detail and surfaced
+ * through the progress bar instead of spamming the log. History is
+ * bounded to {@link #MAX_LINES} lines so the viewport never grows
  * unbounded.</p>
  *
  * <p>The log is gated by an active-install flag. It activates on a new rootfs
@@ -73,6 +75,22 @@ final class InstallerLog {
     }
 
     /**
+     * The terminal tag for a component's add-on phases, or {@code null} for
+     * the rootfs (which reports phase words instead of a tag).
+     */
+    static String tagFor(InstallPhaseSnapshot.Component component) {
+        switch (component) {
+            case ADDON:      return "ssh";
+            case SERVICES:   return "svc";
+            case BASE_EXTRAS: return "base";
+            case USB_ADB:    return "usb";
+            case TERMUX:     return "termux";
+            case DBUS_FACE:  return "dbus";
+            default:         return null;
+        }
+    }
+
+    /**
      * Derives the terminal log line for a phase. Returns {@code null} for
      * states that produce no progress line (NOT_INSTALLED and post-install
      * runtime states that are not part of the setup lifecycle).
@@ -80,24 +98,8 @@ final class InstallerLog {
     static String lineFor(InstallPhaseSnapshot phase) {
         RuntimeState state = phase.getState();
         String detail = phase.getDetail();
-        if (phase.getComponent() == InstallPhaseSnapshot.Component.SERVICES) {
-            switch (state) {
-                case DOWNLOADING:
-                    return "svc  " + stripDownloadPercent(detail);
-                case VERIFYING:
-                case EXTRACTING:
-                case READY:
-                    return "svc  " + nullToEmpty(detail);
-                case FAILED:
-                    return "svc error  " + nullToEmpty(detail);
-                default:
-                    return null;
-            }
-        }
-        if (phase.getComponent() == InstallPhaseSnapshot.Component.USB_ADB
-                || phase.getComponent() == InstallPhaseSnapshot.Component.TERMUX) {
-            String tag = phase.getComponent() == InstallPhaseSnapshot.Component.USB_ADB
-                    ? "usb" : "termux";
+        String tag = tagFor(phase.getComponent());
+        if (tag != null) {
             switch (state) {
                 case DOWNLOADING:
                     return tag + "  " + stripDownloadPercent(detail);
@@ -107,20 +109,6 @@ final class InstallerLog {
                     return tag + "  " + nullToEmpty(detail);
                 case FAILED:
                     return tag + " error  " + nullToEmpty(detail);
-                default:
-                    return null;
-            }
-        }
-        if (phase.getComponent() == InstallPhaseSnapshot.Component.ADDON) {
-            switch (state) {
-                case DOWNLOADING:
-                    return "ssh  " + stripDownloadPercent(detail);
-                case VERIFYING:
-                case EXTRACTING:
-                case READY:
-                    return "ssh  " + nullToEmpty(detail);
-                case FAILED:
-                    return "ssh error  " + nullToEmpty(detail);
                 default:
                     return null;
             }

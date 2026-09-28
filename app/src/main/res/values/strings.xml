@@ -270,6 +270,10 @@
     <string name="system_install_termux_desc">termux-* commands run inside the Linux session.</string>
     <string name="system_install_services_title">Core services: systemctl &amp; Python</string>
     <string name="system_install_services_desc">Required foundation, installed with Linux setup — the service manager and Python runtime the tools below run on. It installs and retries with setup, so there is no separate Install action here.</string>
+    <string name="system_install_base_title">Core services: CA certificates &amp; OpenSSL</string>
+    <string name="system_install_base_desc">Required foundation, installed with Linux setup — the trust store and crypto runtime every HTTPS client in the Linux session needs. It installs and retries with setup, so there is no separate Install action here.</string>
+    <string name="system_install_dbus_title">systemd D-Bus compatibility</string>
+    <string name="system_install_dbus_desc">busctl, a session bus, and the org.freedesktop.systemd1 provider answer inside the Linux session — needed only by tools that gate on them.</string>
     <string name="system_install_state_installed">Installed</string>
     <string name="system_install_state_installing">Installing…</string>
     <string name="system_install_state_failed">Install failed</string>

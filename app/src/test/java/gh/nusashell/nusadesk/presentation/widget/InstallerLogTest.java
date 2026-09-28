@@ -42,6 +42,16 @@ public class InstallerLogTest {
                 new RuntimeSnapshot("guest-service-bridge", state, detail, 0, 1_000L));
     }
 
+    private static InstallPhaseSnapshot base(RuntimeState state, String detail) {
+        return InstallPhaseSnapshot.baseExtras(
+                new RuntimeSnapshot("guest-base-extras", state, detail, 0, 1_000L));
+    }
+
+    private static InstallPhaseSnapshot dbus(RuntimeState state, String detail) {
+        return InstallPhaseSnapshot.dbusFace(
+                new RuntimeSnapshot("guest-systemd-dbus-face", state, detail, 0, 1_000L));
+    }
+
     // ---- percent parsing ----
 
     @Test
@@ -54,6 +64,38 @@ public class InstallerLogTest {
                         "failed to write commands", 0, 1_000L));
         assertEquals("usb  USB / ADB ready", InstallerLog.lineFor(usb));
         assertEquals("termux error  failed to write commands", InstallerLog.lineFor(termux));
+    }
+
+    @Test
+    public void newAddonsHaveDistinctLogTags() {
+        assertEquals("base  Base extras 1/2",
+                InstallerLog.lineFor(base(RuntimeState.VERIFYING, "Base extras 1/2")));
+        assertEquals("base error  checksum mismatch",
+                InstallerLog.lineFor(base(RuntimeState.FAILED, "checksum mismatch")));
+        assertEquals("dbus  Downloading D-Bus face 1/4",
+                InstallerLog.lineFor(dbus(
+                        RuntimeState.DOWNLOADING, "Downloading D-Bus face 1/4 · 40%")));
+        assertEquals("dbus error  network timeout",
+                InstallerLog.lineFor(dbus(RuntimeState.FAILED, "network timeout")));
+        // Each new component tags distinctly from the existing ones.
+        assertEquals("svc  Verifying Guest services",
+                InstallerLog.lineFor(services(RuntimeState.VERIFYING, "Verifying Guest services")));
+    }
+
+    @Test
+    public void baseAndDbusPhasesDedupSeparatelyFromSvc() {
+        InstallerLog log = new InstallerLog();
+        log.append(rootfs(RuntimeState.DOWNLOADING, "Downloading Ubuntu Base"));
+        log.append(rootfs(RuntimeState.READY, "installed"));
+        assertTrue(log.append(services(RuntimeState.DOWNLOADING, "Downloading Guest services")));
+        assertTrue(log.append(base(RuntimeState.DOWNLOADING, "Downloading Base extras")));
+        assertFalse(log.append(base(RuntimeState.DOWNLOADING, "Downloading Base extras 2/2")));
+        assertTrue(log.append(dbus(RuntimeState.DOWNLOADING, "Downloading D-Bus face")));
+
+        List<String> lines = log.lines();
+        assertEquals("svc  Downloading Guest services", lines.get(2));
+        assertEquals("base  Downloading Base extras", lines.get(3));
+        assertEquals("dbus  Downloading D-Bus face", lines.get(4));
     }
 
     @Test

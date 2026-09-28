@@ -9,9 +9,9 @@ import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
  * install phase the unified surface should display and the one action it
  * should offer.
  *
- * <p>The launcher unlocks only after the rootfs, guest SSH and required
- * service/Python overlay are active. USB/ADB and Termux commands are
- * independent options and do not affect core readiness.</p>
+ * <p>The launcher unlocks only after the rootfs, guest SSH, and the required
+ * service/Python and base-extras overlays are active. USB/ADB, Termux, and
+ * the D-Bus face are independent options and do not affect core readiness.</p>
  *
  * <p>Pure Java with no Android imports so the combined policy is unit-tested
  * in plain JUnit.</p>

@@ -1,0 +1,237 @@
+#!/bin/sh
+# Product-owned entrypoint for the vendored systemctl replacement.
+#
+# The vendored systemctl3.py keeps its upstream `#! /usr/bin/env python3`
+# shebang and its pinned bytes, so this wrapper is what the guest actually
+# executes. It names the interpreter by absolute path for two reasons: a PATH
+# lookup of `python3` can be answered by anything the guest installs, and the
+# rootfs `/usr/bin/python3` symlink points *into* the overlay, so a damaged
+# overlay member would break the bridge even with the PATH step removed.
+#
+# The interpreter path is deliberately the overlay's own, not the rootfs
+# `/usr/bin/python3.12` the compose launchers use: this entrypoint must keep
+# working when the rootfs symlink is stale, replaced, or missing.
+#
+# One visible consequence of not being the file itself: `systemctl help`
+# prints its program name from sys.argv[0], so its header reads
+# "systemctl3.py command [options]..." rather than "systemctl ...". That is
+# the only place argv[0] is read.
+#
+# Three adaptations the vendored option parser cannot do are handled here,
+# and all need the run's output, which only a subprocess can see:
+#
+# - `--value` is unknown upstream, so `systemctl show ... --value` died at
+#   the parser. The flag is dropped before the interpreter sees it and the
+#   `Property=` prefixes are stripped from the output, printing the bare
+#   values real systemctl prints — one per line.
+# - `show --property=UnitPath --value` names a manager property the vendored
+#   script does not have, so it printed nothing and consumers read the empty
+#   answer as "systemd is not verifiably managing this host". The search
+#   dirs are vendored data — usr/share/lw-services/unit-paths in this
+#   overlay — shared with the D-Bus provider so the CLI and the bus answer
+#   the same list. The wrapper prints the requested scope's dirs, one per
+#   line, and fails loudly when the data file is missing.
+# - The vendored script logs WARNING/ERROR lines on stderr even when it
+#   succeeds (a denied /proc entry on the boot-time probe, a missing
+#   /etc/initrd-release unit condition). Consumers that merge stderr into
+#   stdout and exact-match the result break on those strays, so an adapted
+#   run that exits 0 forwards nothing on stderr; a non-zero exit forwards
+#   it — that is a real diagnosis.
+#
+# Every invocation is therefore proxied EXCEPT the manager (`init`,
+# `--init`, `-1`, or being pid 1): the session supervisor records the pid
+# this process ends on, and only `exec` keeps the recorded pid the
+# manager's own. For any other call a shell parent is harmless, and the
+# proxy comes in two shapes:
+#
+# - with `--value`, stdout is captured too: the `Property=` prefixes are
+#   stripped and the bare values printed, one per line;
+# - without it, stdout stays connected straight to the caller — a human's
+#   `systemctl status` in the terminal keeps its TTY (colour, pager,
+#   width) — and only stderr is held back.
+set -u
+
+lw_paths_file=/opt/lw-services/usr/share/lw-services/unit-paths
+lw_value=0
+lw_init=0
+lw_user=0
+lw_system=0
+lw_unitpath=0
+lw_left=$#
+while [ "$lw_left" -gt 0 ]; do
+    case "$1" in
+        --value)
+            lw_value=1
+            ;;
+        init|--init|-1)
+            lw_init=1
+            set -- "$@" "$1"
+            ;;
+        --user)
+            lw_user=1
+            set -- "$@" "$1"
+            ;;
+        --system)
+            lw_system=1
+            set -- "$@" "$1"
+            ;;
+        --property=*)
+            case ",${1#--property=}," in *,UnitPath,*) lw_unitpath=1 ;; esac
+            set -- "$@" "$1"
+            ;;
+        -p?*)
+            case ",${1#-p}," in *,UnitPath,*) lw_unitpath=1 ;; esac
+            set -- "$@" "$1"
+            ;;
+        --property|-p)
+            case ",${2:-}," in *,UnitPath,*) lw_unitpath=1 ;; esac
+            set -- "$@" "$1"
+            ;;
+        *)
+            set -- "$@" "$1"
+            ;;
+    esac
+    shift
+    lw_left=$((lw_left - 1))
+done
+
+# --system overrides --user regardless of order, matching the vendored
+# option parser.
+lw_scope=system
+if [ "$lw_user" -eq 1 ] && [ "$lw_system" -eq 0 ]; then
+    lw_scope=user
+fi
+
+if [ "$lw_init" -eq 1 ] || [ "$$" -eq 1 ]; then
+    exec /opt/lw-services/usr/bin/python3.12 /opt/lw-services/usr/lib/nusadesk/systemctl3.py "$@"
+fi
+
+# Every other call goes through a subprocess so its exit code is observable
+# and its stderr can be held back. The temp files are named for this pid and
+# the EXIT trap removes them — including when the run is killed, which is
+# why two things are true here: the kill signals are trapped into a real
+# `exit` (an untrapped fatal signal kills this shell without running the
+# EXIT trap), and the run goes through `& wait` — a trap on a foreground
+# external command is deferred until the child exits, which a blocked child
+# would make never, while a `wait` builtin is interrupted at once. A killed
+# wrapper leaves the child orphaned rather than torn down mid-write.
+lw_tmp=${TMPDIR:-/tmp}
+lw_out=$lw_tmp/lw-systemctl.$$.out
+lw_err=$lw_tmp/lw-systemctl.$$.err
+trap 'rm -f "$lw_out" "$lw_err"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 131' QUIT
+trap 'exit 143' TERM
+: > "$lw_err" || exit 1
+# A backgrounded child's stdin is /dev/null in POSIX sh — save the caller's
+# on fd 9 so the run still sees it. `command` keeps a closed stdin from
+# killing the shell; the fallback then gives the child the same EOF — and
+# the group keeps the failed probe's diagnostic off the caller's stderr.
+{ command exec 9<&0 || exec 9</dev/null; } 2>/dev/null
+if [ "$lw_value" -eq 1 ]; then
+    : > "$lw_out" || exit 1
+    /opt/lw-services/usr/bin/python3.12 /opt/lw-services/usr/lib/nusadesk/systemctl3.py "$@" <&9 9>&- > "$lw_out" 2> "$lw_err" &
+else
+    # stdout is not captured: it stays the caller's own stream, so a
+    # terminal run keeps its TTY. Only the stderr strays are held back.
+    /opt/lw-services/usr/bin/python3.12 /opt/lw-services/usr/lib/nusadesk/systemctl3.py "$@" <&9 9>&- 2> "$lw_err" &
+fi
+lw_child=$!
+wait "$lw_child"
+lw_rc=$?
+
+# The vendored parser can print its Usage banner yet still exit 0; that is a
+# usage error, so coerce it before a caller sees a successful failure. Only
+# captured streams can be scanned — on the plain-call shape that is stderr.
+lw_usage=0
+for lw_stream in "$lw_err" "$lw_out"; do
+    if [ -f "$lw_stream" ]; then
+        while IFS= read -r lw_line || [ -n "$lw_line" ]; do
+            case "$lw_line" in
+                "Usage: "*) lw_usage=1; break ;;
+            esac
+        done < "$lw_stream"
+    fi
+done
+if [ "$lw_usage" -eq 1 ] && [ "$lw_rc" -eq 0 ]; then
+    lw_rc=1
+fi
+
+# UnitPath is answered from the vendored search-path list shared with the
+# D-Bus provider (usr/share/lw-services/unit-paths), never from the script —
+# it has no such property and prints nothing, which consumers read as an
+# unverifiable manager. The file's scope tags mirror the vendored
+# user_folders()/system_folders() split: --user prints both groups in file
+# order (the order unit_file_folders() scans them), anything else only the
+# system: group. {XDG_*} placeholders expand per call with the script's own
+# defaults. A missing file is a damaged overlay — fail loudly, since silence
+# is the defect this exists to fix.
+lw_print_unit_paths() {
+    if [ ! -f "$lw_paths_file" ]; then
+        printf 'lw-systemctl: unit-path data file missing: %s\n' \
+            "$lw_paths_file" >&2
+        exit 1
+    fi
+    lw_home=${HOME:-/root}
+    lw_xdg_config=${XDG_CONFIG_HOME:-$lw_home/.config}
+    lw_xdg_data=${XDG_DATA_HOME:-$lw_home/.local/share}
+    lw_xdg_run=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+    while IFS= read -r lw_entry || [ -n "$lw_entry" ]; do
+        case "$lw_entry" in
+            ''|'#'*) continue ;;
+            user:*)
+                [ "$lw_scope" = "user" ] || continue
+                lw_dir=${lw_entry#user:}
+                ;;
+            system:*)
+                lw_dir=${lw_entry#system:}
+                ;;
+            *) continue ;;
+        esac
+        case "$lw_dir" in
+            "{XDG_CONFIG_HOME}/"*)
+                lw_dir=$lw_xdg_config/${lw_dir#"{XDG_CONFIG_HOME}/"} ;;
+            "{XDG_DATA_HOME}/"*)
+                lw_dir=$lw_xdg_data/${lw_dir#"{XDG_DATA_HOME}/"} ;;
+            "{XDG_RUNTIME_DIR}/"*)
+                lw_dir=$lw_xdg_run/${lw_dir#"{XDG_RUNTIME_DIR}/"} ;;
+        esac
+        printf '%s\n' "$lw_dir"
+    done < "$lw_paths_file"
+}
+
+if [ "$lw_value" -eq 1 ]; then
+    # Print the bare values, like real `systemctl show --value`: strip the
+    # `Property=` prefixes (up to the first =, so values keep their own =).
+    # Lines without the shape pass through. A UnitPath line the script
+    # emitted anyway is replaced, never echoed: the property's answer is the
+    # vendored list, printed where the script's line stood.
+    lw_unitpath_done=0
+    while IFS= read -r lw_line || [ -n "$lw_line" ]; do
+        case "$lw_line" in
+            UnitPath=*)
+                if [ "$lw_unitpath_done" -eq 0 ]; then
+                    lw_unitpath_done=1
+                    lw_print_unit_paths
+                fi
+                ;;
+            *=*) printf '%s\n' "${lw_line#*=}" ;;
+            *) printf '%s\n' "$lw_line" ;;
+        esac
+    done < "$lw_out"
+    # The vendored script prints nothing for UnitPath — the case that made
+    # the property unusable — so a requested-but-unanswered UnitPath is
+    # appended after the script's own values on a successful run.
+    if [ "$lw_unitpath" -eq 1 ] && [ "$lw_unitpath_done" -eq 0 ] \
+            && [ "$lw_rc" -eq 0 ]; then
+        lw_print_unit_paths
+    fi
+fi
+
+# stderr of a successful adapted run is vendor noise; on failure it is the
+# real diagnosis.
+if [ "$lw_rc" -ne 0 ]; then
+    cat "$lw_err" >&2
+fi
+exit "$lw_rc"

@@ -193,6 +193,26 @@ public class DesktopHomeViewExtrasTest {
     }
 
     @Test
+    public void baseExtrasFailureKeepsSetupVisibleWithRetry() {
+        Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
+        DesktopHomeView home = home(activity);
+        home.render(rootfs(RuntimeState.READY));
+        home.renderGuestSsh(GuestSshUiState.installed());
+        home.renderAddonPhase(InstallPhaseSnapshot.baseExtras(
+                new RuntimeSnapshot("guest-base-extras",
+                        RuntimeState.FAILED, "network timeout", 0, 1_000L)));
+
+        assertEquals("a failed mandatory overlay keeps setup on screen",
+                View.VISIBLE,
+                home.findViewById(R.id.setup_runtime_card).getVisibility());
+        Button action = home.findViewById(R.id.wizard_action);
+        assertEquals(View.VISIBLE, action.getVisibility());
+        assertTrue("the failed core install offers a retry", action.isEnabled());
+        assertEquals(home.getContext().getString(R.string.action_retry_install),
+                action.getText().toString());
+    }
+
+    @Test
     public void setupActionIsReparentedIntoTheBottomFooter() {
         Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
         DesktopHomeView home = home(activity);

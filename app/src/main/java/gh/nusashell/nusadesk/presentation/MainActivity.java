@@ -70,8 +70,10 @@ import gh.nusashell.nusadesk.infrastructure.boot.BootAutostartPreferences;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogCatalog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTail;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestBaseExtras;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestOptionalTools;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestSystemdBusFace;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshDaemon;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotPaths;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidGuestAddonInstaller;
@@ -225,6 +227,8 @@ public final class MainActivity extends Activity {
     private RuntimeCatalogEntry catalogEntry;
     private GuestAddonPayloadProfile sshProfile;
     private GuestAddonPayloadProfile serviceProfile;
+    private GuestAddonPayloadProfile baseExtrasProfile;
+    private GuestAddonPayloadProfile dbusFaceProfile;
     private WebAppRegistry webAppRegistry;
     private TerminalCommandRegistry terminalCommandRegistry;
     private WebAppFaviconFetcher faviconFetcher;
@@ -281,10 +285,13 @@ public final class MainActivity extends Activity {
     private RuntimeSnapshot serviceAddonSnapshot;
     private RuntimeSnapshot usbAddonSnapshot;
     private RuntimeSnapshot termuxAddonSnapshot;
-    /** Which independent toolkits this setup request explicitly selected.
-     * Main-thread only; never persisted as blanket consent. */
+    private RuntimeSnapshot baseExtrasAddonSnapshot;
+    private RuntimeSnapshot dbusFaceAddonSnapshot;
+    /** Which independent toolkits/add-ons this setup request explicitly
+     * selected. Main-thread only; never persisted as blanket consent. */
     private boolean usbRequested;
     private boolean termuxRequested;
+    private boolean dbusFaceRequested;
     private GuestSshUiState guestSshState = GuestSshUiState.missing();
     private DesktopDestination activeDestination = DesktopDestination.HOME;
     private String activeWebAppId;
@@ -317,6 +324,8 @@ public final class MainActivity extends Activity {
         catalogEntry = CuratedRuntimeCatalog.ubuntuBaseArm64();
         sshProfile = CuratedRuntimeCatalog.guestSshAddon();
         serviceProfile = CuratedRuntimeCatalog.guestServiceBridge();
+        baseExtrasProfile = CuratedRuntimeCatalog.guestBaseExtras();
+        dbusFaceProfile = CuratedRuntimeCatalog.guestSystemdBusFace();
         stateStore = new AndroidRuntimeStateStore(this);
         installer = new AndroidRuntimeInstaller(this, stateStore);
         addonInstaller = new AndroidGuestAddonInstaller(this);
@@ -443,19 +452,21 @@ public final class MainActivity extends Activity {
         if (guestSshState.getKind() != GuestSshUiState.Kind.INSTALLED) {
             return;
         }
-        if (!isServiceBridgeActiveOnDisk()) {
-            // Python/systemctl are required for a complete guest session.
-            // The two user choices only govern USB/ADB and Termux commands.
+        if (!isServiceBridgeActiveOnDisk() || !isBaseExtrasActiveOnDisk()) {
+            // Python/systemctl and the CA bundle are required for a complete
+            // guest session. The two user choices only govern USB/ADB and
+            // Termux commands; the D-Bus face is opt-in.
             return;
         }
         RuntimeHostService.ensureRunning(this);
     }
 
     /**
-     * On a foreground resume a missing SSH or mandatory service bridge
-     * continues the serialized setup once, unless the previous attempt failed
-     * (then the user sees an explicit Retry action). The optional toolkits
-     * are never auto-installed on foreground.
+     * On a foreground resume a missing SSH or mandatory overlay (service
+     * bridge or base extras) continues the serialized setup once, unless
+     * the previous attempt failed (then the user sees an explicit Retry
+     * action). The optional toolkits and the D-Bus face are never
+     * auto-installed on foreground.
      */
     private void continuePendingSetup() {
         if (currentSnapshot == null || currentSnapshot.getState() != RuntimeState.READY) {
@@ -464,8 +475,11 @@ public final class MainActivity extends Activity {
         if (guestSshState.getKind() == GuestSshUiState.Kind.MISSING
                 || (!isServiceBridgeActiveOnDisk()
                     && (serviceAddonSnapshot == null
-                        || serviceAddonSnapshot.getState() != RuntimeState.FAILED))) {
-            startInstall(false, false);
+                        || serviceAddonSnapshot.getState() != RuntimeState.FAILED))
+                || (!isBaseExtrasActiveOnDisk()
+                    && (baseExtrasAddonSnapshot == null
+                        || baseExtrasAddonSnapshot.getState() != RuntimeState.FAILED))) {
+            startInstall(false, false, false);
         }
     }
 
@@ -609,7 +623,8 @@ public final class MainActivity extends Activity {
 
     private void wireLauncher() {
         desktopHome.setOnInstallListener(view -> startInstall(
-                desktopHome.isUsbAdbSelected(), desktopHome.isTermuxSelected()));
+                desktopHome.isUsbAdbSelected(), desktopHome.isTermuxSelected(),
+                false));
         desktopHome.setOnEntryOpenListener(this::openEntry);
         desktopHome.setOnEntryEditListener(this::openEntryEditor);
         desktopHome.setOnUpdateOpenListener(view -> onBannerInstall());
@@ -623,9 +638,11 @@ public final class MainActivity extends Activity {
     private void wireSystemScreen() {
         systemScreen.setRuntimeProfile(catalogEntry.getAppId(), catalogEntry.getVersion());
         systemScreen.setOnToolkitInstallListener(GuestOptionalTools.Kind.USB_ADB,
-                view -> startInstall(true, false));
+                view -> startInstall(true, false, false));
         systemScreen.setOnToolkitInstallListener(GuestOptionalTools.Kind.TERMUX,
-                view -> startInstall(false, true));
+                view -> startInstall(false, true, false));
+        systemScreen.setOnDbusFaceInstallListener(
+                view -> startInstall(false, false, true));
         systemScreen.setOnHowItWorksListener(view -> contractDialog.show());
         systemScreen.setOnWorkspaceActionListener(view -> onWorkspaceAction());
         systemScreen.setOnOpenAppSettingsListener(view -> openAppSettings());
@@ -2316,16 +2333,19 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * One serialized install path: required rootfs, SSH and Python/systemctl
-     * overlay first, then only the explicitly selected optional toolkits.
-     * Missing optional toolkits never auto-install on foreground or boot.
+     * One serialized install path: required rootfs, SSH, Python/systemctl
+     * overlay and the base-extras CA bundle first, then only the explicitly
+     * selected optional extras. Missing optional toolkits and the D-Bus
+     * face never auto-install on foreground or boot.
      */
-    private void startInstall(boolean includeUsb, boolean includeTermux) {
+    private void startInstall(boolean includeUsb, boolean includeTermux,
+            boolean includeDbusFace) {
         if (!installInProgress.compareAndSet(false, true)) {
             return;
         }
         usbRequested = includeUsb;
         termuxRequested = includeTermux;
+        dbusFaceRequested = includeDbusFace;
         refreshOptionalTools();
         installExecutor.execute(() -> {
             try {
@@ -2341,11 +2361,25 @@ public final class MainActivity extends Activity {
                     addonInstaller.install(serviceProfile, catalogEntry.getAppId(),
                             snapshot -> mainHandler.post(() -> onServiceAddonSnapshot(snapshot)));
                 }
+                // The curated rootfs ships no trust store at all, so every
+                // HTTPS client in the guest fails CERTIFICATE_VERIFY_FAILED
+                // before doing anything — in a product whose purpose is
+                // installing Linux software, CA certificates are part of a
+                // complete session, not an optional extra. They ship as a
+                // separate overlay so the rootfs payload stays untouched and
+                // existing installs upgrade cheaply.
+                if (!isBaseExtrasActiveOnDisk()) {
+                    addonInstaller.install(baseExtrasProfile, catalogEntry.getAppId(),
+                            snapshot -> mainHandler.post(() -> onBaseExtrasAddonSnapshot(snapshot)));
+                }
                 if (includeUsb) {
                     installOptionalTool(GuestOptionalTools.Kind.USB_ADB);
                 }
                 if (includeTermux) {
                     installOptionalTool(GuestOptionalTools.Kind.TERMUX);
+                }
+                if (includeDbusFace) {
+                    installDbusFace();
                 }
             } catch (RuntimeInstallationException ignored) {
                 // The runtime/add-on installer already published a typed FAILED snapshot.
@@ -2354,6 +2388,7 @@ public final class MainActivity extends Activity {
                     installInProgress.set(false);
                     usbRequested = false;
                     termuxRequested = false;
+                    dbusFaceRequested = false;
                     refreshMandatoryService();
                     refreshOptionalTools();
                     if (activityStarted) {
@@ -2362,6 +2397,38 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    /**
+     * Installs the optional systemd D-Bus compatibility overlay on the
+     * serialized executor. It is a shim — a session bus plus the
+     * {@code org.freedesktop.systemd1} provider delegating to the one
+     * existing service bridge, not a second manager — so it only runs when
+     * the user asks for it, and only once the bridge overlay exists
+     * (its declared rootfs tools also require a session to have wired
+     * them; the installer reports that as an honest retryable failure).
+     */
+    private void installDbusFace() {
+        if (isDbusFaceActiveOnDisk()) {
+            return;
+        }
+        if (!isServiceBridgeActiveOnDisk()) {
+            // The face's payload consumes the bridge's systemctl/python
+            // surface; without the overlay present there is nothing to
+            // delegate to, so fail honestly instead of downloading.
+            RuntimeSnapshot failure = new RuntimeSnapshot(
+                    dbusFaceProfile.getAddonId(), RuntimeState.FAILED,
+                    "Guest systemd D-Bus face requires the core services add-on",
+                    0, System.currentTimeMillis());
+            mainHandler.post(() -> onDbusFaceAddonSnapshot(failure));
+            return;
+        }
+        try {
+            addonInstaller.install(dbusFaceProfile, catalogEntry.getAppId(),
+                    snapshot -> mainHandler.post(() -> onDbusFaceAddonSnapshot(snapshot)));
+        } catch (RuntimeInstallationException ignored) {
+            // The add-on installer already published a typed FAILED snapshot.
+        }
     }
 
     /** A failed optional file write leaves the other selected toolkit installable. */
@@ -2482,6 +2549,36 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /**
+     * Receives one required base-extras install snapshot from the setup
+     * pipeline — same shape as the service bridge: the CA bundle is a
+     * mandatory overlay, so the launcher stays locked until it activates.
+     */
+    private void onBaseExtrasAddonSnapshot(RuntimeSnapshot snapshot) {
+        baseExtrasAddonSnapshot = snapshot;
+        desktopHome.renderAddonPhase(InstallPhaseSnapshot.baseExtras(snapshot));
+        refreshMandatoryService();
+        if (snapshot.getState() == RuntimeState.FAILED) {
+            Toast.makeText(this, snapshot.getDetail(), Toast.LENGTH_LONG).show();
+        }
+        if (activityStarted) {
+            ensureRuntimeRunning();
+        }
+    }
+
+    /**
+     * Receives one D-Bus face install snapshot — optional tier, so it feeds
+     * the installable-add-ons row and phase log but never gates the session.
+     */
+    private void onDbusFaceAddonSnapshot(RuntimeSnapshot snapshot) {
+        dbusFaceAddonSnapshot = snapshot;
+        desktopHome.renderAddonPhase(InstallPhaseSnapshot.dbusFace(snapshot));
+        refreshOptionalTools();
+        if (snapshot.getState() == RuntimeState.FAILED) {
+            Toast.makeText(this, snapshot.getDetail(), Toast.LENGTH_LONG).show();
+        }
+    }
+
     /** Receives one optional toolkit provisioning snapshot. */
     private void onOptionalToolSnapshot(GuestOptionalTools.Kind kind, RuntimeSnapshot snapshot) {
         if (kind == GuestOptionalTools.Kind.USB_ADB) {
@@ -2534,31 +2631,61 @@ public final class MainActivity extends Activity {
     }
 
     /**
+     * Whether the required base-extras overlay (CA bundle/OpenSSL) is active
+     * on disk, derived from the same detection the workload uses.
+     */
+    private boolean isBaseExtrasActiveOnDisk() {
+        Path filesDir = getFilesDir().toPath();
+        Path overlay = ProotPaths.activeAddonPath(filesDir, baseExtrasProfile.getAddonId());
+        return GuestBaseExtras.detect(overlay) != null;
+    }
+
+    /**
+     * Whether the optional D-Bus compatibility overlay is active on disk,
+     * derived from {@link GuestSystemdBusFace#detect} — never a stale or
+     * optimistic label.
+     */
+    private boolean isDbusFaceActiveOnDisk() {
+        Path filesDir = getFilesDir().toPath();
+        Path overlay = ProotPaths.activeAddonPath(filesDir, dbusFaceProfile.getAddonId());
+        return GuestSystemdBusFace.detect(overlay) != null;
+    }
+
+    /**
      * Pushes the required service overlay truth to the launcher readiness gate
-     * and the System page. The overlay is required for a complete session, so
-     * its absence keeps setup visible instead of unlocking the launcher.
+     * and the System page. The overlays are required for a complete session,
+     * so either one's absence keeps setup visible instead of unlocking the
+     * launcher.
      */
     private void refreshMandatoryService() {
         boolean installed = isServiceBridgeActiveOnDisk();
-        desktopHome.setRuntimeServiceReady(installed);
+        boolean baseInstalled = isBaseExtrasActiveOnDisk();
+        desktopHome.setRuntimeServiceReady(installed && baseInstalled);
         systemScreen.renderRequiredService(installed);
+        systemScreen.renderBaseExtras(baseInstalled);
     }
 
-    /** Pushes both optional toolkit states to setup and System surfaces. */
+    /**
+     * Pushes the optional toolkit and add-on states to setup and System
+     * surfaces — the two rootfs toolkits plus the opt-in D-Bus face.
+     */
     private void refreshOptionalTools() {
         Path rootfs = activeRootfs();
         boolean usbInstalled = GuestOptionalTools.isInstalled(
                 rootfs, GuestOptionalTools.Kind.USB_ADB);
         boolean termuxInstalled = GuestOptionalTools.isInstalled(
                 rootfs, GuestOptionalTools.Kind.TERMUX);
+        boolean dbusInstalled = isDbusFaceActiveOnDisk();
         boolean busy = installInProgress.get();
         desktopHome.setOptionalToolsOffered(!usbInstalled, !termuxInstalled);
         desktopHome.setOptionalInstallActive(
-                (usbRequested || termuxRequested) && busy);
+                (usbRequested || termuxRequested || dbusFaceRequested) && busy);
         systemScreen.renderToolkit(GuestOptionalTools.Kind.USB_ADB,
                 ServicesExtraState.of(usbAddonSnapshot, usbInstalled, busy));
         systemScreen.renderToolkit(GuestOptionalTools.Kind.TERMUX,
                 ServicesExtraState.of(termuxAddonSnapshot, termuxInstalled, busy));
+        systemScreen.renderDbusFace(
+                ServicesExtraState.of(dbusFaceAddonSnapshot, dbusInstalled, busy));
     }
 
     private RuntimeSnapshot baseSnapshot(RuntimeState state) {

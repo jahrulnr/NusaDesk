@@ -10,8 +10,8 @@ android {
         applicationId 'gh.nusashell.nusadesk'
         minSdk 29
         targetSdk 37
-        versionCode 20
-        versionName '0.11.1'
+        versionCode 21
+        versionName '0.12.0'
     }
 
     // Release signing (ADR-0040). The published GitHub/F-Droid APK must be

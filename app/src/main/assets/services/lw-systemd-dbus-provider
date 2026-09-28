@@ -1,0 +1,1074 @@
+#!/usr/bin/python3.12
+# Product-owned `org.freedesktop.systemd1` provider for the guest service
+# bridge (ADR-0024): a session bus plus a provider that answers the systemd
+# D-Bus surface the audited consumers gate on, WITHOUT shipping real systemd.
+#
+# It owns exactly one responsibility: translate the D-Bus calls into the
+# existing `systemctl` CLI and back. Every manager answer comes from the
+# vendored systemctl3.py through /usr/bin/systemctl — or from the same unit
+# files the CLI loads — so the CLI and the bus can never disagree. Nothing
+# here tracks unit state itself.
+#
+# Why hand-rolled protocol instead of dbus-python: dbus-python can only
+# dispatch incoming method calls from inside an extension-provided main loop
+# (NativeMainLoop is abstract; the only concrete one ships in
+# dbus.mainloop.glib, which drags GLib in). Its API explicitly forbids
+# select()ing on the connection fd. A client can pump replies with
+# call_blocking — lw-busctl does exactly that — but a server cannot. So the
+# provider implements the small slice of the wire protocol it needs directly
+# on the socket, which is also precisely "a plain select loop over the bus
+# file descriptor".
+#
+# The bus itself is dbus-daemon (vendored, --session) bound at
+# $XDG_RUNTIME_DIR/bus. The companion $XDG_RUNTIME_DIR/systemd/private
+# socket is deliberately absent: under PRoot fake-root a peer's kernel
+# credentials never read guest uid 0, so a private socket would accept
+# connections its clients then fail — strictly worse than no socket.
+
+import os
+import select
+import signal
+import socket
+import struct
+import subprocess
+import sys
+
+# --- product constants ------------------------------------------------------
+
+OVERLAY = "/opt/lw-dbus"
+SERVICES_OVERLAY = "/opt/lw-services"
+SYSTEMCTL = "/usr/bin/systemctl"
+# The one unit-search-path list both faces share: vendored data inside the
+# service-bridge overlay. This provider composes Manager.UnitPath from it
+# and the lw-systemctl wrapper answers `show --property=UnitPath --value`
+# from it, so the bus and the CLI can never disagree.
+UNIT_PATHS_FILE = SERVICES_OVERLAY + "/usr/share/lw-services/unit-paths"
+DBUS_DAEMON = OVERLAY + "/usr/bin/dbus-daemon"
+DBUS_UUIDGEN = OVERLAY + "/usr/bin/dbus-uuidgen"
+SESSION_CONF = OVERLAY + "/usr/share/dbus-1/session.conf"
+
+BUS_NAME = "org.freedesktop.systemd1"
+MANAGER_PATH = "/org/freedesktop/systemd1"
+MANAGER_IFACE = "org.freedesktop.systemd1.Manager"
+UNIT_IFACE = "org.freedesktop.systemd1.Unit"
+SERVICE_IFACE = "org.freedesktop.systemd1.Service"
+PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
+PEER_IFACE = "org.freedesktop.DBus.Peer"
+INTROSPECT_IFACE = "org.freedesktop.DBus.Introspectable"
+UNIT_PREFIX = "/org/freedesktop/systemd1/unit/"
+
+NO_SUCH_UNIT = "org.freedesktop.systemd1.NoSuchUnit"
+ERR_UNKNOWN_METHOD = "org.freedesktop.DBus.Error.UnknownMethod"
+ERR_UNKNOWN_PROP = "org.freedesktop.systemd1.UnknownProperty"
+ERR_UNKNOWN_IFACE = "org.freedesktop.DBus.Error.UnknownInterface"
+ERR_UNKNOWN_OBJECT = "org.freedesktop.DBus.Error.UnknownObject"
+ERR_FAILED = "org.freedesktop.systemd1.OperationFailed"
+
+# D-Bus wire constants
+MSG_METHOD_CALL = 1
+MSG_METHOD_RETURN = 2
+MSG_ERROR = 3
+
+
+# --- minimal D-Bus codec ----------------------------------------------------
+#
+# Little-endian only (every daemon build we ship is 'l'). Buffers are
+# bytearray throughout. Unknown types raise, which surfaces as an InvalidArgs
+# or Failed error reply rather than a wedge.
+
+def _pad(buf, align):
+    pad = (-len(buf)) % align
+    if pad:
+        buf.extend(b"\0" * pad)
+
+
+def _align_of(sig):
+    c = sig[0]
+    if c in "yvg":
+        return 1
+    if c in "nq":
+        return 2
+    if c in "biusoah":
+        return 4
+    return 8  # t x d ( { — structs and dict entries align to 8
+
+
+def split_signature(sig):
+    """Split a signature string into its complete single types."""
+    parts = []
+    i = 0
+    while i < len(sig):
+        c = sig[i]
+        if c == "a":
+            j = i + 1
+            while sig[j] == "a":
+                j += 1
+            k = j
+            if sig[j] in "({":
+                close = ")" if sig[j] == "(" else "}"
+                depth = 0
+                while True:
+                    if sig[k] == sig[j]:
+                        depth += 1
+                    elif sig[k] == close:
+                        depth -= 1
+                        if depth == 0:
+                            k += 1
+                            break
+                    k += 1
+                parts.append(sig[i:k])
+                i = k
+            else:
+                parts.append(sig[i:j + 1])
+                i = j + 1
+        elif c == "(":
+            depth = 0
+            k = i
+            while True:
+                if sig[k] == "(":
+                    depth += 1
+                elif sig[k] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        k += 1
+                        break
+                k += 1
+            parts.append(sig[i:k])
+            i = k
+        else:
+            parts.append(c)
+            i += 1
+    return parts
+
+
+def marshal_value(buf, sig, value):
+    """Append one complete value of `sig` to `buf` (bytearray)."""
+    if sig in ("s", "o"):
+        data = value.encode("utf-8")
+        _pad(buf, 4)
+        buf.extend(struct.pack("<I", len(data)))
+        buf.extend(data + b"\0")
+    elif sig == "g":
+        data = value.encode("utf-8")
+        buf.extend(struct.pack("<B", len(data)))
+        buf.extend(data + b"\0")
+    elif sig == "y":
+        buf.extend(struct.pack("<B", int(value)))
+    elif sig == "b":
+        _pad(buf, 4)
+        buf.extend(struct.pack("<I", 1 if value else 0))
+    elif sig in ("u", "i", "n", "q"):
+        _pad(buf, 4 if sig in "ui" else 2)
+        buf.extend(struct.pack({"u": "<I", "i": "<i", "n": "<h", "q": "<H"}[sig],
+                               int(value)))
+    elif sig in ("t", "x"):
+        _pad(buf, 8)
+        buf.extend(struct.pack("<Q" if sig == "t" else "<q", int(value)))
+    elif sig == "d":
+        _pad(buf, 8)
+        buf.extend(struct.pack("<d", float(value)))
+    elif sig == "v":
+        inner_sig, inner = value
+        marshal_value(buf, "g", inner_sig)
+        marshal_value(buf, inner_sig, inner)
+    elif sig == "ay":
+        data = bytes(value)
+        _pad(buf, 4)
+        buf.extend(struct.pack("<I", len(data)))
+        buf.extend(data)
+    elif sig.startswith("a{"):
+        inner = sig[1:]          # "{kv}"
+        key_sig = inner[1]
+        val_sig = inner[2:-1]
+        body = bytearray()
+        for key, val in dict(value).items():
+            _pad(body, 8)
+            marshal_value(body, key_sig, key)
+            marshal_value(body, val_sig, val)
+        _pad(buf, 4)
+        buf.extend(struct.pack("<I", len(body)))
+        _pad(buf, 8)
+        buf.extend(body)
+    elif sig.startswith("a"):
+        inner = sig[1:]
+        body = bytearray()
+        for item in value:
+            marshal_value(body, inner, item)
+        _pad(buf, 4)
+        buf.extend(struct.pack("<I", len(body)))
+        _pad(buf, _align_of(inner))
+        buf.extend(body)
+    elif sig.startswith("("):
+        _pad(buf, 8)
+        for sub, subval in zip(split_signature(sig[1:-1]), value):
+            marshal_value(buf, sub, subval)
+    else:
+        raise ValueError("unsupported signature: " + sig)
+
+
+class Reader(object):
+    """Cursor over a message buffer for unmarshalling."""
+
+    def __init__(self, data, pos=0):
+        self.data = data
+        self.pos = pos
+
+    def align(self, n):
+        self.pos = (self.pos + n - 1) & ~(n - 1)
+
+    def take(self, n):
+        chunk = self.data[self.pos:self.pos + n]
+        if len(chunk) != n:
+            raise ValueError("message truncated")
+        self.pos += n
+        return chunk
+
+    def read(self, sig):
+        if sig in ("s", "o"):
+            self.align(4)
+            length = struct.unpack("<I", self.take(4))[0]
+            text = self.take(length).decode("utf-8", "replace")
+            self.take(1)
+            return text
+        if sig == "g":
+            length = self.take(1)[0]
+            text = self.take(length).decode("utf-8", "replace")
+            self.take(1)
+            return text
+        if sig == "y":
+            return self.take(1)[0]
+        if sig == "b":
+            self.align(4)
+            return struct.unpack("<I", self.take(4))[0] != 0
+        if sig in ("u", "i", "n", "q"):
+            self.align(4 if sig in "ui" else 2)
+            fmt = {"u": "<I", "i": "<i", "n": "<h", "q": "<H"}[sig]
+            return struct.unpack(fmt, self.take(struct.calcsize(fmt)))[0]
+        if sig in ("t", "x"):
+            self.align(8)
+            return struct.unpack("<Q" if sig == "t" else "<q", self.take(8))[0]
+        if sig == "d":
+            self.align(8)
+            return struct.unpack("<d", self.take(8))[0]
+        if sig == "v":
+            inner = self.read("g")
+            return self.read(inner)
+        if sig.startswith("a"):
+            self.align(4)
+            length = struct.unpack("<I", self.take(4))[0]
+            inner = sig[1:]
+            if inner == "y":
+                return self.take(length)
+            self.align(_align_of(inner))
+            end = self.pos + length
+            items = []
+            while self.pos < end:
+                items.append(self.read(inner))
+            self.pos = end
+            return items
+        if sig.startswith("("):
+            self.align(8)
+            return tuple(self.read(sub) for sub in split_signature(sig[1:-1]))
+        raise ValueError("unsupported signature: " + sig)
+
+    def read_all(self, sig):
+        return [self.read(sub) for sub in split_signature(sig)] if sig else []
+
+
+def parse_message(data):
+    """Parse one complete message from the buffer head.
+
+    Returns (msg, total_len) or None when the buffer is incomplete."""
+    if len(data) < 16:
+        return None
+    endian, mtype, flags, _ver, body_len, serial = struct.unpack(
+        "<BBBBII", data[:12])
+    if endian != ord("l"):
+        raise ValueError("big-endian peer unsupported")
+    fields_len = struct.unpack("<I", data[12:16])[0]
+    header_end = (16 + fields_len + 7) & ~7
+    total = header_end + body_len
+    if len(data) < total:
+        return None
+    r = Reader(data, 16)
+    fields = {}
+    while r.pos < 16 + fields_len:
+        code, value = r.read("(yv)")
+        fields[code] = value
+    msg = {"type": mtype, "flags": flags, "serial": serial,
+           "fields": fields, "args": []}
+    sig = fields.get(8, "")
+    if body_len and sig:
+        br = Reader(data, header_end)
+        try:
+            msg["args"] = br.read_all(sig)
+        except ValueError:
+            msg["args"] = []
+    return msg, total
+
+
+def build_message(mtype, serial, fields, body_sig="", args=()):
+    field_parts = bytearray()
+    for code, sig, value in fields:
+        _pad(field_parts, 8)
+        marshal_value(field_parts, "y", code)
+        marshal_value(field_parts, "v", (sig, value))
+    body = bytearray()
+    if body_sig:
+        for sub, val in zip(split_signature(body_sig), args):
+            marshal_value(body, sub, val)
+    header = struct.pack("<BBBBIII", ord("l"), mtype, 0, 1,
+                         len(body), serial, len(field_parts))
+    head = header + bytes(field_parts)
+    head += b"\0" * ((-len(head)) % 8)
+    return head + bytes(body)
+
+
+# --- systemctl delegation ---------------------------------------------------
+#
+# Everything the manager knows comes through these two readers: the product
+# `systemctl` CLI, and the unit files the CLI itself loads (fragment +
+# drop-ins found with the vendored search-path list the CLI itself answers
+# with). Both are the single source of truth; nothing is cached.
+
+def systemctl(*args):
+    """Run the product systemctl --user and return (rc, stdout, stderr)."""
+    try:
+        proc = subprocess.run(
+            [SYSTEMCTL, "--user"] + list(args),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=30)
+        return (proc.returncode,
+                proc.stdout.decode("utf-8", "replace"),
+                proc.stderr.decode("utf-8", "replace"))
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, "", str(exc)
+
+
+def show_props(unit):
+    """`systemctl --user show <unit>` parsed into a dict — the CLI's own
+    `each_unit_items` view of the unit."""
+    rc, out, _err = systemctl("show", unit)
+    props = {}
+    if rc != 0:
+        return props
+    for line in out.splitlines():
+        if "=" in line:
+            key, _eq, val = line.partition("=")
+            props[key.strip()] = val
+    return props
+
+
+def load_state(unit):
+    return show_props(unit).get("LoadState", "")
+
+
+def unit_search_dirs():
+    """The unit-file search dirs, in the same order the vendored manager
+    scans them in --user mode: user_folders() then system_folders(). The
+    list is vendored data — UNIT_PATHS_FILE in the service-bridge overlay —
+    shared with the lw-systemctl wrapper so this property and the CLI's
+    `show --property=UnitPath --value` answer the same dirs. The file's
+    scope tags mirror the vendored _user_folders/_system_folders split; this
+    provider delegates in --user mode, so both groups apply, in file order.
+    A missing or unreadable file is a damaged overlay: this raises rather
+    than answering an empty search path."""
+    home = os.environ.get("HOME", "/root")
+    expand = (
+        ("{XDG_CONFIG_HOME}",
+         os.environ.get("XDG_CONFIG_HOME", home + "/.config")),
+        ("{XDG_DATA_HOME}",
+         os.environ.get("XDG_DATA_HOME", home + "/.local/share")),
+        ("{XDG_RUNTIME_DIR}", runtime_dir()),
+    )
+    dirs = []
+    with open(UNIT_PATHS_FILE, "r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            scope, sep, path = line.partition(":")
+            if not sep or scope not in ("user", "system"):
+                continue
+            for mark, value in expand:
+                if path.startswith(mark):
+                    path = value + path[len(mark):]
+                    break
+            dirs.append(path)
+    return dirs
+
+
+def fragment_path(unit):
+    for directory in unit_search_dirs():
+        candidate = os.path.join(directory, unit)
+        if os.path.isfile(candidate):
+            return os.path.realpath(candidate)
+    return ""
+
+
+def drop_in_paths(unit):
+    found = []
+    for directory in unit_search_dirs():
+        drop_dir = os.path.join(directory, unit + ".d")
+        if os.path.isdir(drop_dir):
+            for name in sorted(os.listdir(drop_dir)):
+                if name.endswith(".conf"):
+                    found.append(os.path.join(drop_dir, name))
+    return found
+
+
+def service_file_keys(unit):
+    """[Service] keys from the fragment plus its drop-ins, in manager order:
+    fragment first, then drop-ins by search dir. Returns a dict of
+    option-name -> list-of-raw-values (later entries override scalars;
+    ExecStart empties reset the list the way the manager treats them)."""
+    merged = {}
+    fragment = fragment_path(unit)
+    files = ([fragment] if fragment else []) + drop_in_paths(unit)
+    list_keys = ("ExecStart", "ExecStartPre", "ExecStartPost",
+                 "Environment", "EnvironmentFile", "UnsetEnvironment")
+    for path in files:
+        section = None
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                for raw in handle:
+                    line = raw.strip()
+                    if not line or line.startswith("#") or line.startswith(";"):
+                        continue
+                    if line.startswith("[") and line.endswith("]"):
+                        section = line[1:-1]
+                        continue
+                    if section != "Service" or "=" not in line:
+                        continue
+                    key, _eq, val = line.partition("=")
+                    key = key.strip()
+                    val = val.strip()
+                    if key in list_keys:
+                        # List options merge across fragment and drop-ins;
+                        # an empty ExecStart* assignment resets that list,
+                        # per the semantics the manager itself follows.
+                        if val == "" and key.startswith("Exec"):
+                            merged[key] = []
+                        else:
+                            merged.setdefault(key, []).append(val)
+                    else:
+                        merged[key] = [val]
+        except OSError:
+            continue
+    return merged
+
+
+def split_words(text):
+    """systemd-style word split: quotes group, backslash escapes."""
+    import shlex
+    lexer = shlex.shlex(text, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
+def exec_start(unit):
+    """ExecStart as a(sasbttttuii) rows: (path, argv, ignore-failure, then the
+    seven timing/status counters the manager does not keep — all 0, stable)."""
+    rows = []
+    for raw in service_file_keys(unit).get("ExecStart", []):
+        text = raw
+        ignore = False
+        while text and text[0] in "@-:!+":
+            if text[0] == "-":
+                ignore = True
+            text = text[1:]
+        try:
+            argv = split_words(text)
+        except ValueError:
+            argv = text.split()
+        if not argv:
+            continue
+        rows.append((argv[0], argv, ignore, 0, 0, 0, 0, 0, 0, 0))
+    return rows
+
+
+def environment(unit):
+    entries = []
+    for raw in service_file_keys(unit).get("Environment", []):
+        try:
+            entries.extend(split_words(raw))
+        except ValueError:
+            entries.extend(raw.split())
+    return entries
+
+
+def environment_files(unit):
+    rows = []
+    for raw in service_file_keys(unit).get("EnvironmentFile", []):
+        try:
+            words = split_words(raw)
+        except ValueError:
+            words = raw.split()
+        for word in words:
+            graceful = word.startswith("-")
+            rows.append((word[1:] if graceful else word, graceful))
+    return rows
+
+
+def unset_environment(unit):
+    entries = []
+    for raw in service_file_keys(unit).get("UnsetEnvironment", []):
+        try:
+            entries.extend(split_words(raw))
+        except ValueError:
+            entries.extend(raw.split())
+    return entries
+
+
+def manager_version():
+    rc, out, _err = systemctl("--version")
+    if rc == 0:
+        for line in out.splitlines():
+            line = line.strip()
+            if line:
+                # "systemd 219" — the vendored manager's compat version.
+                return line
+    return "systemd 219 (systemctl3 1.7.1097)"
+
+
+def unit_object_path(unit):
+    """systemd's object-path escaping: alnum/_ pass, others become _XX."""
+    out = []
+    for byte in unit.encode("utf-8"):
+        if chr(byte).isalnum() or byte == 0x5F:
+            out.append(chr(byte))
+        else:
+            out.append("_%02x" % byte)
+    return UNIT_PREFIX + "".join(out)
+
+
+def unit_from_object_path(path):
+    if not path.startswith(UNIT_PREFIX):
+        return None
+    tail = path[len(UNIT_PREFIX):]
+    out = bytearray()
+    i = 0
+    while i < len(tail):
+        if tail[i] == "_" and i + 2 < len(tail):
+            try:
+                out.append(int(tail[i + 1:i + 3], 16))
+                i += 3
+                continue
+            except ValueError:
+                pass
+        out.extend(tail[i].encode("utf-8"))
+        i += 1
+    try:
+        return out.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def bool_prop(value):
+    return value in ("yes", "true", "1", True)
+
+
+def uint64_max():
+    return 0xFFFFFFFFFFFFFFFF
+
+
+def unit_properties(unit):
+    """The audited Unit-iface property set, mapped from `systemctl show`
+    fields. Timestamps and InvocationID are synthetic constants (0 / zero
+    bytes): the vendored manager records neither, and consumers only require
+    stable, well-typed values."""
+    props = show_props(unit)
+    load = props.get("LoadState", "not-found")
+    active = props.get("ActiveState", "inactive")
+    sub = props.get("SubState", "dead")
+    fragment = fragment_path(unit)
+    try:
+        main_pid = int(props.get("MainPID", "0") or "0")
+    except ValueError:
+        main_pid = 0
+    try:
+        burst = int(props.get("StartLimitBurst", "5") or "5")
+    except ValueError:
+        burst = 5
+    return {
+        "Id": ("s", props.get("Id") or unit),
+        "Names": ("as", []),
+        "LoadState": ("s", load),
+        "ActiveState": ("s", active),
+        "SubState": ("s", sub),
+        "FragmentPath": ("s", fragment),
+        "DropInPaths": ("as", drop_in_paths(unit)),
+        "NeedDaemonReload": ("b", False),
+        "StartLimitBurst": ("u", burst),
+        "InvocationID": ("ay", bytes(16)),
+        "ActiveEnterTimestamp": ("t", 0),
+        "ActiveEnterTimestampMonotonic": ("t", 0),
+        "InactiveEnterTimestamp": ("t", 0),
+        "InactiveEnterTimestampMonotonic": ("t", 0),
+        "InactiveExitTimestamp": ("t", 0),
+        "InactiveExitTimestampMonotonic": ("t", 0),
+        "ConditionTimestamp": ("t", 0),
+        "ConditionTimestampMonotonic": ("t", 0),
+        "AssertTimestamp": ("t", 0),
+        "AssertTimestampMonotonic": ("t", 0),
+        "MainPID": ("u", main_pid),
+    }
+
+
+def service_properties(unit):
+    """The audited Service-iface set. Result/ExecMain*/TasksCurrent/
+    MemoryCurrent are the documented synthetic fields the CLI cannot yield:
+    Result follows ActiveState (failed → exit-code, else success); the
+    counters are 0, and the cgroup gauges are UINT64_MAX — D-Bus "unknown"."""
+    props = show_props(unit)
+    load = props.get("LoadState", "not-found")
+    active = props.get("ActiveState", "inactive")
+    try:
+        main_pid = int(props.get("MainPID", "0") or "0")
+    except ValueError:
+        main_pid = 0
+    running = active == "active" and main_pid > 0
+    result = "exit-code" if active == "failed" else "success"
+    return {
+        "LoadState": ("s", load),
+        "Result": ("s", result),
+        "NRestarts": ("u", 0),
+        "MainPID": ("u", main_pid),
+        "ExecMainStatus": ("i", 0),
+        "ExecMainCode": ("i", 0),
+        "KillMode": ("s", props.get("KillMode") or "control-group"),
+        "TasksCurrent": ("t", uint64_max()),
+        "MemoryCurrent": ("t", uint64_max()),
+        "ControlGroup": ("s", ""),
+        "User": ("s", props.get("User", "")),
+        "Group": ("s", props.get("Group", "")),
+        "WorkingDirectory": ("s", props.get("WorkingDirectory", "")),
+        "Environment": ("as", environment(unit)),
+        "EnvironmentFiles": ("a(sb)", environment_files(unit)),
+        "UnsetEnvironment": ("as", unset_environment(unit)),
+        "ExecStart": ("a(sasbttttuii)", exec_start(unit)),
+        "Type": ("s", props.get("Type", "simple")),
+    }
+
+
+def manager_properties():
+    # UnitPath is static configuration, not manager state: unit_search_dirs()
+    # reads the vendored file the lw-systemctl wrapper also answers from, so
+    # the face and the CLI can never disagree about where units are looked up.
+    return {
+        "Version": ("s", manager_version()),
+        "UnitPath": ("as", unit_search_dirs()),
+    }
+
+
+# --- the provider -----------------------------------------------------------
+
+class Provider(object):
+    def __init__(self, sock_path):
+        self.serial = 0
+        self.job_counter = 0
+        self.stopping = False
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.setblocking(True)
+        self.sock.connect(sock_path)
+        self.inbox = bytearray()
+        self.machine_id = read_machine_id()
+
+    def send(self, mtype, fields, body_sig="", args=()):
+        self.serial += 1
+        frame = build_message(mtype, self.serial, fields, body_sig, args)
+        self.sock.sendall(frame)
+        return self.serial
+
+    def call_daemon(self, member, body_sig="", args=()):
+        fields = [
+            (1, "o", "/org/freedesktop/DBus"),
+            (2, "s", "org.freedesktop.DBus"),
+            (3, "s", member),
+            (6, "s", "org.freedesktop.DBus"),
+        ]
+        if body_sig:
+            fields.append((8, "g", body_sig))
+        serial = self.send(MSG_METHOD_CALL, fields, body_sig, args)
+        while True:
+            msg = self.next_message()
+            fields = msg["fields"]
+            if fields.get(5) == serial and msg["type"] in (
+                    MSG_METHOD_RETURN, MSG_ERROR):
+                if msg["type"] == MSG_ERROR:
+                    text = msg["args"][0] if msg["args"] else "error"
+                    raise RuntimeError("%s: %s" % (fields.get(4, "?"), text))
+                return msg["args"]
+
+    def next_message(self):
+        while True:
+            parsed = parse_message(bytes(self.inbox))
+            if parsed:
+                msg, total = parsed
+                del self.inbox[:total]
+                return msg
+            select.select([self.sock], [], [])
+            data = self.sock.recv(65536)
+            if not data:
+                raise RuntimeError("bus connection closed")
+            self.inbox.extend(data)
+
+    def dispatch_forever(self):
+        """The plain select loop: wake on bus readability (the 1 s tick lets
+        SIGTERM land promptly), buffer bytes, drain complete messages."""
+        while not self.stopping:
+            try:
+                readable, _w, _x = select.select([self.sock], [], [], 1.0)
+            except InterruptedError:
+                continue
+            if not readable:
+                continue
+            try:
+                data = self.sock.recv(65536)
+            except InterruptedError:
+                continue
+            except OSError:
+                break
+            if not data:
+                break
+            self.inbox.extend(data)
+            while True:
+                parsed = parse_message(bytes(self.inbox))
+                if not parsed:
+                    break
+                msg, total = parsed
+                del self.inbox[:total]
+                self.handle(msg)
+
+    # -- dispatch ---------------------------------------------------------
+
+    def handle(self, msg):
+        if msg["type"] != MSG_METHOD_CALL:
+            return
+        fields = msg["fields"]
+        path = fields.get(1, "/")
+        iface = fields.get(2, "")
+        member = fields.get(3, "")
+        reply = msg["serial"]
+        sender = fields.get(7)
+        back = [(6, "s", sender)] if sender else []
+        try:
+            sig, values = self.execute(path, iface, member, msg["args"])
+            out = back + [(5, "u", reply)]
+            if sig:
+                out.append((8, "g", sig))
+            self.send(MSG_METHOD_RETURN, out, sig, values)
+        except BusError as err:
+            self.send(MSG_ERROR,
+                      back + [(4, "s", err.name), (5, "u", reply),
+                              (8, "g", "s")],
+                      "s", (err.message,))
+        except Exception as exc:  # never wedge the bus on a bug
+            self.send(MSG_ERROR,
+                      back + [(4, "s", ERR_FAILED), (5, "u", reply),
+                              (8, "g", "s")],
+                      "s", (str(exc),))
+
+    def execute(self, path, iface, member, args):
+        if iface == PEER_IFACE:
+            if member == "Ping":
+                return "", ()
+            if member == "GetMachineId":
+                return "s", (self.machine_id,)
+            raise BusError(ERR_UNKNOWN_METHOD, "Unknown method %s" % member)
+        if iface == INTROSPECT_IFACE and member == "Introspect":
+            return "s", (INTROSPECTION_XML,)
+        if iface == PROPERTIES_IFACE:
+            return self.properties_call(path, member, args)
+        if iface == MANAGER_IFACE and path == MANAGER_PATH:
+            return self.manager_call(member, args)
+        if iface == SERVICE_IFACE and member == "GetProcesses":
+            unit = unit_from_object_path(path)
+            if unit is not None:
+                return "a(sus)", (self.unit_processes(unit),)
+        raise BusError(ERR_UNKNOWN_METHOD,
+                       "Unknown method %s on %s" % (member, iface or path))
+
+    def unit_processes(self, unit):
+        """a(sus) rows for the drained check — the honest answer is the unit's
+        MainPID row when running, or nothing. Same data as GetUnitProcesses."""
+        self.require_loaded(unit)
+        props = show_props(unit)
+        try:
+            main_pid = int(props.get("MainPID", "0") or "0")
+        except ValueError:
+            main_pid = 0
+        if props.get("ActiveState") == "active" and main_pid > 0:
+            return [("", main_pid, unit)]
+        return []
+
+    def properties_call(self, path, member, args):
+        if member not in ("Get", "GetAll"):
+            raise BusError(ERR_UNKNOWN_METHOD,
+                           "Unknown method %s" % member)
+        if member == "Get":
+            iface, prop = args[0], args[1]
+            value = self.property_value(path, iface, prop)
+            return "v", (value,)
+        iface = args[0] if args else ""
+        table = self.property_table(path, iface)
+        packed = {}
+        for key, (sig, val) in table.items():
+            packed[key] = (sig, val)
+        return "a{sv}", (packed,)
+
+    def property_table(self, path, iface):
+        if path == MANAGER_PATH and iface == MANAGER_IFACE:
+            return manager_properties()
+        unit = unit_from_object_path(path)
+        if unit is not None:
+            self.require_loaded(unit)
+            if iface == UNIT_IFACE:
+                return unit_properties(unit)
+            if iface == SERVICE_IFACE:
+                return service_properties(unit)
+        raise BusError(ERR_UNKNOWN_IFACE,
+                       "Unknown interface %s" % iface)
+
+    def property_value(self, path, iface, prop):
+        table = self.property_table(path, iface)
+        if prop not in table:
+            raise BusError(ERR_UNKNOWN_PROP,
+                           "No such property %s" % prop)
+        return table[prop]
+
+    def require_loaded(self, unit):
+        state = load_state(unit)
+        if state in ("", "not-found", "not-loaded"):
+            raise BusError(NO_SUCH_UNIT, "Unit %s not found." % unit)
+
+    def manager_call(self, member, args):
+        if member in ("LoadUnit", "GetUnit"):
+            unit = args[0]
+            state = load_state(unit)
+            if state in ("", "not-found", "not-loaded"):
+                which = "not found." if member == "LoadUnit" else "not loaded."
+                raise BusError(NO_SUCH_UNIT, "Unit %s %s" % (unit, which))
+            return "o", (unit_object_path(unit),)
+        if member == "GetUnitFileState":
+            unit = args[0]
+            state = load_state(unit)
+            if state in ("", "not-found", "not-loaded"):
+                raise BusError(NO_SUCH_UNIT,
+                               "Unit file %s does not exist." % unit)
+            file_state = show_props(unit).get("UnitFileState", "")
+            if not file_state:
+                _rc, out, _err = systemctl("is-enabled", unit)
+                file_state = out.strip().splitlines()
+                file_state = file_state[0].strip() if file_state else ""
+            return "s", (file_state or "disabled",)
+        if member == "GetUnitProcesses":
+            unit = args[0]
+            props = show_props(unit)
+            if props.get("LoadState") in ("", "not-found", "not-loaded"):
+                raise BusError(NO_SUCH_UNIT, "Unit %s not loaded." % unit)
+            try:
+                main_pid = int(props.get("MainPID", "0") or "0")
+            except ValueError:
+                main_pid = 0
+            running = props.get("ActiveState") == "active" and main_pid > 0
+            rows = [("", main_pid, unit)] if running else []
+            return "a(sus)", (rows,)
+        if member == "ResetFailedUnit":
+            unit = args[0]
+            rc, _out, err = systemctl("reset-failed", unit)
+            if rc != 0:
+                raise BusError(ERR_FAILED, err.strip() or "reset-failed failed")
+            return "", ()
+        if member in ("StartUnit", "RestartUnit"):
+            unit, _mode = args[0], (args[1] if len(args) > 1 else "replace")
+            verb = "start" if member == "StartUnit" else "restart"
+            rc, _out, err = systemctl(verb, unit)
+            if rc != 0:
+                raise BusError(ERR_FAILED,
+                               err.strip() or "%s failed" % verb)
+            self.job_counter += 1
+            return "o", ("/org/freedesktop/systemd1/job/%d"
+                         % self.job_counter,)
+        raise BusError(ERR_UNKNOWN_METHOD, "Unknown method %s" % member)
+
+
+class BusError(Exception):
+    def __init__(self, name, message):
+        super(BusError, self).__init__(message)
+        self.name = name
+        self.message = message
+
+
+# --- auth handshake ---------------------------------------------------------
+
+def auth(sock):
+    """EXTERNAL auth: claim our own uid (fake-root makes it 0, matching the
+    daemon's PRoot-mediated peer view), then BEGIN. Falls back to an
+    anonymous probe only if the daemon offers it."""
+    # D-Bus auth encodes the claimed identity as ASCII hex of the uid string.
+    claimed = "".join("%02x" % b for b in str(os.getuid()).encode())
+    sock.sendall(b"\0AUTH EXTERNAL " + claimed.encode() + b"\r\n")
+    reply = read_line(sock)
+    if reply.startswith(b"REJECTED"):
+        raise RuntimeError("D-Bus EXTERNAL auth rejected: " +
+                           reply.decode("utf-8", "replace"))
+    if not reply.startswith(b"OK"):
+        raise RuntimeError("unexpected auth reply: " +
+                           reply.decode("utf-8", "replace"))
+    sock.sendall(b"BEGIN\r\n")
+
+
+def read_line(sock):
+    buf = bytearray()
+    while True:
+        chunk = sock.recv(1)
+        if not chunk:
+            raise RuntimeError("bus closed during auth")
+        buf.extend(chunk)
+        if buf.endswith(b"\r\n"):
+            return bytes(buf[:-2])
+
+
+def read_machine_id():
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            with open(path, "r") as handle:
+                value = handle.read().strip()
+            if len(value) == 32:
+                return value
+        except OSError:
+            continue
+    return "0" * 32
+
+
+def runtime_dir():
+    explicit = os.environ.get("XDG_RUNTIME_DIR", "")
+    if explicit:
+        return explicit
+    return "/run/user/%d" % os.geteuid()
+
+
+def ensure_dirs():
+    for directory in (
+            runtime_dir(),
+            "/etc/dbus-1/session.d",
+            "/var/lib/dbus"):
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError:
+            pass
+
+
+def ensure_machine_id():
+    if read_machine_id() != "0" * 32:
+        return
+    try:
+        subprocess.run([DBUS_UUIDGEN, "--ensure=/etc/machine-id"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+INTROSPECTION_XML = """<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="org.freedesktop.DBus.Introspectable">
+    <method name="Introspect"><arg name="data" direction="out" type="s"/></method>
+  </interface>
+  <interface name="org.freedesktop.DBus.Peer">
+    <method name="Ping"/>
+    <method name="GetMachineId"><arg name="machine_uuid" direction="out" type="s"/></method>
+  </interface>
+  <interface name="org.freedesktop.DBus.Properties">
+    <method name="Get">
+      <arg name="interface" direction="in" type="s"/>
+      <arg name="propname" direction="in" type="s"/>
+      <arg name="value" direction="out" type="v"/>
+    </method>
+    <method name="GetAll">
+      <arg name="interface" direction="in" type="s"/>
+      <arg name="props" direction="out" type="a{sv}"/>
+    </method>
+  </interface>
+  <interface name="org.freedesktop.systemd1.Manager">
+    <property name="Version" type="s" access="read"/>
+    <method name="LoadUnit"><arg direction="in" type="s"/><arg direction="out" type="o"/></method>
+    <method name="GetUnit"><arg direction="in" type="s"/><arg direction="out" type="o"/></method>
+    <method name="GetUnitFileState"><arg direction="in" type="s"/><arg direction="out" type="s"/></method>
+    <method name="GetUnitProcesses"><arg direction="in" type="s"/><arg direction="out" type="a(sus)"/></method>
+    <method name="ResetFailedUnit"><arg direction="in" type="s"/></method>
+    <method name="StartUnit"><arg direction="in" type="s"/><arg direction="in" type="s"/><arg direction="out" type="o"/></method>
+    <method name="RestartUnit"><arg direction="in" type="s"/><arg direction="in" type="s"/><arg direction="out" type="o"/></method>
+  </interface>
+</node>
+"""
+
+
+def main():
+    os.environ.setdefault("LC_ALL", "C")
+    ensure_dirs()
+    ensure_machine_id()
+    rundir = runtime_dir()
+    sock_path = os.path.join(rundir, "bus")
+    # A hard-killed previous session can leave the socket file behind; a
+    # leftover *socket* is stale state, not guest content, so it is removed —
+    # anything else at that path is left alone and the bind will fail loudly.
+    try:
+        import stat as _stat
+        if os.path.lexists(sock_path) and _stat.S_ISSOCK(
+                os.lstat(sock_path).st_mode):
+            os.unlink(sock_path)
+    except OSError:
+        pass
+
+    # --config-file (not --session): the compiled-in session config path is
+    # the rootfs's /usr/share/dbus-1/session.conf, which the curated rootfs
+    # does not carry. The vendored config inside the overlay is the same
+    # file. --address overrides its <listen> — exactly one socket, at
+    # $XDG_RUNTIME_DIR/bus, and systemd/private is never created.
+    daemon = subprocess.Popen(
+        [DBUS_DAEMON, "--nofork", "--nopidfile",
+         "--config-file=" + SESSION_CONF,
+         "--address=unix:path=" + sock_path],
+        stdout=subprocess.DEVNULL, stderr=sys.stderr)
+    try:
+        deadline = __import__("time").monotonic() + 15
+        while not os.path.exists(sock_path):
+            if daemon.poll() is not None:
+                sys.stderr.write("dbus-daemon exited during startup\n")
+                return 1
+            if __import__("time").monotonic() > deadline:
+                sys.stderr.write("timed out waiting for " + sock_path + "\n")
+                return 1
+            __import__("time").sleep(0.05)
+
+        provider = Provider(sock_path)
+        auth(provider.sock)
+        provider.call_daemon("Hello")
+        reply = provider.call_daemon("RequestName", "su", (BUS_NAME, 0))
+        if reply != [1]:
+            sys.stderr.write("RequestName denied: %r\n" % reply)
+            return 1
+
+        def stop(_sig, _frame):
+            provider.stopping = True
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+
+        sys.stderr.write(BUS_NAME + " provider up on " + sock_path + "\n")
+        provider.dispatch_forever()
+        return 0
+    finally:
+        if daemon.poll() is None:
+            daemon.terminate()
+            try:
+                daemon.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                daemon.kill()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

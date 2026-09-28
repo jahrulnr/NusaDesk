@@ -78,8 +78,14 @@ public class GuestAddonPayloadProfileTest {
         assertTrue("the python3.12 interpreter package must be pinned", foundPython);
 
         List<VendoredFile> vendored = profile.getVendoredFiles();
-        assertEquals(16, vendored.size());
+        // A deliberate count: the vendored set is a supply-chain surface, so
+        // growing it should be a decision, not a side effect. 18 = the 10
+        // service-bridge members (including the product-owned systemctl
+        // wrapper, the upstream script it execs, and the shared unit-path
+        // list both of them read) + the 8 compose members.
+        assertEquals(18, vendored.size());
         boolean foundSystemctl = false;
+        boolean foundSystemctlScript = false;
         boolean foundLicence = false;
         boolean foundService = false;
         boolean foundProcUptime = false;
@@ -93,7 +99,19 @@ public class GuestAddonPayloadProfileTest {
                     || file.getAssetPath().startsWith("compose/"));
             if ("usr/bin/systemctl".equals(file.getOverlayPath())) {
                 foundSystemctl = true;
-                assertTrue(file.isExecutable());
+                assertTrue("the entrypoint the guest executes must be executable",
+                        file.isExecutable());
+                // Product-owned wrapper, not the upstream bytes: it execs the
+                // vendored script through an absolute interpreter so the
+                // bridge never depends on a PATH lookup of `python3`.
+                assertEquals(
+                        "11375c68c0d17b55f676a2692d4cb0a0ff4180c978b2cd61750236bc79bb7078",
+                        file.getSha256());
+            }
+            if ("usr/lib/nusadesk/systemctl3.py".equals(file.getOverlayPath())) {
+                foundSystemctlScript = true;
+                assertFalse("run through the interpreter, never exec'd directly",
+                        file.isExecutable());
                 // Pinned upstream digest — docker-systemctl-replacement
                 // v1.7.1097 @ 8bd65bec (see ADR-0024).
                 assertEquals(
@@ -124,14 +142,15 @@ public class GuestAddonPayloadProfileTest {
                 foundSupervisor = true;
                 assertTrue(file.isExecutable());
             }
-            // The user-service manager (ADR-0024): its launcher runs the
-            // vendored systemctl3 in --user mode, and its unit is what the
-            // session manager starts.
+            // The user-service manager (ADR-0024): its launcher invokes the
+            // product systemctl entrypoint in --user mode (never the upstream
+            // script through a hardcoded interpreter), and its unit is what
+            // the session manager starts.
             if ("usr/local/bin/lw-user-manager".equals(file.getOverlayPath())) {
                 foundUserManager = true;
                 assertTrue(file.isExecutable());
                 assertEquals(
-                        "c50ce5b3192a8f90c0b0ace9427081ae8872dbd221b9f72d3268f0085d2e8b3d",
+                        "f49365fc9b4ca91ce98011286ee1e1132255be5ed4baba71a178878e1dc7a5e2",
                         file.getSha256());
             }
             if ("etc/systemd/system/lw-user-manager.service".equals(file.getOverlayPath())) {
@@ -143,6 +162,8 @@ public class GuestAddonPayloadProfileTest {
             }
         }
         assertTrue("systemctl must be vendored and executable", foundSystemctl);
+        assertTrue("the vendored replacement must ride along, unwrapped bytes and all",
+                foundSystemctlScript);
         assertTrue("the EUPL licence text must be vendored", foundLicence);
         assertTrue("the service shim must be vendored and executable", foundService);
         assertTrue("the /proc/uptime stand-in must be vendored", foundProcUptime);
@@ -236,9 +257,11 @@ public class GuestAddonPayloadProfileTest {
     @Test
     public void guestAddonsListsEveryCuratedAddon() {
         List<GuestAddonPayloadProfile> addons = CuratedRuntimeCatalog.guestAddons();
-        assertEquals(2, addons.size());
+        assertEquals(4, addons.size());
         assertEquals("guest-ssh-openssh", addons.get(0).getAddonId());
         assertEquals("guest-service-bridge", addons.get(1).getAddonId());
+        assertEquals("guest-base-extras", addons.get(2).getAddonId());
+        assertEquals("guest-systemd-dbus-face", addons.get(3).getAddonId());
     }
 
     private static void assertPinnedArm64PoolArtifact(PayloadArtifact artifact) {

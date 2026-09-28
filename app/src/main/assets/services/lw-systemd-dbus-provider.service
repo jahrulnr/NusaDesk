@@ -1,0 +1,23 @@
+[Unit]
+Description=NusaDesk org.freedesktop.systemd1 D-Bus provider (lw-systemd-dbus-provider)
+# Product-owned bootstrap unit: the overlay's wire-up enables it into
+# default.target, because the vendored systemctl3 snapshots the enabled-unit
+# set at `systemctl --user init` — a mid-session `enable` would run the
+# provider but never restart-supervise it.
+#
+# It runs under lw-user-manager (the `systemctl --user init` instance), so it
+# inherits that unit's environment — notably XDG_RUNTIME_DIR=/run/user/0 —
+# and its session-lifetime supervision: the session bus at
+# $XDG_RUNTIME_DIR/bus and the org.freedesktop.systemd1 name live exactly as
+# long as the guest session.
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/lw-systemd-dbus-provider
+# The bus dies with the provider (the provider process group owns the
+# dbus-daemon it spawned), so a provider exit always restarts the pair.
+Restart=always
+RestartSec=1s
+
+[Install]
+WantedBy=default.target

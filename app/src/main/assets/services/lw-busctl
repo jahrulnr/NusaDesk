@@ -1,0 +1,424 @@
+#!/usr/bin/python3.12
+# Product-owned `busctl` shim (ADR-0024 D-Bus face): the minimal verb and
+# option surface the audited consumers spawn, backed by the session bus at
+# $XDG_RUNTIME_DIR/bus that lw-systemd-dbus-provider serves.
+#
+# It is a thin client: argv is parsed the way busctl's own callers spell it,
+# the call goes out over dbus-python's synchronous client API (a blocking
+# call pumps its own reply, so no main loop is needed for a client), and the
+# reply is rendered in busctl's output shapes — one `s "value"` line for a
+# string property in legacy mode, one `{"type":…,"data":…}` line in
+# --json=short mode. A verb outside the supported set, a bus that does not
+# answer, and a D-Bus error reply all exit non-zero with the diagnostic on
+# stderr — nothing a consumer can mistake for a result.
+
+import json
+import os
+import sys
+
+OVERLAY = "/opt/lw-dbus"
+
+dbus = None
+
+
+def load_dbus():
+    """Import the vendored python3-dbus bindings lazily: operand/verb errors
+    and usage diagnostics must work even on a torn overlay where the dbus
+    extension is missing, and that case must fail as a clean connect error,
+    not an interpreter traceback."""
+    global dbus
+    if dbus is None:
+        sys.path.insert(0, OVERLAY + "/usr/lib/python3/dist-packages")
+        import dbus as _dbus_module  # noqa: E402
+        import dbus.lowlevel  # noqa: E402,F401
+        import dbus.mainloop  # noqa: E402,F401
+        dbus = _dbus_module
+    return dbus
+
+
+CALL_TIMEOUT = 25.0
+
+# Signatures for the audited property surface, used when the reply's own
+# value cannot carry the element type (an empty array has no first item to
+# infer from). Non-empty values are always typed off their own contents.
+EMPTY_CONTAINER_HINTS = {
+    "Names": "as",
+    "DropInPaths": "as",
+    "Environment": "as",
+    "UnsetEnvironment": "as",
+    "EnvironmentFiles": "a(sb)",
+    "ExecStart": "a(sasbttttuii)",
+    "InvocationID": "ay",
+}
+
+
+def fail(message):
+    sys.stderr.write(message + "\n")
+    return 1
+
+
+def bus_address(ops):
+    if ops["system"]:
+        return "unix:path=/run/dbus/system_bus_socket"
+    explicit = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
+    if explicit:
+        return explicit
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        runtime = "/run/user/%d" % os.geteuid()
+    return "unix:path=" + runtime + "/bus"
+
+
+def parse_argv(argv):
+    """busctl's callers interleave options and operands; options all begin
+    with '-' and are collected, the rest stay in order."""
+    ops = {"user": False, "system": False, "json": None, "machine": None}
+    operands = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg.startswith("--json"):
+            ops["json"] = arg.split("=", 1)[1] if "=" in arg else "short"
+        elif arg == "--user":
+            ops["user"] = True
+        elif arg == "--system":
+            ops["system"] = True
+        elif arg == "--machine" or arg == "-M":
+            i += 1
+            ops["machine"] = argv[i] if i < len(argv) else ""
+        elif arg.startswith("--machine="):
+            ops["machine"] = arg.split("=", 1)[1]
+        elif arg.startswith("-M") and len(arg) > 2:
+            ops["machine"] = arg[2:]
+        elif arg.startswith("-"):
+            pass  # --auto-start=no, --no-pager, -q, --timeout=…: accepted, ignored
+        else:
+            operands.append(arg)
+        i += 1
+    return ops, operands
+
+
+def connect(ops):
+    try:
+        module = load_dbus()
+    except ImportError as exc:
+        raise OSError("python3-dbus bindings unavailable: %s" % exc)
+    return module.bus.BusConnection(
+        bus_address(ops), mainloop=module.mainloop.NULL_MAIN_LOOP)
+
+
+def call(conn, svc, path, iface, member, signature, args):
+    """One synchronous method call; returns the reply Message. An error
+    reply surfaces as a DBusException carrying name + message, the way
+    busctl renders `Call failed: <message>`."""
+    request = dbus.lowlevel.MethodCallMessage(svc, path, iface, member)
+    request.set_auto_start(False)
+    if signature:
+        request.append(*args, signature=signature)
+    reply = conn.send_message_with_reply_and_block(request, CALL_TIMEOUT)
+    if reply.get_type() == dbus.lowlevel.MESSAGE_TYPE_ERROR:
+        name = reply.get_error_name() or "org.freedesktop.DBus.Error.Failed"
+        detail = reply.get_args_list()
+        message = str(detail[0]) if detail else name
+        raise dbus.DBusException(message, name=name)
+    return reply
+
+
+def _boolish(value):
+    if isinstance(value, str):
+        return value.lower() in ("true", "yes", "1", "on")
+    return bool(value)
+
+
+def typed_arg(sig, tokens):
+    """Consume argv values for one signature element; returns (value, used)."""
+    if sig in ("s", "o", "g"):
+        return tokens[0], 1
+    if sig == "b":
+        return _boolish(tokens[0]), 1
+    if sig in ("y", "n", "q", "i", "u", "x", "t"):
+        return int(tokens[0], 0), 1
+    if sig == "d":
+        return float(tokens[0]), 1
+    if sig.startswith("a"):
+        inner = sig[1:]
+        count = int(tokens[0])
+        items = []
+        used = 1
+        for _ in range(count):
+            value, took = typed_arg(inner, tokens[used:])
+            items.append(value)
+            used += took
+        return items, used
+    raise ValueError("unsupported signature '%s'" % sig)
+
+
+def split_inner(sig):
+    """Split a signature string into its complete single types."""
+    parts = []
+    i = 0
+    while i < len(sig):
+        c = sig[i]
+        if c == "a":
+            j = i + 1
+            while sig[j] == "a":
+                j += 1
+            if sig[j] in "({":
+                close = ")" if sig[j] == "(" else "}"
+                depth = 0
+                k = j
+                while True:
+                    if sig[k] == sig[j]:
+                        depth += 1
+                    elif sig[k] == close:
+                        depth -= 1
+                        if depth == 0:
+                            k += 1
+                            break
+                    k += 1
+                parts.append(sig[i:k])
+                i = k
+            else:
+                parts.append(sig[i:j + 1])
+                i = j + 1
+        elif c == "(":
+            depth = 0
+            k = i
+            while True:
+                if sig[k] == "(":
+                    depth += 1
+                elif sig[k] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        k += 1
+                        break
+                k += 1
+            parts.append(sig[i:k])
+            i = k
+        else:
+            parts.append(c)
+            i += 1
+    return parts
+
+
+def infer_signature(value, hint=None):
+    """The wire signature of an unmarshalled value: dbus's typed wrappers
+    name scalars exactly; containers infer from their elements, and an empty
+    container falls back to the declared hint."""
+    if isinstance(value, dbus.Boolean):
+        return "b"
+    if isinstance(value, dbus.ObjectPath):
+        return "o"
+    if isinstance(value, dbus.Signature):
+        return "g"
+    if isinstance(value, dbus.Byte):
+        return "y"
+    if isinstance(value, (dbus.Int16,)):
+        return "n"
+    if isinstance(value, (dbus.Int32,)):
+        return "i"
+    if isinstance(value, (dbus.Int64,)):
+        return "x"
+    if isinstance(value, (dbus.UInt16,)):
+        return "q"
+    if isinstance(value, (dbus.UInt32,)):
+        return "u"
+    if isinstance(value, (dbus.UInt64,)):
+        return "t"
+    if isinstance(value, dbus.Double):
+        return "d"
+    if isinstance(value, dbus.ByteArray):
+        return "ay"
+    if isinstance(value, (dbus.Struct, tuple)):
+        return "(" + "".join(infer_signature(v) for v in value) + ")"
+    if isinstance(value, (dbus.Array, list)):
+        inner = infer_signature(value[0]) if len(value) else (hint or "s")
+        return "a" + inner
+    if isinstance(value, dict):
+        return "a{sv}"
+    return "s"
+
+
+def to_plain(value):
+    """dbus typed objects → plain Python values for JSON rendering. A dict
+    entry (a{sv}) keeps the variant's own type annotation, matching
+    busctl --json's nested {"type","data"} shape."""
+    if isinstance(value, dbus.Boolean):
+        return bool(value)
+    if isinstance(value, (dbus.Int16, dbus.Int32, dbus.Int64,
+                          dbus.UInt16, dbus.UInt32, dbus.UInt64,
+                          dbus.Byte)):
+        return int(value)
+    if isinstance(value, dbus.Double):
+        return float(value)
+    if isinstance(value, dbus.ByteArray):
+        return [int(b) for b in bytes(value)]
+    if isinstance(value, dict):
+        return {str(k): {"type": infer_signature(v),
+                         "data": to_plain(v)} for k, v in value.items()}
+    if isinstance(value, (dbus.Array, list, tuple)):
+        return [to_plain(v) for v in value]
+    return str(value)
+
+
+def legacy_escape(text):
+    out = []
+    for ch in text:
+        code = ord(ch)
+        if ch == '"':
+            out.append('\\"')
+        elif ch == "\\":
+            out.append("\\\\")
+        elif 32 <= code < 127:
+            out.append(ch)
+        else:
+            for byte in ch.encode("utf-8"):
+                out.append("\\x%02x" % byte)
+    return "".join(out)
+
+
+def legacy_scalar(sig, value):
+    """One array/struct element in legacy shape (no type-name prefix)."""
+    if sig in ("s", "o", "g"):
+        return '"%s"' % legacy_escape(str(value))
+    if sig == "b":
+        return "true" if _boolish(value) else "false"
+    if sig in ("y", "n", "q", "i", "u", "x", "t"):
+        return str(int(value))
+    if sig == "d":
+        return repr(float(value))
+    if sig == "v":
+        return "%s %s" % (infer_signature(value), legacy_scalar(
+            infer_signature(value), value))
+    if sig.startswith("a"):
+        inner = sig[1:]
+        items = [legacy_scalar(inner, item) for item in value]
+        return "%d%s" % (len(value),
+                         (" " + " ".join(items)) if items else "")
+    if sig.startswith("("):
+        subs = split_inner(sig[1:-1])
+        return "( %s )" % " ".join(
+            legacy_scalar(sub, item) for sub, item in zip(subs, value))
+    return str(value)
+
+
+def legacy_line(sig, value):
+    """One reply value rendered like `busctl` legacy output."""
+    if sig in ("s", "o", "g"):
+        return sig + ' "' + legacy_escape(str(value)) + '"'
+    if sig == "b":
+        return "b " + ("true" if _boolish(value) else "false")
+    if sig in ("y", "n", "q", "i", "u", "x", "t"):
+        return "%s %d" % (sig, int(value))
+    if sig == "d":
+        return "d %s" % float(value)
+    if sig == "ay":
+        data = bytes(value)
+        return "ay %d %s" % (len(data),
+                             " ".join("%02x" % b for b in data))
+    if sig == "v":
+        inner = infer_signature(value)
+        return legacy_line(inner, value)
+    if sig.startswith("a"):
+        inner = sig[1:]
+        items = [legacy_scalar(inner, item) for item in value]
+        return "%s %d%s" % (sig, len(value),
+                            (" " + " ".join(items)) if items else "")
+    return "%s %s" % (sig, value)
+
+
+def json_line(sig, data):
+    return json.dumps({"type": sig, "data": data}, separators=(",", ":"))
+
+
+def emit_get_property(ops, prop, value):
+    if ops["json"]:
+        signature = infer_signature(value, EMPTY_CONTAINER_HINTS.get(prop))
+        sys.stdout.write(json_line(signature, to_plain(value)) + "\n")
+    else:
+        sys.stdout.write(legacy_line("v", value) + "\n")
+
+
+def emit_call(ops, reply):
+    signature = reply.get_signature() or ""
+    args = reply.get_args_list()
+    if not args:
+        return  # busctl prints nothing for an empty `()` reply
+    if ops["json"]:
+        sys.stdout.write(json_line(signature,
+                                   [to_plain(v) for v in args]) + "\n")
+    else:
+        for sig, value in zip(split_inner(signature), args):
+            sys.stdout.write(legacy_line(sig, value) + "\n")
+
+
+def do_get_property(conn, ops, operands):
+    if len(operands) < 4:
+        return fail("busctl: too few arguments for verb 'get-property'")
+    service, path, iface = operands[0], operands[1], operands[2]
+    for prop in operands[3:]:
+        try:
+            reply = call(conn, service, path,
+                         "org.freedesktop.DBus.Properties", "Get",
+                         "ss", (iface, prop))
+        except dbus.DBusException as exc:
+            return fail("Failed to get property %s on interface %s: %s"
+                        % (prop, iface, exc.get_dbus_message()))
+        emit_get_property(ops, prop, reply.get_args_list()[0])
+    return 0
+
+
+def do_call(conn, ops, operands):
+    if len(operands) < 4:
+        return fail("busctl: too few arguments for verb 'call'")
+    service, path, iface, member = operands[:4]
+    rest = operands[4:]
+    args = []
+    call_sig = ""
+    if rest:
+        call_sig = rest[0]
+        tokens = rest[1:]
+        used = 0
+        try:
+            for element in split_inner(call_sig):
+                value, took = typed_arg(element, tokens[used:])
+                args.append(value)
+                used += took
+            if used != len(tokens):
+                return fail("busctl: too many arguments for signature '%s'"
+                            % call_sig)
+        except (ValueError, IndexError) as exc:
+            return fail("busctl: %s" % exc)
+    try:
+        reply = call(conn, service, path, iface, member, call_sig, args)
+    except dbus.DBusException as exc:
+        return fail("Call failed: %s" % exc.get_dbus_message())
+    emit_call(ops, reply)
+    return 0
+
+
+def main(argv):
+    ops, operands = parse_argv(argv)
+    if ops["machine"]:
+        return fail("busctl: --machine is not supported by this shim")
+    if not operands:
+        return fail("busctl: missing operation")
+    verb, operands = operands[0], operands[1:]
+    if verb not in ("get-property", "call"):
+        return fail("busctl: unsupported verb '%s'" % verb)
+    try:
+        conn = connect(ops)
+    except Exception as exc:
+        return fail("Failed to connect to bus: %s"
+                    % (exc.get_dbus_message()
+                       if hasattr(exc, "get_dbus_message") else exc))
+    try:
+        if verb == "get-property":
+            return do_get_property(conn, ops, operands)
+        return do_call(conn, ops, operands)
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

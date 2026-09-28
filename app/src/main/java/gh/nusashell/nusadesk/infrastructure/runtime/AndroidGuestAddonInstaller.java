@@ -310,12 +310,26 @@ public final class AndroidGuestAddonInstaller implements GuestAddonInstallUseCas
             }
         }
         for (String tool : profile.getRequiredRootfsTools()) {
-            if (!Files.isRegularFile(rootfs.resolve(tool))) {
+            if (!rootfsToolPresent(rootfs, tool)) {
                 throw new RuntimeInstallationException(
                         "installed rootfs lacks the tool required by "
                                 + profile.getDisplayName() + ": " + tool);
             }
         }
+    }
+
+    /**
+     * Whether the active rootfs provides {@code tool} to the guest. A tool
+     * is either a real rootfs file or a symlink wired by an installed
+     * overlay — the service bridge exposes {@code usr/bin/systemctl} as a
+     * guest-absolute link into its own overlay, which reads as dangling on
+     * the host but resolves once the overlay is bound under PRoot. What the
+     * guest sees is the link's presence, so a symlink — resolvable or not —
+     * satisfies the check. Package-private for tests.
+     */
+    static boolean rootfsToolPresent(Path rootfs, String tool) {
+        Path path = rootfs.resolve(tool);
+        return Files.isRegularFile(path) || Files.isSymbolicLink(path);
     }
 
     /**

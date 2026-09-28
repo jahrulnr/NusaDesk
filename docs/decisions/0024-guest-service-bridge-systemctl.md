@@ -160,13 +160,257 @@ wants directory it brings up (`default.target` for user units).
 - EUPL-1.2 obligations: the verbatim file, licence text, and provenance are
   distributed inside the app assets; the licence applies to the vendored
   file, not to NusaDesk's own code.
-- A rootfs that later gains an original/native `systemctl`, `service`, or Python
-  interpreter through `apt` keeps that content physically, but the running
-  PRoot session still uses the product bridge: `requiredBinds()` adds strict
-  file binds (`host:guest!`) at the four conventional entrypoint paths. This
-  preserves guest data while making the product `systemctl3` experience
-  deterministic. The strict-bind path needs a fresh physical-device proof over
-  a real apt-installed replacement.
+- A rootfs that later gains an original/native `systemctl` or `service` through
+  `apt` keeps that content physically, but the running PRoot session still uses
+  the product bridge: `requiredBinds()` adds strict file binds (`host:guest!`)
+  at those two conventional entrypoint paths. This preserves guest data while
+  making the product `systemctl3` experience deterministic. The strict-bind
+  path needs a fresh physical-device proof over a real apt-installed
+  replacement. The interpreter pair is deliberately **not** bound any more —
+  see the amendment below.
+
+## Amendment (2026-09-27): the entrypoint is a wrapper, and the interpreter is guest-owned
+
+The original design exposed the vendored `systemctl3.py` directly at
+`/usr/bin/systemctl` and strict-bound four paths, including the interpreter
+pair. Two defects followed from that, both observed on a physical S10e:
+
+1. **The bridge hung off a PATH lookup.** The vendored file keeps its upstream
+   `#! /usr/bin/env python3`, so every `systemctl`/`service` invocation had to
+   resolve `python3` through `PATH`. Anything the guest installs can answer
+   that name. Observed: `env python3` failing with `Too many levels of
+   symbolic links` in a mid-apt window, which killed the entire service bridge
+   — every `systemctl` call — until the next session happened to restore it.
+2. **The interpreter strict binds were a corruption channel.** A strict file
+   bind makes the overlay member the file a guest write lands on, so an `apt`
+   install of `python3.12` wrote straight through `/usr/bin/python3.12` into
+   the overlay and replaced a digest-pinned member. The bridge then failed its
+   own verification (`GuestServiceBridge.detect()`) and vanished silently,
+   because the session path read "fails verification" as "never installed".
+
+What changed:
+
+- The vendored bytes moved to `usr/lib/nusadesk/systemctl3.py`, still
+  byte-identical and still digest-pinned to upstream v1.7.1097. What the guest
+  executes is a new product-owned wrapper at `usr/bin/systemctl` that execs the
+  overlay interpreter by absolute path:
+  `exec /opt/lw-services/usr/bin/python3.12 /opt/lw-services/usr/lib/nusadesk/systemctl3.py "$@"`.
+  This follows the convention the product's own compose launchers already use;
+  it does not introduce a new one. The interpreter path is the overlay's own
+  rather than the rootfs `/usr/bin/python3.12` so the entrypoint survives a
+  stale or replaced rootfs symlink. `GuestServiceBridgeTest` pins the wrapper's
+  interpreter path against `SERVICES_OVERLAY_GUEST_DIR`, so a future overlay
+  move fails a test instead of silently breaking the bridge.
+- `STRICT_BIND_PATHS` is now the two product entrypoints only
+  (`usr/bin/systemctl`, `usr/bin/service`). The interpreter paths stay
+  guest-owned: the wrapper does not read them, so apt's writes land in the
+  rootfs where the product's design says guest content belongs.
+- `GuestServiceBridge.inspect()` distinguishes `NOT_INSTALLED` from `CORRUPT`
+  and names the member that failed, and `GuestSshdWorkload` logs the corrupt
+  case. An overlay that is present but unverifiable means a `systemctl` that
+  exists and fails — the wiring symlinks point into it — which must not pass as
+  an intentional opt-out.
+
+One visible consequence of the wrapper: `systemctl help` prints its program
+name from `sys.argv[0]`, so its header reads `systemctl3.py command
+[options]...` instead of `systemctl command [options]...`. That is the only
+place `systemctl3.py` reads `argv[0]`.
+
+Still open: the activated overlay is writable by the guest (which runs as the
+app uid), so a deliberate write can still alter it. Detection and reinstall
+cover that; preventing it outright is not something POSIX modes can do against
+a same-uid writer.
+
+## Amendment (2026-09-28): the wrapper adapts its output, and three new gates
+
+A "real test" pass against personal-AI installers (openclaw, hermes-agent,
+goclaw) plus the product's own surface found that the bridge is not what stops
+them — but three defects in and around it were measured and fixed, and two hard
+boundaries were pinned.
+
+### The wrapper now adapts what it runs, not just what it execs
+
+Two defects reproduced on the S10e:
+
+1. **`--value` is unknown to the vendored parser.** `systemctl show
+   --property=UnitPath --value <unit>` printed the usage banner and returned
+   **0**. Modern tooling asks in exactly this form and needs the bare value;
+   the supported spelling prints `Property=value`. A usage banner on a
+   success exit is also the worst possible shape for a caller to classify.
+2. **The vendored script logs stray diagnostics on stderr even when it
+   succeeds** — a denied `/proc/net/stat` probe, a missing `/etc/initrd-release`
+   condition. Consumers that merge stderr into stdout and exact-match the
+   result break on them.
+
+The wrapper therefore has three paths. The **manager** path (`init`, `--init`,
+`-1`, or pid 1) still `exec`s byte-for-byte: the session supervisor records
+the spawned pid as the manager's own, and a proxy would orphan the real
+manager on teardown. Every **other** invocation is proxied so its exit code is
+observable and its stderr controllable — with `--value` both streams are
+captured and the `Property=` prefixes stripped; without it only stderr is
+captured, so a terminal `systemctl status` keeps its TTY. A successful run
+forwards nothing on stderr; a failing one forwards it verbatim, because that
+is the real diagnosis.
+
+Two traps surfaced while implementing the proxy, both verified against the
+guest's `dash`:
+
+- **An `EXIT` trap does not run when the shell is killed by a signal**, and a
+  trap is *deferred* while the shell waits on a foreground external command —
+  a blocked child would mean the temp files are never removed. The wrapper now
+  traps `HUP`/`INT`/`QUIT`/`TERM` into an `exit` and runs the child via
+  `& wait`, which is a builtin and is interrupted immediately. A killed wrapper
+  orphans the child rather than tearing it down mid-write.
+- **A backgrounded child's stdin is `/dev/null` in POSIX `sh`.** Backgrounding
+  would have silently severed stdin for every proxied call. The wrapper saves
+  the caller's stdin on fd 9 and passes it to the child.
+
+Stated residuals: the manager path still emits the strays (it is `exec`ed, so
+nothing can observe its exit code); a successful run's stderr is dropped
+wholesale, so a legitimate non-fatal warning vanishes with the noise; and
+forwarded failure stderr keeps the `ERROR:systemctl:` logger prefixes.
+
+### The `--link2symlink` add is transactional now
+
+Measured: the extension's `link()` was non-transactional when the source was
+already a member of an l2s group — the backing file was renamed, every member
+resolved through a single intermediate symlink, and any failure between the
+rename and the recreate left the group dangling. When the source *was* that
+intermediate, the unlink itself triggered it, which is why bulk installers hit
+it deterministically and a single-file reproduction did not. Observed as
+`ln: failed to access '.../.l2s.file0001.0002': No such file or directory`
+followed by a directory that `rm -rf` could not remove, and as
+`hermes-agent`'s installer failing with
+`failed to hardlink file from .../.l2s._spdx.py0001`.
+
+`scripts/build-proot-arm64.sh` carries the fix as a second recorded patch:
+the intermediate is repointed with an atomic `symlink`+`rename` substitute,
+the rename is rolled back when `notify_extensions` fails, and the count bump
+is rolled back on the tail failure path. `--link2symlink` itself is **not**
+optional and was not removed: the S10e app uid cannot create a real hardlink
+at all, even with PRoot bypassed (`run-as ... ln` → `Permission denied`), so
+the emulation must be correct rather than absent. The remaining `rm -rf`
+debris noted earlier is gone as a side effect of the enumeration filter below.
+
+A third patch (`L2S_PATCH_C_3`) hides the extension's **internal entries from
+the guest's directory enumeration**. That leak — not the group-add bug — is
+what actually breaks bulk installers: the emulation's own names are real host
+files, so every reader sees them. Measured before the filter: a single
+installer's tree exposed **11,214** `.l2s.*` entries, and `uv` enumerated a
+tree and then failed hardlinking a `.l2s.*` name that had been renamed
+underneath it, because the member count is encoded in the backing file's name.
+The filter drops those records from `getdents64` results so a consumer sees
+only stable, real names. Direct-path access to an internal name still resolves
+deliberately — the extension's own group resolution goes by name, so hiding
+lookups would break it; enumeration was the leak surface. This is a filter on
+what the guest can *see*, not a second namespace.
+
+**Resolved.** A `git clone` (`https://github.com/NousResearch/hermes-agent.git`,
+which completed in about three minutes before this patch) appeared to stall
+three times on the S10e — twice inside the hermes installer, at high CPU and
+never advancing, and once as a direct `--depth 1` clone killed at four minutes.
+It was not this patch. A host A/B of the same revision with and without the
+filter is identical at every scale (shallow clone 11.0 s vs 25.2 s across
+GitHub runs; full clone into a tree already holding ~5,000 internals 2 m 05.5 s
+vs 2 m 06.5 s), a shallow clone issues only 28 `getdents64` calls in total, and
+every loop candidate is bounded: the kernel's `f_pos`, not the reported
+`d_off`, governs where the next call resumes, an all-internal window ends at
+`nread == 0` without registering a chain, and a chained call strictly consumes
+records. The device symptom also did not fit a chain loop — the stalled `git`
+was blocked with zombie children, while a loop would burn the tracer's CPU. On
+an idle device the same clone now completes in **106 s**, and the hermes
+installer reaches its end with `INSTALLER_EXIT=0`, past the dependency step
+that had failed before this patch. The earlier stall was contention from the
+QA session's own diagnostics, not the filter.
+
+One residual on the device: removing a subdirectory that hosts a group's
+backing file while members live elsewhere returns `ENOTEMPTY` and the leftover
+is invisible in the guest, though a later pass succeeds. Whole-tree `rm -rf`
+works in one pass, which is what the installers do.
+
+The verification that mattered: `hermes-agent` installs, and its supervisor
+chain works end to end. Its dependency step had failed on the leaking
+namespace with `failed to hardlink file from .../.l2s._spdx.py0001.0002`; with
+the filter in place the installer completes with `INSTALLER_EXIT=0`.
+
+The second half of that chain is what the D-Bus face exists for. Before it,
+`hermes gateway install` refused with *"User D-Bus session is not available
+(loginctl not found)"* and pointed at `hermes gateway run` as the only
+alternative. With the `guest-systemd-dbus-face` add-on installed through the
+app's own Install action, the same command reports
+`Service already installed at: /root/.config/systemd/user/hermes-gateway.service`
+and `✓ User service started`, and `hermes gateway status` no longer refuses —
+it reads the unit's real state. The unit is `enabled` and `systemctl --user
+start` brings it `active`. So the gate was reachable after all; what it needed
+was a bus with an owner, not real systemd.
+
+One residual worth naming: on a *failing* `systemctl` call the wrapper
+forwards the vendored script's stderr verbatim, logger prefixes and all, so a
+consumer that merges streams still sees
+`WARNING:systemctl:could not access /proc/net/stat`. That is deliberate — a
+failure's stderr is the real diagnosis — but it is the one place the
+exact-match class of consumer can still trip.
+
+### Two additional add-ons
+
+**`guest-base-extras`** (overlay `/opt/lw-base`) exists because the curated
+Ubuntu Base rootfs ships **no CA certificates at all** — zero entries for
+`etc/ssl/certs/ca-certificates.crt` in the upstream tarball — so every HTTPS
+installer in the guest failed `CERTIFICATE_VERIFY_FAILED` before touching
+anything else. It is a separate add-on rather than part of the rootfs payload
+(so existing installs upgrade cheaply) and rather than part of this bridge
+(where it would be semantically wrong). The `ca-certificates` package ships no
+ready bundle — it ships source certificates plus a maintainer script — and this
+product never runs maintainer scripts, so `GuestBaseExtras` generates the PEM
+bundle itself by concatenating the pinned Mozilla sources in sorted order,
+which is what `update-ca-certificates` does. Wiring is preserve-first and
+symlink-only, exactly like this bridge's.
+
+**`guest-systemd-dbus-face`** (overlay `/opt/lw-dbus`) gives the guest the
+D-Bus face that modern service-managing CLIs gate on. It provides a session
+bus, an `org.freedesktop.systemd1` provider, a `busctl` shim, and the
+provider's user unit. Real `busctl` was rejected: it ships in the `systemd`
+package, which carries no shared library of its own (its
+`libsystemd-shared-255.so` is a separate package), so shipping it means ~8.5 MB
+across 18 artifacts pinned to a private, version-locked ABI. The provider
+**delegates to this bridge's `systemctl`** for everything it answers; it does
+not keep a second copy of unit state. `python3-dbus` is used only client-side
+in the shim, because dbus-python's sole concrete `NativeMainLoop` is the GLib
+one and cannot serve objects without dragging `libglib2.0-0t64` and two more
+packages into the payload — the provider therefore carries a hand-rolled
+minimal wire codec over `select()`, verified against real `busctl` and
+`dbus-daemon` as an oracle.
+
+One gap found while specifying it: the vendored script has no `UnitPath`, so
+`systemctl show --property=UnitPath` is empty, and a consumer reads that as
+"unverifiable" and refuses. `UnitPath` is static configuration rather than
+manager state, so it is answered from a single shared source: a
+`usr/share/lw-services/unit-paths` list vendored into the overlay, with
+`user:`/`system:` scope prefixes because the vendored script searches a
+different set in each scope. Both front doors read that one file — the
+provider for its D-Bus property, the wrapper for the CLI spelling — so the
+two cannot disagree, and a test fails if either stops consulting it.
+
+### Boundaries we cannot cross, stated as such
+
+- **The `$XDG_RUNTIME_DIR/systemd/private` transport is unsatisfiable under
+  PRoot.** A client that connects to it is checked by uid custody:
+  `process.geteuid()` returns **0** under fake root while the kernel's
+  `SO_PEERCRED` on the socket returns the **real Android app uid**. PRoot
+  fakes the libc call, not the kernel's answer, so no guest peer can ever
+  present uid 0 and no provider can reconcile the two. Creating that socket
+  therefore makes things *worse* — it steers a consumer onto the unsatisfiable
+  path — so the face deliberately leaves it absent.
+- **A service manager identity is not impersonatable.** A consumer that
+  records `{pid, startTime}` from `/proc/<pid>/stat` and refuses when it
+  changes cannot be satisfied by any D-Bus provider; that check is procfs, not
+  bus, and no bus traffic appears for it.
+- **`openclaw gateway install` is not reachable in this guest.** Its
+  transport candidate needs more of the manager API than a compatible
+  provider can honestly answer through the CLI, and its identity gate is the
+  boundary above. The supported path for that workload is `openclaw gateway
+  run`, in the foreground, which is what the product's supervision model
+  already provides for every guest workload.
 
 ## Device evidence (Samsung S10e, 2026-09-16)
 

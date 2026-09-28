@@ -27,6 +27,39 @@ public final class CuratedRuntimeCatalog {
      */
     public static final String SERVICES_OVERLAY_ENTRYPOINT = "usr/bin/python3.12";
 
+    /**
+     * Fixed guest-visible mount point of the guest base-extras add-on
+     * overlay: the pinned Mozilla CA certificate set and the {@code openssl}
+     * CLI the curated rootfs lacks.
+     */
+    public static final String BASE_EXTRAS_OVERLAY_GUEST_DIR = "/opt/lw-base";
+    /**
+     * Guest-relative path of the AArch64 ELF entrypoint the base-extras
+     * overlay must provide. {@code ca-certificates} is data only and ships no
+     * ELF at all, so the entrypoint is the {@code openssl} interpreter-free
+     * CLI from the second artifact — the uniform entrypoint ABI check stays
+     * meaningful for this data payload.
+     */
+    public static final String BASE_EXTRAS_OVERLAY_ENTRYPOINT = "usr/bin/openssl";
+
+    /**
+     * Fixed guest-visible mount point of the guest systemd D-Bus-face add-on
+     * overlay (ADR-0024): the vendored {@code dbus-daemon}, its client tools
+     * and {@code libdbus-1}, the {@code python3-dbus} bindings the
+     * {@code busctl} shim imports, and the product-owned
+     * {@code org.freedesktop.systemd1} provider that delegates to the
+     * existing {@code systemctl} CLI.
+     */
+    public static final String DBUS_FACE_OVERLAY_GUEST_DIR = "/opt/lw-dbus";
+    /**
+     * Guest-relative path of the AArch64 ELF entrypoint the D-Bus-face
+     * overlay must provide: the {@code dbus-daemon} binary the provider
+     * spawns to offer the session bus. The provider and the {@code busctl}
+     * shim are scripts, so the uniform ELF entrypoint check is carried by
+     * the daemon.
+     */
+    public static final String DBUS_FACE_OVERLAY_ENTRYPOINT = "usr/bin/dbus-daemon";
+
     private CuratedRuntimeCatalog() {
     }
 
@@ -285,11 +318,34 @@ public final class CuratedRuntimeCatalog {
         List<VendoredFile> vendoredFiles = Arrays.asList(
                 // systemctl3.py — docker-systemctl-replacement v1.7.1097,
                 // commit 8bd65bec50650fcc740e2d55c32162ba7bafdfc8, EUPL-1.2.
+                // Kept byte-identical to upstream and therefore NOT the file
+                // the guest runs: its `#! /usr/bin/env python3` shebang would
+                // put the whole bridge behind a PATH lookup. The wrapper below
+                // execs this path with an absolute interpreter instead.
                 new VendoredFile(
                         "services/systemctl3.py",
+                        "usr/lib/nusadesk/systemctl3.py",
+                        false,
+                        "5f5a47f321c7a8881dfd01f774106dc4012d664bee238eada86a7112674fea93"),
+                // Product-owned entrypoint that the guest actually executes,
+                // wired to /usr/bin/systemctl. Re-pin this digest with the
+                // file; GuestServiceBridgeTest pins its interpreter path
+                // against SERVICES_OVERLAY_GUEST_DIR so the two cannot drift.
+                new VendoredFile(
+                        "services/lw-systemctl",
                         "usr/bin/systemctl",
                         true,
-                        "5f5a47f321c7a8881dfd01f774106dc4012d664bee238eada86a7112674fea93"),
+                        "11375c68c0d17b55f676a2692d4cb0a0ff4180c978b2cd61750236bc79bb7078"),
+                // Shared unit-search-path list (ADR-0024): the single source
+                // of truth both faces read — the lw-systemctl wrapper for
+                // `show --property=UnitPath --value`, and the D-Bus provider
+                // for Manager.UnitPath — so the CLI and the bus can never
+                // disagree. Re-pin this digest with the file.
+                new VendoredFile(
+                        "services/lw-unit-paths",
+                        "usr/share/lw-services/unit-paths",
+                        false,
+                        "6cce368c0e2d6ccb9671744059c35cc914fd2f7cc8cbd8ca1807f71b6b8991fd"),
                 new VendoredFile(
                         "services/EUPL-LICENSE.md",
                         "usr/share/lw-services/EUPL-LICENSE.md",
@@ -331,7 +387,7 @@ public final class CuratedRuntimeCatalog {
                         "services/lw-session-supervisor",
                         "usr/sbin/lw-session-supervisor",
                         true,
-                        "3d8ec11a9e5c0c185bb2eb75b74b8ed2e2f260b32b7056c9b6afebc445f8d790"),
+                        "281e9eca8b6402a0f4108e2c060c082c362201ff1e9a4bc8bda7d7dfccb936a8"),
                 // Product-owned user-service manager (ADR-0024): the session
                 // manager starts this unit, which runs the vendored systemctl3
                 // in --user mode so enabled user units come up with the
@@ -340,7 +396,7 @@ public final class CuratedRuntimeCatalog {
                         "services/lw-user-manager",
                         "usr/local/bin/lw-user-manager",
                         true,
-                        "c50ce5b3192a8f90c0b0ace9427081ae8872dbd221b9f72d3268f0085d2e8b3d"),
+                        "f49365fc9b4ca91ce98011286ee1e1132255be5ed4baba71a178878e1dc7a5e2"),
                 // Re-pin this digest with the unit file.
                 new VendoredFile(
                         "services/lw-user-manager.service",
@@ -434,11 +490,241 @@ public final class CuratedRuntimeCatalog {
     }
 
     /**
+     * Curated guest base-extras add-on: the pinned Mozilla CA certificate
+     * set plus the {@code openssl} CLI, installed as a private overlay bound
+     * at {@link #BASE_EXTRAS_OVERLAY_GUEST_DIR}.
+     *
+     * <p>The curated {@link #ubuntuBaseArm64()} rootfs ships no CA
+     * certificates at all — no {@code /etc/ssl/} tree exists — so every TLS
+     * client in the guest fails certificate verification before doing
+     * anything. This add-on delivers the missing trust store. The
+     * {@code ca-certificates} package is architecture-independent
+     * ({@code _all}); it carries the source certs under
+     * {@code usr/share/ca-certificates/mozilla/} plus the
+     * {@code update-ca-certificates} maintainer tool, but not the generated
+     * {@code /etc/ssl/certs/ca-certificates.crt} bundle — on a real Debian
+     * that bundle is postinst output, and this product never runs maintainer
+     * scripts. {@code GuestBaseExtras} therefore builds the bundle
+     * deterministically at wire time by concatenating the pinned
+     * {@code mozilla/*.crt} set in sorted order, exactly what
+     * {@code update-ca-certificates} emits for the default set.</p>
+     *
+     * <p>{@code openssl} rides along for three reasons: it is
+     * {@code ca-certificates}' declared dependency (the shipped
+     * {@code update-ca-certificates} invokes it), the profile contract
+     * requires an AArch64 ELF entrypoint and the data-only package provides
+     * none, and it is the conventional guest tool for inspecting the very
+     * trust store this overlay installs. Its runtime dependencies
+     * ({@code libssl3t64}, {@code libc6}) already ship in the base rootfs, so
+     * nothing else is extracted for it. Provenance and licence notes are
+     * vendored into the overlay at
+     * {@code usr/share/lw-base/THIRD_PARTY_NOTICES.md}.</p>
+     */
+    public static GuestAddonPayloadProfile guestBaseExtras() {
+        String pool = "https://ports.ubuntu.com/ubuntu-ports/";
+        List<PayloadArtifact> artifacts = Arrays.asList(
+                new PayloadArtifact(
+                        "ca-certificates_20240203_all",
+                        "20240203",
+                        pool + "pool/main/c/ca-certificates/ca-certificates_20240203_all.deb",
+                        "641de77d8f142cfd62a1a6f964ba67b20754d3337c480efb529d086075a06c9a",
+                        "linux/arm64",
+                        159_378L,
+                        256_156L),
+                new PayloadArtifact(
+                        "openssl_3.0.13-0ubuntu3_arm64",
+                        "3.0.13-0ubuntu3",
+                        pool + "pool/main/o/openssl/openssl_3.0.13-0ubuntu3_arm64.deb",
+                        "9b7136b1af32fbdefc2eac61bae86f8304c603c7b9a0297b20a1e31c522b024b",
+                        "linux/arm64",
+                        983_800L,
+                        1_712_035L));
+        // Provenance note; the digest is re-pinned with the asset, like every
+        // vendored file.
+        List<VendoredFile> vendoredFiles = Collections.singletonList(
+                new VendoredFile(
+                        "base-extras/THIRD_PARTY_NOTICES.md",
+                        "usr/share/lw-base/THIRD_PARTY_NOTICES.md",
+                        false,
+                        "9a095f1453f0df751f4d56112faebf44e453cc5946808a76380436c0ce1b26ce"));
+        return new GuestAddonPayloadProfile(
+                "guest-base-extras",
+                "Guest base extras (CA certificates)",
+                "20240203",
+                BASE_EXTRAS_OVERLAY_GUEST_DIR,
+                BASE_EXTRAS_OVERLAY_ENTRYPOINT,
+                artifacts,
+                vendoredFiles,
+                Arrays.asList(
+                        "usr/share/ca-certificates/mozilla",
+                        "usr/sbin/update-ca-certificates",
+                        "usr/share/lw-base/THIRD_PARTY_NOTICES.md"),
+                Collections.<String>emptyList());
+    }
+
+    /**
+     * Curated guest systemd D-Bus-face add-on (ADR-0024): the vendored
+     * {@code dbus-daemon} session bus plus the product-owned
+     * {@code org.freedesktop.systemd1} provider and {@code busctl} shim,
+     * installed as a private overlay bound at
+     * {@link #DBUS_FACE_OVERLAY_GUEST_DIR}.
+     *
+     * <p>The face exists for D-Bus-gated consumers (e.g. openclaw's
+     * runtime-bus transport candidate, which probes {@code busctl --user
+     * --auto-start=no get-property org.freedesktop.systemd1 … Manager
+     * Version}). It is deliberately a separate add-on from the service
+     * bridge — the bridge owns the {@code systemctl} surface — but it is a
+     * compatibility face, not a second manager: the provider translates
+     * D-Bus calls into the same {@code systemctl} CLI the bridge installs
+     * and the same unit files, so the two can never disagree. {@code
+     * requiredRootfsTools} declares that dependency honestly: the scripts'
+     * {@code /usr/bin/python3.12} shebang and {@code /usr/bin/systemctl}
+     * both resolve through the bridge's wiring.</p>
+     *
+     * <p>The artifact set is the real dependency closure of
+     * {@code dbus-daemon} + {@code python3-dbus} against the signed
+     * {@code dists/noble/main/binary-arm64/Packages} index minus what the
+     * curated {@link #ubuntuBaseArm64()} rootfs already ships
+     * ({@code libsystemd}, {@code libselinux}, {@code libaudit},
+     * {@code libcap-ng}, libc): {@code libapparmor1} and {@code libexpat1}
+     * are the only runtime libraries the base lacks. {@code libexpat1} is
+     * the same pinned artifact the service bridge already carries — shipped
+     * here too so this overlay's closure is self-contained.</p>
+     *
+     * <p>{@code python3-dbus} is a C extension; the ABI match with the
+     * bridge's pinned {@code python3.12} interpreter is pinned structurally:
+     * {@code requiredFiles} names
+     * {@code _dbus_bindings.cpython-312-aarch64-linux-gnu.so}, so an
+     * upstream rebuild against a different interpreter or architecture
+     * fails install verification instead of importing at runtime.
+     * {@code _dbus_glib_bindings} ships inside the same package but is
+     * inert: nothing loads it and {@code libglib} is deliberately absent —
+     * the provider speaks the D-Bus wire protocol directly rather than
+     * paying GLib's dependency tree for a main loop.</p>
+     *
+     * <p>Provenance and licences (D-Bus: AFL-2.1/GPL-2.0+ dual; dbus-python:
+     * AFL-2.1/GPL-2.0+ and Expat; libapparmor1: LGPL-2.1+; libexpat1: MIT)
+     * are vendored into the overlay at
+     * {@code usr/share/lw-dbus/THIRD_PARTY_NOTICES.md}.</p>
+     */
+    public static GuestAddonPayloadProfile guestSystemdBusFace() {
+        String pool = "https://ports.ubuntu.com/ubuntu-ports/";
+        List<PayloadArtifact> artifacts = Arrays.asList(
+                new PayloadArtifact(
+                        "dbus-daemon_1.14.10-4ubuntu4_arm64",
+                        "1.14.10-4ubuntu4",
+                        pool + "pool/main/d/dbus/dbus-daemon_1.14.10-4ubuntu4_arm64.deb",
+                        "f86ef31871dee6bf14a6a8dadeb6d6a800772cca42bb2697ed2398ea08c575aa",
+                        "linux/arm64",
+                        115_004L,
+                        371_084L),
+                new PayloadArtifact(
+                        "dbus-bin_1.14.10-4ubuntu4_arm64",
+                        "1.14.10-4ubuntu4",
+                        pool + "pool/main/d/dbus/dbus-bin_1.14.10-4ubuntu4_arm64.deb",
+                        "60fdfc72ab3dd550b48d044bf45f1573ef890555f243096c32e1ceb7ce318c16",
+                        "linux/arm64",
+                        38_824L,
+                        368_493L),
+                new PayloadArtifact(
+                        "libdbus-1-3_1.14.10-4ubuntu4_arm64",
+                        "1.14.10-4ubuntu4",
+                        pool + "pool/main/d/dbus/libdbus-1-3_1.14.10-4ubuntu4_arm64.deb",
+                        "c269be28a2ed45d08f85ca2e7eb8a333f7ef5b01a052f4ad561e6834fe4c8964",
+                        "linux/arm64",
+                        209_862L,
+                        486_160L),
+                new PayloadArtifact(
+                        "dbus-session-bus-common_1.14.10-4ubuntu4_all",
+                        "1.14.10-4ubuntu4",
+                        pool + "pool/main/d/dbus/dbus-session-bus-common_1.14.10-4ubuntu4_all.deb",
+                        "e9b9aaedfea55df0236cad9c5c060aa7e9dfac38084cbf72aae32a9bafae0ec7",
+                        "linux/arm64",
+                        80_354L,
+                        94_605L),
+                new PayloadArtifact(
+                        "python3-dbus_1.3.2-5build3_arm64",
+                        "1.3.2-5build3",
+                        pool + "pool/main/d/dbus-python/python3-dbus_1.3.2-5build3_arm64.deb",
+                        "1be335428c6731a33f648af5d77c0dbce9d30158957c1f7549b5267422f5090c",
+                        "linux/arm64",
+                        99_500L,
+                        478_371L),
+                new PayloadArtifact(
+                        "libapparmor1_4.0.0-beta3-0ubuntu3_arm64",
+                        "4.0.0-beta3-0ubuntu3",
+                        pool + "pool/main/a/apparmor/libapparmor1_4.0.0-beta3-0ubuntu3_arm64.deb",
+                        "8c29035a9153c5087a4853dae51db5b804d52be90ca5b6f08e9d9684e6d64448",
+                        "linux/arm64",
+                        50_004L,
+                        153_894L),
+                new PayloadArtifact(
+                        "libexpat1_2.6.1-2build1_arm64",
+                        "2.6.1-2build1",
+                        pool + "pool/main/e/expat/libexpat1_2.6.1-2build1_arm64.deb",
+                        "f6cea0cbe617519480ab3501166eab7092a9a75332cb186c30eee8107da381b9",
+                        "linux/arm64",
+                        76_070L,
+                        401_563L));
+        List<VendoredFile> vendoredFiles = Arrays.asList(
+                // Product-owned busctl shim (python3-dbus client; the
+                // consumer-facing command). Re-pin this digest with the file.
+                new VendoredFile(
+                        "services/lw-busctl",
+                        "usr/bin/busctl",
+                        true,
+                        "7d3417aa85c28035233c2fb0f180d2ebdcbc8964a3d77d9bdd7aa3f6ca977260"),
+                // Product-owned org.freedesktop.systemd1 provider: owns the
+                // name on the session bus it spawns and delegates every
+                // answer to the bridge's systemctl CLI. Re-pin this digest
+                // with the file.
+                new VendoredFile(
+                        "services/lw-systemd-dbus-provider",
+                        "usr/sbin/lw-systemd-dbus-provider",
+                        true,
+                        "0c83e2ad072178a918072071047aa6aa5326e5e027f0347c099b3162ab288859"),
+                // The provider's user unit, enabled into default.target at
+                // wire-up. Re-pin this digest with the file.
+                new VendoredFile(
+                        "services/lw-systemd-dbus-provider.service",
+                        "etc/systemd/user/lw-systemd-dbus-provider.service",
+                        false,
+                        "ad37536f701514ef4e50f0783d77d1cc6f0a623f54baf6f6a1c375e69afa7cc5"),
+                // Provenance/licences for the D-Bus payload. Re-pin with the
+                // file.
+                new VendoredFile(
+                        "services/THIRD_PARTY_NOTICES.md",
+                        "usr/share/lw-dbus/THIRD_PARTY_NOTICES.md",
+                        false,
+                        "d7227c68e7feca289735bb36aef32ed79ab6d60bbfad87192c41bc57cd5dfa28"));
+        return new GuestAddonPayloadProfile(
+                "guest-systemd-dbus-face",
+                "Guest systemd D-Bus face (org.freedesktop.systemd1)",
+                "1.14.10-4ubuntu4",
+                DBUS_FACE_OVERLAY_GUEST_DIR,
+                DBUS_FACE_OVERLAY_ENTRYPOINT,
+                artifacts,
+                vendoredFiles,
+                Arrays.asList(
+                        "usr/bin/dbus-uuidgen",
+                        "usr/lib/aarch64-linux-gnu/libdbus-1.so.3",
+                        "usr/lib/aarch64-linux-gnu/libapparmor.so.1",
+                        "usr/lib/aarch64-linux-gnu/libexpat.so.1",
+                        "usr/share/dbus-1/session.conf",
+                        "usr/lib/python3/dist-packages/dbus",
+                        "usr/lib/python3/dist-packages/_dbus_bindings.cpython-312-aarch64-linux-gnu.so",
+                        "etc/systemd/user/lw-systemd-dbus-provider.service",
+                        "usr/share/lw-dbus/THIRD_PARTY_NOTICES.md"),
+                Arrays.asList("usr/bin/systemctl", "usr/bin/python3.12"));
+    }
+
+    /**
      * Every curated add-on, in install order. The launcher binds each activated
      * overlay at its fixed guest dir, so the guest always sees whatever add-ons
      * are installed without a caller having to name them.
      */
     public static List<GuestAddonPayloadProfile> guestAddons() {
-        return Arrays.asList(guestSshAddon(), guestServiceBridge());
+        return Arrays.asList(guestSshAddon(), guestServiceBridge(), guestBaseExtras(),
+                guestSystemdBusFace());
     }
 }

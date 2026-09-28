@@ -507,10 +507,21 @@ the honest artifact of that pre-fix session.
 | SYS-001 | Rootfs has apt-installed real/native `systemctl` or Python paths | Strict PRoot file binds make product `systemctl3`/Python effective without deleting rootfs-owned files |
 | SYS-002 | A `systemctl --user` unit is enabled into `default.target` (for example a web app) and the host is force-closed and relaunched | The product-owned `lw-user-manager.service` unit runs the replacement in `--user` mode with `HOME`/`XDG_RUNTIME_DIR`/`SYSTEMD_DEFAULT_TARGET=default.target`, so the enabled user unit is active again after the session restart and its port answers; stopping the session stops the user unit too |
 | SYS-003 | A previous session left `.status` marks under `/run/user/<uid>` | Wire-up wipes user marks as well as system marks, so `systemctl --user is-active` never reports a service the new session did not start |
+| SYS-004 | `systemctl show --property=<P> --value <unit>` (the spelling modern tooling uses) | Prints the bare value, one per line, with no `Property=` prefix and no usage banner; an unsupported shape exits non-zero rather than reporting a successful failure |
+| SYS-005 | A `systemctl` call that succeeds, and one that fails | The successful call writes nothing on stderr — the vendored script's `/proc/net/stat` and `/etc/initrd-release` strays must not reach a consumer that merges stderr into stdout; the failing call forwards its stderr and the real exit code |
+| SYS-006 | Two `ln` calls in the guest from the same source (what bulk installers do), then `rm -rf` of the directory | Both names read the payload and the directory removes cleanly; the second link must not consume the group's backing file. A one-link reproduction does not cover this — the source has to be an already-emulated member |
+| SYS-007 | The `guest-base-extras` add-on is installed and the session is up | `etc/ssl/certs/ca-certificates.crt` resolves to the generated bundle and an HTTPS client in the guest completes a request; without the add-on the same client fails `CERTIFICATE_VERIFY_FAILED` and nothing else changes |
+| SYS-008 | The `guest-systemd-dbus-face` add-on is installed and the session is up | `$XDG_RUNTIME_DIR/bus` exists, `org.freedesktop.systemd1` has an owner, and a `busctl`-shaped property read of `Manager.Version` answers `s "<value>"`; `$XDG_RUNTIME_DIR/systemd/private` stays **absent**, because steering a consumer onto that transport is worse than not having it |
+| SYS-009 | A service-managing CLI that identifies the manager by `{pid, startTime}` or by socket peer uid | It refuses — and that is the expected result, not a defect. Fake root makes `geteuid()` disagree with the kernel's peer uid by construction, so no provider can satisfy it; the workload runs supervised in the foreground instead |
 
 The resolver policy is covered by `GuestResolverDoctorTest`; temporary-state
 cleanup is covered by `GuestEphemeralStateCleanerTest`; strict systemctl
-binds are covered by `GuestServiceBridgeTest` and `ProotBindMountTest`.
+binds are covered by `GuestServiceBridgeTest` and `ProotBindMountTest`; the
+wrapper's argument adaptation, stderr discipline and exec-vs-proxy split are
+covered by `LwSystemctlWrapperAssetTest`; the CA bundle and its wiring by
+`GuestBaseExtrasTest`; the D-Bus face's profile, detection and wiring by
+`GuestSystemdBusFaceTest`; and the packaged PRoot binary against the build
+script's pins by `ProotBridgePinTest`.
 
 ## WebView cases
 

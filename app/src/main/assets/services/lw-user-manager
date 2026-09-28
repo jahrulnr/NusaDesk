@@ -19,4 +19,4 @@ export HOME=/root
 export XDG_RUNTIME_DIR=/run/user/0
 export SYSTEMD_DEFAULT_TARGET=default.target
 mkdir -p /run/user/0
-exec /usr/bin/python3.12 /usr/bin/systemctl --user init
+exec /usr/bin/systemctl --user init

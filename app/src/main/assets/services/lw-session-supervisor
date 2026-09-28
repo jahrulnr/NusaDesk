@@ -29,8 +29,11 @@ fi
 rm -f "$init_exit_file"
 
 (
-    /opt/lw-services/usr/bin/python3.12 \
-        /opt/lw-services/usr/bin/systemctl init &
+    # Invoke the entrypoint, never the script: /usr/bin/systemctl is the
+    # product wrapper that picks the interpreter, so this must not name a
+    # Python interpreter itself. The wrapper execs, so the pid recorded below
+    # is still the manager's own.
+    /opt/lw-services/usr/bin/systemctl init &
     init_pid=$!
     echo "$init_pid" > "$init_pid_file"
     wait "$init_pid"

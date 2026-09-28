@@ -200,6 +200,14 @@ public final class SystemScreenView extends FrameLayout
     }
 
     /**
+     * Wires the systemd D-Bus compatibility overlay's Install / Try again
+     * action — an opt-in add-on, so a tap only ever installs it.
+     */
+    public void setOnDbusFaceInstallListener(OnClickListener listener) {
+        installPage.setOnDbusFaceInstallListener(listener);
+    }
+
+    /**
      * Renders the mandatory service bridge's presence on the One-click
      * install page — a core component installed by setup itself, so the row
      * reports state and offers no action.
@@ -209,11 +217,27 @@ public final class SystemScreenView extends FrameLayout
     }
 
     /**
+     * Renders the mandatory base-extras overlay's presence on the One-click
+     * install page — same core-tier contract as the service bridge.
+     */
+    public void renderBaseExtras(boolean installed) {
+        installPage.renderBaseExtras(installed);
+    }
+
+    /**
      * Renders one optional toolkit's row on the One-click install page from
      * its own derived state — never inferred from the service bridge's.
      */
     public void renderToolkit(GuestOptionalTools.Kind kind, ServicesExtraState state) {
         installPage.renderToolkit(kind, state);
+    }
+
+    /**
+     * Renders the D-Bus face's row on the One-click install page from its
+     * own derived state — same truth-source rule as the toolkits.
+     */
+    public void renderDbusFace(ServicesExtraState state) {
+        installPage.renderDbusFace(state);
     }
 
     /** Wires the backup page's export/import actions on the Backup page. */

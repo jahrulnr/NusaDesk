@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-28
+
+### Added
+
+- A **guest CA trust store** (ADR-0024, the `guest-base-extras` add-on). The
+  curated Ubuntu Base rootfs ships **no certificates at all** — the upstream
+  tarball contains zero entries for `etc/ssl/certs/ca-certificates.crt` — so
+  every HTTPS client in the guest failed `CERTIFICATE_VERIFY_FAILED` before it
+  could reach anything, in a product whose purpose is installing Linux
+  software. The add-on carries the pinned `ca-certificates` and `openssl`
+  packages and builds the PEM bundle itself by concatenating the Mozilla
+  sources in sorted order, which is what the package's own maintainer script
+  does — this product never runs maintainer scripts. It installs with setup as
+  a required component and is a separate add-on in packaging terms so the
+  rootfs payload stays untouched and existing installs upgrade cheaply.
+- A **systemd D-Bus face** for the guest (ADR-0024, the
+  `guest-systemd-dbus-face` add-on). Modern service-managing CLIs never reach
+  `systemctl` for user-scope work; they require a session bus with an owner of
+  `org.freedesktop.systemd1`. The add-on provides a session bus, a provider
+  for that name, and a `busctl` shim, all delegating to the one existing
+  `systemctl` bridge rather than keeping a second copy of unit state — the two
+  front doors cannot disagree. Real `busctl` was rejected: it ships in the
+  `systemd` package, which carries no shared library of its own, so shipping it
+  means roughly 8.5 MB across 18 artifacts pinned to a private, version-locked
+  ABI. `python3-dbus` cannot serve objects without dragging GLib into the
+  payload, so the provider carries a minimal wire codec verified against real
+  `busctl` and `dbus-daemon`. It is an optional add-on with its own Install
+  action: only tools that gate on a bus need it.
+- `systemctl show --property=<P> --value` is now supported. The vendored
+  option parser did not know `--value`, so the spelling modern tooling
+  actually uses printed a usage banner and returned **0** — the worst possible
+  shape for a caller to classify. The wrapper drops the flag before the
+  interpreter sees it and prints the bare values, one per line.
+- `UnitPath` is answered from a single shared source. The vendored script has
+  no unit-path module, so a consumer probing for it read an empty result as
+  "unverifiable" and refused. A `usr/share/lw-services/unit-paths` list with
+  `user:`/`system:` scope prefixes is vendored into the overlay, and both the
+  D-Bus provider and the CLI wrapper read that one file.
+
+### Fixed
+
+- **The link2symlink emulation no longer leaks its internals into the guest's
+  directory namespace**, which is what actually broke bulk installers. The
+  extension's `.l2s.*` entries are real host files, so every reader saw them:
+  measured on one installer's tree, **11,214** of them. `uv` enumerated a tree
+  and then failed hardlinking a `.l2s.*` name that had been renamed underneath
+  it, because the member count is encoded in the backing file's name —
+  `hermes-agent`'s installer died there. A `getdents64` filter drops those
+  records so a consumer sees only stable, real names. Direct-path access to an
+  internal name still resolves, deliberately: the extension's own group
+  resolution goes by name, so hiding lookups would break it.
+- **The link2symlink group add is transactional.** Adding a member to a group
+  that already existed was not: the backing file was renamed and every member
+  resolved through a single intermediate symlink, so any failure between the
+  rename and the recreate left the group dangling. When the source *was* that
+  intermediate, the unlink itself triggered it — which is why bulk installers
+  hit it deterministically and a one-file reproduction did not. The
+  intermediate is now repointed with an atomic `symlink`+`rename` substitute,
+  and the rename and count bump roll back on failure.
+- **A successful `systemctl` call no longer writes to stderr.** The vendored
+  script logged a denied `/proc/net/stat` probe and a missing
+  `/etc/initrd-release` condition on every invocation, which broke consumers
+  that merge the streams and compare the result exactly. Every invocation
+  except the manager is now proxied so its exit code is observable — the
+  manager keeps `exec`, because the session supervisor records the pid it ends
+  on and a proxy would orphan the real manager. A successful run forwards
+  nothing on stderr; a failing one forwards it verbatim, because that is the
+  diagnosis. (A failing call's stderr still carries the vendored logger
+  prefixes; that is deliberate and recorded as a limitation.)
+- `--link2symlink` is **not** optional and was not removed: the app uid cannot
+  create a real hardlink at all, even with PRoot bypassed, so the emulation
+  had to be made correct rather than absent.
+
+### Verified
+
+- Real installers, S10e (SM-G970F, API 31): `openclaw` 2026.9.6 and
+  `hermes-agent` v0.21.5 both install from their published `install.sh` with
+  exit 0. `hermes gateway install` succeeds against the new D-Bus face and its
+  user unit reports `enabled` + `active (running)`; without the face it refuses
+  with "User D-Bus session is not available" and offers only the foreground
+  alternative.
+- The CA payload was checked end to end: the pinned artifact downloads at its
+  exact pinned digest, the 146 Mozilla certificates produce the expected
+  bundle, and that bundle authenticates a real HTTPS server.
+
 ## [0.11.1] - 2026-09-27
 
 ### Fixed

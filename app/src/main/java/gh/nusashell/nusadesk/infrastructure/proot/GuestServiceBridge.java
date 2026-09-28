@@ -95,9 +95,21 @@ import java.util.stream.Stream;
  * <p>Pure JVM file/argv logic; unit-testable with temp directories.</p>
  */
 public final class GuestServiceBridge {
-    /** Guest path of the vendored {@code systemctl} replacement. */
+    /**
+     * Guest path of the product {@code systemctl} entrypoint: the wrapper the
+     * guest runs, and the path the launcher wires and strict-binds.
+     */
     public static final String SYSTEMCTL_GUEST_PATH =
             CuratedRuntimeCatalog.SERVICES_OVERLAY_GUEST_DIR + "/usr/bin/systemctl";
+    /**
+     * Guest path of the vendored script the wrapper execs. This — not the
+     * entrypoint — is what appears in the running manager's cmdline, because
+     * the wrapper {@code exec}s the interpreter with the script as its
+     * operand. Attribution of a pid to this manager uses this path.
+     */
+    public static final String SYSTEMCTL_SCRIPT_GUEST_PATH =
+            CuratedRuntimeCatalog.SERVICES_OVERLAY_GUEST_DIR
+                    + "/usr/lib/nusadesk/systemctl3.py";
     /** Guest path of the AArch64 Python interpreter the bridge provides. */
     public static final String PYTHON_GUEST_PATH =
             CuratedRuntimeCatalog.SERVICES_OVERLAY_GUEST_DIR + "/usr/bin/python3.12";
@@ -224,17 +236,26 @@ public final class GuestServiceBridge {
      * Guest-relative overlay members re-exposed as strict file binds at the
      * identical conventional path, in addition to the wiring symlinks. A
      * symlink only wins when the rootfs lacks real content, so these
-     * entrypoints — the replacement executable, its {@code service} shim,
-     * and the interpreter pair — are bound with {@link ProotBindMount#ofStrict}
-     * to stay effective even over apt-installed guest files or foreign
-     * symlinks. Paths are product constants, never caller input.
+     * entrypoints — the replacement executable and its {@code service} shim —
+     * are bound with {@link ProotBindMount#ofStrict} to stay effective even
+     * over apt-installed guest files or foreign symlinks. Paths are product
+     * constants, never caller input.
+     *
+     * <p>The interpreter pair is deliberately <em>not</em> bound. A strict
+     * file bind makes the overlay member the file a guest write lands on, so
+     * an {@code apt} install of {@code python3.12} wrote straight through
+     * {@code /usr/bin/python3.12} into the overlay, replacing a pinned member
+     * and breaking the bridge's own verification. The interpreter does not
+     * need the bind: {@code usr/bin/systemctl} is a product-owned wrapper that
+     * execs the overlay interpreter by absolute path, so the guest's
+     * {@code /usr/bin/python3*} may be apt's, the rootfs's, or absent without
+     * affecting the bridge. Leaving those paths guest-owned keeps apt's
+     * writes where the product's design says guest content belongs.</p>
      */
     private static final List<String> STRICT_BIND_PATHS =
             Collections.unmodifiableList(Arrays.asList(
                     "usr/bin/systemctl",
-                    "usr/bin/service",
-                    "usr/bin/python3",
-                    "usr/bin/python3.12"));
+                    "usr/bin/service"));
 
     private final String mountGuestDir;
     private final Path mountHostDir;
@@ -242,6 +263,63 @@ public final class GuestServiceBridge {
     private GuestServiceBridge(String mountGuestDir, Path mountHostDir) {
         this.mountGuestDir = mountGuestDir;
         this.mountHostDir = mountHostDir;
+    }
+
+    /**
+     * Why a service bridge is not usable.
+     *
+     * <p>The distinction is not cosmetic. An overlay that was never installed
+     * means the guest simply has no {@code systemctl} — the documented opt-out
+     * behaviour. An overlay that IS installed but fails verification is a
+     * different animal: the rootfs symlinks that {@link #wireInto} wrote point
+     * into that overlay, so the guest sees a {@code systemctl} that exists and
+     * fails. Treating the second case as the first is how a half-broken bridge
+     * stayed silent until the next session happened to reinstall it.</p>
+     */
+    public enum Absence {
+        /** No overlay was ever activated here: the documented opt-out. */
+        NOT_INSTALLED,
+        /** An activated overlay exists but does not verify: repair it. */
+        CORRUPT
+    }
+
+    /** A detection outcome: exactly one of {@link #getBridge()} / {@link #getAbsence()}. */
+    public static final class Detection {
+        private final GuestServiceBridge bridge;
+        private final Absence absence;
+        private final String detail;
+
+        private Detection(GuestServiceBridge bridge, Absence absence, String detail) {
+            this.bridge = bridge;
+            this.absence = absence;
+            this.detail = detail == null ? "" : detail;
+        }
+
+        static Detection usable(GuestServiceBridge bridge) {
+            return new Detection(bridge, null, "");
+        }
+
+        static Detection missing(Absence absence, String detail) {
+            return new Detection(null, absence, detail);
+        }
+
+        /** The bridge, or {@code null} when {@link #getAbsence()} is set. */
+        public GuestServiceBridge getBridge() {
+            return bridge;
+        }
+
+        /** Why there is no bridge, or {@code null} when one was detected. */
+        public Absence getAbsence() {
+            return absence;
+        }
+
+        /**
+         * Which member failed verification, for a log line. Empty when a
+         * bridge was detected. Never contains guest content.
+         */
+        public String getDetail() {
+            return detail;
+        }
     }
 
     /**
@@ -253,11 +331,9 @@ public final class GuestServiceBridge {
      * state does not record which packaged build wrote it, so an APK update
      * that changes a vendored asset (a wrapper path, a script fix) would
      * otherwise leave the old bytes "installed" forever. Each {@link
-     * VendoredFile} is therefore re-hashed and compared to its catalog pin —
-     * a missing member, unreadable file, or digest mismatch means "not
-     * installed", never "usable but degraded", and the install pipeline
-     * re-installs the overlay. The vendored set is bounded and every asset is
-     * digest-pinned, so verification is cheap and total.</p>
+     * VendoredFile} is therefore re-hashed and compared to its catalog pin.
+     * The vendored set is bounded and every asset is digest-pinned, so
+     * verification is cheap and total.</p>
      *
      * @param addonOverlayDir host path of the activated overlay (may be
      *                        null/absent)
@@ -265,21 +341,49 @@ public final class GuestServiceBridge {
      *         the installed overlay fails verification
      */
     public static GuestServiceBridge detect(Path addonOverlayDir) {
+        return inspect(addonOverlayDir).getBridge();
+    }
+
+    /**
+     * Detect a usable service bridge <em>and say why</em> when there is none.
+     *
+     * <p>Callers that only need "is there a bridge" keep using {@link
+     * #detect(Path)}. Callers that start a session or gate setup use this one,
+     * because they are the ones that must not let a damaged overlay pass as an
+     * intentional opt-out.</p>
+     *
+     * @param addonOverlayDir host path of the activated overlay
+     * @return the outcome; never null
+     */
+    public static Detection inspect(Path addonOverlayDir) {
         GuestAddonPayloadProfile profile = CuratedRuntimeCatalog.guestServiceBridge();
-        if (addonOverlayDir == null
-                || !Files.isRegularFile(addonOverlayDir.resolve(profile.getEntrypoint()))
-                || !Files.isRegularFile(addonOverlayDir.resolve("usr/bin/systemctl"))) {
-            return null;
+        if (addonOverlayDir == null || !Files.exists(addonOverlayDir)) {
+            return Detection.missing(Absence.NOT_INSTALLED, "overlay absent");
+        }
+        Path entrypoint = addonOverlayDir.resolve(profile.getEntrypoint());
+        Path systemctl = addonOverlayDir.resolve("usr/bin/systemctl");
+        boolean entrypointPresent = Files.isRegularFile(entrypoint);
+        boolean systemctlPresent = Files.isRegularFile(systemctl);
+        if (!entrypointPresent && !systemctlPresent) {
+            // Nothing of the bridge is here, so nothing was ever wired into
+            // the rootfs either: this is the opt-out, not damage.
+            return Detection.missing(Absence.NOT_INSTALLED, "overlay empty");
+        }
+        if (!entrypointPresent) {
+            return Detection.missing(Absence.CORRUPT, profile.getEntrypoint());
+        }
+        if (!systemctlPresent) {
+            return Detection.missing(Absence.CORRUPT, "usr/bin/systemctl");
         }
         for (VendoredFile vendored : profile.getVendoredFiles()) {
             Path member = addonOverlayDir.resolve(vendored.getOverlayPath());
             if (!Files.isRegularFile(member)
                     || !matchesPinnedDigest(member, vendored.getSha256())) {
-                return null;
+                return Detection.missing(Absence.CORRUPT, vendored.getOverlayPath());
             }
         }
-        return new GuestServiceBridge(
-                CuratedRuntimeCatalog.SERVICES_OVERLAY_GUEST_DIR, addonOverlayDir);
+        return Detection.usable(new GuestServiceBridge(
+                CuratedRuntimeCatalog.SERVICES_OVERLAY_GUEST_DIR, addonOverlayDir));
     }
 
     /**
@@ -514,9 +618,15 @@ public final class GuestServiceBridge {
      * Guest-visible path used to attribute a pid to this manager:
      * {@code /proc/<pid>/cmdline} of the init process contains the script
      * path, and {@link GuestSshdPidFile#matchesDaemon} is a containment test.
+     *
+     * <p>Deliberately the script, not {@link #SYSTEMCTL_GUEST_PATH}: the
+     * entrypoint is a shell wrapper, and a shell wrapper's path does not
+     * survive into the interpreter's cmdline. Attributing on the entrypoint
+     * would stop recognising our own manager and quietly break orphan reclaim
+     * and the identity check teardown performs before signalling.</p>
      */
     public String getBinaryPath() {
-        return SYSTEMCTL_GUEST_PATH;
+        return SYSTEMCTL_SCRIPT_GUEST_PATH;
     }
 
     /** Resolve the init pid file to its host-side path under the rootfs. */

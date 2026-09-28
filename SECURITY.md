@@ -3,10 +3,15 @@
 ## Project status
 
 NusaDesk is an Android/Linux workspace. The current
-version is `0.11.1`. Runtime evidence covers the core runtime (Ubuntu Base
+version is `0.12.0`. Runtime evidence covers the core runtime (Ubuntu Base
 install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
 Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
 Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
+guest service bridge (ADR-0024): the `systemctl` wrapper's argument and stderr
+discipline, the CA trust store the curated rootfs lacked, and the session bus
+with its `org.freedesktop.systemd1` provider, together with two real installers
+(`openclaw`, `hermes-agent`) run from their published `install.sh` and, for the
+latter, its user-unit supervisor reaching `active`. The
 Android capability bridge: the original slices (battery, sensors, foreground
 location and its bounded stream, read-only contacts/call-log/SMS/telephony,
 live media in three track modes, bounded calendar read/write, USB pass-through,

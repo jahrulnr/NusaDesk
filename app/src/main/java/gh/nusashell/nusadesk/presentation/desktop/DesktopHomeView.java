@@ -107,11 +107,12 @@ public final class DesktopHomeView extends FrameLayout
     private InstallPhaseSnapshot addonPhase;
     private GuestSshUiState guestSsh = GuestSshUiState.missing();
     private HostRuntimeStatus session;
-    /** Whether the mandatory service bridge (systemctl/Python overlay) is
-     *  active on disk, as reported by the host. Fails closed: apps and the
-     *  terminal stay locked behind setup until the host reports ready. */
+    /** Whether the mandatory service overlays (systemctl/Python bridge and
+     *  the base-extras CA bundle) are active on disk, as reported by the
+     *  host. Fails closed: apps and the terminal stay locked behind setup
+     *  until the host reports ready. */
     private boolean serviceReady;
-    /** Whether the latest services-overlay phase snapshot ended in FAILED —
+    /** Whether the latest mandatory-overlay phase snapshot ended in FAILED —
      *  tracked separately so a later toolkit snapshot cannot mask it. */
     private boolean serviceFailed;
     /** True while a user-requested optional toolkit install is running
@@ -284,11 +285,12 @@ public final class DesktopHomeView extends FrameLayout
     }
 
     /**
-     * Reports whether the mandatory service bridge (systemctl/Python overlay)
-     * is usable — the host derives this from the verified overlay on disk.
-     * It is part of the core setup gate: apps and the terminal stay hidden
-     * behind the setup card while it is missing, and a failed mandatory
-     * install keeps the card mounted with a retry action.
+     * Reports whether the mandatory service overlays (systemctl/Python
+     * bridge and base-extras CA bundle) are usable — the host derives this
+     * from the verified overlays on disk. It is part of the core setup
+     * gate: apps and the terminal stay hidden behind the setup card while
+     * either is missing, and a failed mandatory install keeps the card
+     * mounted with a retry action.
      */
     public void setRuntimeServiceReady(boolean ready) {
         if (serviceReady == ready) {
@@ -354,13 +356,16 @@ public final class DesktopHomeView extends FrameLayout
 
     /**
      * Feeds one add-on install snapshot — the guest-SSH terminal component,
-     * the mandatory service bridge, or an optional toolkit — into the
-     * unified surface and re-renders. The snapshot is display-only: it is
-     * never persisted as base runtime state (presence is derived from disk).
+     * the mandatory service bridge or base extras, or an optional add-on —
+     * into the unified surface and re-renders. The snapshot is
+     * display-only: it is never persisted as base runtime state (presence
+     * is derived from disk).
      */
     public void renderAddonPhase(InstallPhaseSnapshot phase) {
-        if (phase.getComponent() == InstallPhaseSnapshot.Component.SERVICES) {
-            // Latch the mandatory overlay's failure so a later toolkit or
+        if (phase.getComponent() == InstallPhaseSnapshot.Component.SERVICES
+                || phase.getComponent()
+                        == InstallPhaseSnapshot.Component.BASE_EXTRAS) {
+            // Latch a mandatory overlay's failure so a later toolkit or
             // SSH snapshot cannot mask the retry the user is owed.
             serviceFailed = phase.getState() == RuntimeState.FAILED;
         }

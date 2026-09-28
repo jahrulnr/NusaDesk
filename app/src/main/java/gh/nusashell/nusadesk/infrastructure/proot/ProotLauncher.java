@@ -449,7 +449,15 @@ public final class ProotLauncher {
             if (bridge != null) {
                 binds.addAll(bridge.requiredBinds());
             } else {
-                binds.add(ProotBindMount.of(active.toString(), profile.getGuestDir()));
+                // The D-Bus face's requiredBinds() adds its strict entrypoint
+                // binds on top of the overlay bind; the provider is only
+                // reachable if those paths are the overlay's own.
+                GuestSystemdBusFace dbusFace = GuestSystemdBusFace.detect(active);
+                if (dbusFace != null) {
+                    binds.addAll(dbusFace.requiredBinds());
+                } else {
+                    binds.add(ProotBindMount.of(active.toString(), profile.getGuestDir()));
+                }
             }
         }
         return binds;
