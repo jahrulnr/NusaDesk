@@ -609,10 +609,14 @@ public class LwSystemctlWrapperAssetTest {
         builder.environment().put("LW_STUB_ARGV_FILE", argvFile.toString());
         builder.environment().put("TMPDIR", tmpDir.toString());
         // Deterministic expansion of the data file's {XDG_*} placeholders:
-        // XDG_CONFIG_HOME and XDG_DATA_HOME stay unset on purpose so their
-        // $HOME-derived defaults are exercised too.
+        // XDG_CONFIG_HOME and XDG_DATA_HOME are removed, not merely left
+        // alone, so their $HOME-derived defaults are what this exercises
+        // wherever the suite runs — a CI runner that exports them would
+        // otherwise change the answer under the test.
         builder.environment().put("HOME", "/home/lw-test");
         builder.environment().put("XDG_RUNTIME_DIR", "/run/lw-runtime");
+        builder.environment().remove("XDG_CONFIG_HOME");
+        builder.environment().remove("XDG_DATA_HOME");
         builder.environment().putAll(extraEnv);
         return builder.start();
     }
