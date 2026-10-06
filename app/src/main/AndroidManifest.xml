@@ -344,6 +344,19 @@
         </activity>
 
         <!--
+            Camera capture store (ADR-0059). The device camera writes one photo
+            or one video for a hosted page's file input into the app cache, and
+            this provider serves exactly that file back: never exported, with
+            only the per-URI grant the launch intent carries, and bounded to the
+            cache's camera directory. Insert, update, and delete are refused.
+        -->
+        <provider
+            android:name=".infrastructure.webapp.CameraCaptureProvider"
+            android:authorities="${applicationId}.camera"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!--
             Foreground host shell for the local Linux runtime. Lifecycle host
             only: it owns the user-visible status notification and a Stop
             action, and delegates start/stop to the single registered runtime

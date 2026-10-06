@@ -46,6 +46,29 @@ public class WebAppWindowPolicyContractTest {
     }
 
     /**
+     * Guards the file-upload wiring (ADR-0059): a page's file request is
+     * answered by the surface's own chooser, and the system picker's result is
+     * routed back to the surface that owns it. The upload path adds nothing to
+     * the WebView boundary — the renderer reads the picked URI itself — so the
+     * boundary assertions above stay as they are.
+     */
+    @Test
+    public void pageFileRequestsAreAnsweredThroughTheExplicitUploadPath() throws Exception {
+        String surface = source(
+                "app/src/main/java/gh/nusashell/nusadesk/presentation/webapp/WebAppSurfaceView.java");
+        String activity = source(
+                "app/src/main/java/gh/nusashell/nusadesk/presentation/MainActivity.java");
+
+        assertTrue("the platform file-chooser callback is answered",
+                surface.contains("onShowFileChooser("));
+        assertTrue(surface.contains("fileChooser.show(fileChooserParams, filePathCallback)"));
+        assertTrue(surface.contains("deliverUploadResult"));
+        assertTrue("the picker result reaches the surface that owns it",
+                activity.contains("WebAppFileChooser.REQUEST_PICK_UPLOAD"));
+        assertTrue(activity.contains("onWebAppUploadPicked"));
+    }
+
+    /**
      * Guards the auth-challenge wiring that a JVM suite cannot execute: the
      * surface hands the sign-in responder into every tab's client, the
      * wrapping client forwards the challenge (it is registered in place of the

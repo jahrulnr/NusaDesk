@@ -197,6 +197,31 @@
     <string name="webapp_tab_open">Open %1$s</string>
     <string name="webapp_tab_close">Close %1$s</string>
 
+    <!-- File upload from a hosted page (ADR-0059). A page's file input — and the
+         File System Access pickers WebView routes through the same callback —
+         is answered by a source choice: the platform document picker, which
+         returns content:// URIs, or the built-in browser that walks the real
+         filesystem and returns the ordinary paths the Linux session also sees.
+         End-user copy: marks plus plain names, never a scheme or a path. -->
+    <string name="webapp_upload_source_title">Choose a source</string>
+    <string name="webapp_upload_source_android">Android files</string>
+    <string name="webapp_upload_source_nusadesk">NusaDesk files</string>
+    <string name="webapp_upload_source_camera">Camera</string>
+    <string name="webapp_local_picker_title">NusaDesk files</string>
+    <string name="webapp_local_picker_parent">Parent folder</string>
+    <string name="webapp_local_picker_unreadable">This folder cannot be read. Pick a starting point:</string>
+    <string name="webapp_local_picker_shared_storage">Internal storage</string>
+    <string name="webapp_local_picker_app_files">Linux files</string>
+    <string name="webapp_local_picker_system">System files</string>
+    <string name="webapp_local_picker_selected_entry">✓ %1$s</string>
+    <string name="webapp_local_picker_select">Select</string>
+    <string name="webapp_local_picker_select_count">Select (%1$d)</string>
+    <string name="webapp_local_picker_save">Save</string>
+    <string name="webapp_local_picker_filename">File name</string>
+    <string name="webapp_local_picker_name_required">Enter a file name.</string>
+    <string name="webapp_local_picker_write_failed">Cannot create the file here.</string>
+    <string name="webapp_local_picker_cancel">Cancel</string>
+
     <!-- Add / edit a terminal-command app: the same form, one kind richer. A
          terminal app names a command that runs inside Linux when its tile is
          opened; the command travels over the app's own pinned loopback SSH

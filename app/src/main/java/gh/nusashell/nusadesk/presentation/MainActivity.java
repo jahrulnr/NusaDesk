@@ -110,6 +110,7 @@ import gh.nusashell.nusadesk.presentation.terminal.TerminalSurfaceScope;
 import gh.nusashell.nusadesk.presentation.update.UpdateInstallDialog;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSignInCard;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSignInCoordinator;
+import gh.nusashell.nusadesk.presentation.webapp.WebAppFileChooser;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppTabStack;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
@@ -584,14 +585,19 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Forwards the image picker result to the form that asked for it. The
-     * framework delivers activity results to the Activity, so this is the only
-     * place that can route them; the form owns what the token means.
+     * Forwards the picker results to the surface or form that asked for them.
+     * The framework delivers activity results to the Activity, so this is the
+     * only place that can route them; the receiver owns what the token means.
      */
     @Override
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == WebAppFileChooser.REQUEST_PICK_UPLOAD
+                || requestCode == WebAppFileChooser.REQUEST_CAPTURE_PHOTO) {
+            onWebAppUploadPicked(requestCode, resultCode, data);
+            return;
+        }
         if (requestCode == WorkspaceFolderAccess.REQUEST_PICK_FOLDER) {
             onWorkspacePicked(resultCode, data);
             return;
@@ -616,6 +622,21 @@ public final class MainActivity extends Activity {
         View form = fixedSurfaces.get(DesktopDestination.ADD_APP);
         if (form instanceof AppFormView) {
             ((AppFormView) form).onImagePicked(resultCode, data);
+        }
+    }
+
+    /**
+     * Routes a web-app file-upload result — a system picker's, or the camera's
+     * photo/video — to the surface that asked for it (ADR-0059). Only one
+     * surface can have a chooser open at a time, and the surface that owns it
+     * consumes the result; a result no retained surface is waiting for is
+     * dropped — the page it belonged to no longer exists.
+     */
+    private void onWebAppUploadPicked(int requestCode, int resultCode, Intent data) {
+        for (WebAppSurfaceView surface : webAppSurfaces.values()) {
+            if (surface.deliverUploadResult(requestCode, resultCode, data)) {
+                return;
+            }
         }
     }
 
@@ -1601,6 +1622,16 @@ public final class MainActivity extends Activity {
     public void onRequestPermissionsResult(
             int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == WebAppFileChooser.REQUEST_CAMERA_PERMISSION) {
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            for (WebAppSurfaceView surface : webAppSurfaces.values()) {
+                if (surface.deliverUploadPermissionResult(requestCode, granted)) {
+                    return;
+                }
+            }
+            return;
+        }
         if (requestCode != REQUEST_LEGACY_STORAGE_PERMISSIONS) {
             return;
         }

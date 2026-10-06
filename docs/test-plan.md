@@ -125,6 +125,18 @@ and persistence.
 | WA-032 | Remove an auth-protected app from the launcher | The stored credential is cleared together with the app's record, so nothing is left on the device |
 | WA-033 | Auth-protected app on the launcher after a successful sign-in | The tile shows the icon the app declares, because the same stored pair answers the bounded same-origin favicon request |
 | WA-034 | A page served by app A references a subresource on another loopback port that challenges for credentials | **Known limitation (ADR-0058):** a challenge carries no port, so it is pinned to the owned host only and may be answered with app A's stored pair. Record what actually happens; do not treat this as a pass |
+| WA-035 | Tap a file input on a page (ADR-0059) | A source chooser offers `Android files` and `NusaDesk files` as an icon and a plain name — no scheme, no path; dismissing it answers the page's callback with `null`, which the page sees as a `cancel` event, and the same input opens a chooser again afterwards |
+| WA-036 | Pick one file through `Android files` | The page receives exactly that file, can read its bytes, and shows its name and size |
+| WA-037 | `<input multiple>`, pick two files | The page receives **both** files (a multi-selection arrives as clip data) and can read both |
+| WA-038 | `accept="image/*"` and `accept=".pdf"` | The picker applies the filter: `image/*` offers images only, and `.pdf` resolves to `application/pdf` with non-matching entries disabled |
+| WA-039 | `<input capture="environment">` | Recorded as a capture request; the ordinary picker opens — there is no camera answer in this slice — and the input still works |
+| WA-040 | `<input webkitdirectory>` on Android 10–12 | The platform asks for a multiple-files open and the picked files reach the page; the folder shape itself exists only on the 2026 platform release |
+| WA-041 | Pick through `NusaDesk files`: from the unreadable `/` to a real path under Internal storage | The page receives that real file and can read its bytes |
+| WA-043 | An image-accepting input, choosing `Camera` for the first time | The platform asks for the `CAMERA` grant; on allow the camera app opens and its shot lands in the app's cache file; on refuse the page is answered with `null` (its `cancel` event) and nothing is captured |
+| WA-044 | Take a photo and accept it | The page shows the capture's file name and size and can read its bytes; uploading it proves they are byte-exact |
+| WA-045 | Choose `Camera` again in the same session, and a capture that wrote nothing | The second capture behaves like the first; a capture with no bytes answers `cancel` instead of handing the page an empty file |
+| WA-046 | A video-only input (`accept="video/*"`) | No still-camera row is offered; recording is not offered at all, so only the two file sources appear |
+| WA-042 | Cancel any chooser or picker (the source chooser, the system picker, and the built-in picker's Cancel/Back/outside-tap) | The page's `cancel` event fires for each of them, no answer is duplicated, and the same input opens a chooser again afterwards |
 
 **Run 2026-09-27, Samsung S10e (SM-G970F, API 31, arm64).** A throwaway
 Basic-auth fixture was served from inside the live guest on `127.0.0.1:18099`
@@ -148,6 +160,70 @@ gesture actually reaching the card, and IME behaviour while the card is up.
 Two defects were found only here — an `OnKeyListener` on the card that could
 never receive Back, and a card that dismissed on submit and reopened on
 refusal, which flashed the surface twice per wrong password.
+
+**Run 2026-10-06, Samsung S10e (SM-G970F, Android 12/API 31, arm64).** Signed
+QA build of 0.13.0 (`-PqaDebuggable=true`, versionCode 22). The page under
+test was a fixture served from the host over `adb reverse tcp:18999 tcp:18999`
+— reachable on the device's own `127.0.0.1:18999` — registered as a web app on
+that port; it lists the chosen name and size for six input shapes and posts
+every selection back with `send-all`. Screenshots and the fixture's own upload
+log were kept outside the repository (as with the favicon run); the byte-level
+proof is the digest comparison recorded below.
+
+| Case | Result |
+| --- | --- |
+| WA-035 | PASS. Tapping the input raised `Choose a source` with `Android files` and `NusaDesk files` (icon + plain name; the labels were simplified to that after the first pass, which read `Files (content://)` and `NusaDesk files (/)`). Dismissing it produced `cancel event` in the page, and the same input reopened the chooser afterwards |
+| WA-036 | PASS. `qa-image.png` (136 B) reached the page through the system picker; the input label and the page's result line both named it |
+| WA-037 | PASS. A `multiple` input with two files marked in the picker's selection mode returned `2 file(s)`, `qa-image.png (136 B)` and `qa-doc.pdf (69 B)` — the clip-data multi-selection survives |
+| WA-038 | PASS. `accept="image/*"` produced `action=GET_CONTENT type=image/*` and a picker listing only the PNG; `accept=".pdf"` produced `type=application/pdf` with the non-PDF entries shown but disabled |
+| WA-039 | PASS, with the recorded limit: the request arrived as `capture=true, accept=[image/*]` and the ordinary picker opened |
+| WA-040 | PASS, as the platform's own shape: `webkitdirectory` arrived as `mode=OPEN_MULTIPLE, accept=[]` and the marked files reached the page |
+| WA-041 | PASS. The built-in browser opened at `/`, stated that the folder cannot be read and offered its starting points, and its `Internal storage` root led to `Download/`; the page then reported `qa-note.txt (17 B)` |
+| WA-042 | PASS in two passes. First pass: Back cancelled the system picker, the page showed `cancel event`, and the capture and folder inputs opened a chooser again afterwards. Second pass (after the review fix): tapping the built-in picker's `CANCEL` also produced `cancel event`, and the same input reopened the source chooser and the system picker; the built-in dismissal is the path the review found unwired, so this row was re-run rather than assumed |
+| WA-043 | PASS. The first `Camera` tap raised the platform prompt (`Izinkan NusaDesk mengambil gambar dan merekam video?`); allowing it opened the camera app, and `Ambil gambar` → `OK` wrote `photo-1791297727455.jpg` (2 579 969 B) into the app cache's `camera/` directory |
+| WA-044 | PASS. The page reported `photo-1791297727455.jpg (2579969 B)`, and `send-all` logged `UPLOAD photo-1791297727455.jpg 2579969 4f800ec4…`, equal to the `sha256sum` of the cache file pulled with `run-as` |
+| WA-045 | PASS. A second capture in the same session (`photo-1791298990494.jpg`, 2 564 317 B) rendered the same way, and the release build under test was the one that shipped; the zero-byte guard is pinned by `WebAppFileChooserTest` |
+| WA-046 | PASS, and the finding: with `accept="video/*"` the chooser offered only the two file sources. `ACTION_VIDEO_CAPTURE` was then tried by hand against an app-owned `EXTRA_OUTPUT`: the Samsung camcorder wrote 0 bytes into the target, saved nothing in its own storage, returned no URI, and the page saw a cancel — which is why recording is not offered |
+| bytes | PASS. `send-all` uploaded the files; the fixture server logged `UPLOAD qa-note.txt 17 b4e3d4ab…` and `UPLOAD qa-image.png 136 1e78ff56…`, byte-for-byte equal to the host files' SHA-256 digests, and the page itself reported `total 153 B` |
+
+Device-only findings:
+
+1. **An app may not list `/`.** `run-as … ls /` answers `Permission denied`,
+   as it does for `/storage` and `/data`; `/sdcard`, `/mnt`, `/system`, and the
+   app's own files directory are readable. The picker therefore starts at `/`
+   as promised, says it cannot be read, and offers those readable roots — this
+   row is the reason a literal `/` listing cannot be a feature.
+2. **This OEM's picker enters multi-select on a long-press**, after which a
+   single tap toggles entries and `Pilih` confirms. A single tap without that
+   gesture picks one file and returns.
+3. **The end-user copy was re-checked after the layout pass.** The source rows
+   were re-verified on the same device with the final wording: a robot mark +
+   `Android files` and the Linux mark + `NusaDesk files`, and the built-in
+   picker's rows `Internal storage` / `Linux files` / `System files` with the
+   path line carrying the real path. The two marks and the plain names are what
+   the screenshots in that pass show; the earlier pass's wording
+   (`Files (content://)`, `NusaDesk files (/)`) is gone.
+4. **The review pass changed behavior, not just wording.** The first pass
+   could not have covered the built-in picker's dismissal (it was not wired to
+   the answer path until the review flagged it), so that row was re-run on the
+   device; the multi-type MIME rule (`*/*` + `EXTRA_MIME_TYPES`) and the
+   stale-result gate were changed in the same pass and are pinned by JVM tests
+   instead of a device run.
+5. **The camera's grant is real, and so is the recording limit.** The first
+   `Camera` tap asked for `CAMERA` (the manifest declares it for the guest
+   bridge, so the platform refuses a capture without the grant), and the refusal
+   path is wired to the same "nothing chosen" answer. Recording was tested and
+   rejected with evidence (WA-046): a `Video` source on this OEM would be a
+   control that silently answers nothing.
+6. **Only the legacy shapes are reachable here.** `MODE_SAVE`,
+   `MODE_OPEN_FOLDER`, and `getPermissionMode()` are produced only on API 37+
+   with WebView's File System Access enabled, so the save and folder paths and
+   the read/write flag remain **untested on a device**; their expectations are
+   pinned by the JVM tests (`WebAppUploadIntentsTest`,
+   `WebAppFileChooserTest`).
+4. The QA app registration, the files pushed to `Download`, the `adb reverse`
+   mapping, and the device's temporary `svc power stayon` were removed after
+   the run.
 
 ### Regression checks tied to shipped defects
 

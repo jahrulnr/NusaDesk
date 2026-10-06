@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-06
+
+### Added
+
+- A **file input in a hosted web app works**. `<input type="file">` did nothing
+  at all: `WebChromeClient.onShowFileChooser` defaults to `false`, the web-app
+  surface never overrode it, and Chromium then failed the request silently — no
+  picker, no error, and every later click on the same input was dead too. The
+  surface now answers the callback through `WebAppFileChooser` (ADR-0059), for
+  the legacy shapes (single, multiple, `accept`) and for the File System Access
+  pickers WebView routes through the same callback (`showOpenFilePicker`,
+  `showSaveFilePicker`, `showDirectoryPicker`), whose save and folder shapes
+  exist on the 2026 platform release where that feature is enabled for apps
+  whose target reaches it.
+- **Three sources, chosen per request.** The system document picker returns
+  `content://` URIs. The built-in browser walks the real filesystem and returns
+  `file://` URIs for the paths this app may read — the active rootfs behind the
+  guest's `/`, the workspace's real storage, and everything else PRoot binds —
+  because a document provider can never hand over one of those paths. It starts
+  at `/` and, since an app may not list that root at all, an unlistable folder
+  offers the readable roots (Internal storage, Linux files, System files) with a
+  plain statement that the folder cannot be read. A folder request goes straight
+  to the document-tree picker, and a save into a real path creates the file
+  before the page hears about it. The third source is the **camera**: an
+  image-accepting input (including one carrying `capture`) offers `Camera`, which
+  shoots through `ACTION_IMAGE_CAPTURE` into a cache file the app owns and serves
+  to the page through a non-exported provider, asking for the `CAMERA` grant on
+  first use. Recording is not offered — the device-tested Samsung camcorder
+  ignores an app-owned output and returns nothing, so a `Video` row would
+  silently answer nothing.
+- **The source choice is written for a person, not for a developer.** Each row
+  is a mark and a plain name (`Android files`, `NusaDesk files`) — no
+  `content://`, no `/`, no parenthetical path; the real path appears only inside
+  the built-in picker's own path line, where it is the point.
+- **The one-answer contract is explicit and tested.** A cancelled picker, a
+  dismissed chooser, and a picker that cannot be launched all answer `null`, the
+  platform's documented cancel answer, so a page's input is never left waiting;
+  a second request cancels the first. The result is read by the app — clip data
+  first — because the documented `FileChooserParams.parseResult` helper returns
+  only `Intent.getData()` and therefore drops a multi-selection.
+- **The `accept` attribute becomes a filter with an honest fallback.** Literal
+  MIME types are kept, `.ext` entries resolve through the platform's own MIME
+  table, and an entry that resolves to nothing leaves the filter at `*/*`
+  instead of hiding the file the user wants. The page-controlled inputs are
+  bounded: 16 accept entries (trimmed, de-duplicated) and a 128-character
+  filename hint.
+
+### Known limits
+
+- Recording is not offered: `ACTION_VIDEO_CAPTURE` against an app-owned
+  `EXTRA_OUTPUT` wrote zero bytes and returned nothing on the tested Samsung
+  camcorder (S10e, Android 12), and the recording never reached the device's own
+  storage either. A `MediaStore` target or an in-app recorder is the follow-up.
+- A photo capture lives in the app cache (`camera/`), is readable only through
+  the app's own provider, and is swept after a day; nothing lands in the
+  gallery.
+- A download link (`Content-Disposition: attachment`, the `download` attribute)
+  is still unhandled; downloads are a separate slice.
+- `MODE_SAVE`, `MODE_OPEN_FOLDER`, and the read/write permission mode cannot be
+  exercised on the project's devices (Android 10–12); they rest on the
+  documented API 37 contract and their JVM tests, and are recorded as untested
+  in `docs/test-plan.md`.
+- No picked grant is persisted: it lasts as long as the activity, so a page that
+  keeps a file handle across a surface recreation fails instead of holding
+  permanent access.
+
 ## [0.12.0] - 2026-09-28
 
 ### Added

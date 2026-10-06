@@ -320,6 +320,17 @@ flowchart TD
   cap, a decode downsampled to 256 px, and silence on any failure.
 - A different loopback port is a different origin and is blocked, not handed to
   the system browser, so one registered app cannot reach another app's server.
+- A page's file input — and the File System Access pickers WebView routes
+  through the same callback — is answered by `WebAppFileChooser`: the user picks
+  a source (the system document picker, whose answer is a `content://` URI, or
+  the built-in browser from `/`, whose answer is a `file://` URI for a real path
+  the app may read), or the camera when a photo can satisfy the page's accept
+  (its capture lands in the app cache and is served by
+  `CameraCaptureProvider`, a non-exported provider reachable only through the
+  launch intent's per-URI grant); exactly one answer reaches the page, with every
+  cancel path answering `null`. A folder request goes straight to the
+  document-tree picker; recording is not offered and downloads are not handled
+  (ADR-0059).
 - Reachability is not health: the surface never claims the app is working.
 
 ## Storage shape

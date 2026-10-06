@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Source mark for "Android files" in the upload source chooser (ADR-0059): a
+     robot head, the one symbol that says "this phone's own picker" without a
+     word of jargon. Bundled vector (never a font glyph), drawn in the same
+     stroke style as the launcher tile icons so the mark belongs to this app's
+     surfaces. Decorative: the row's label carries the accessible text. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M8.4,4.8L6.8,2.4M15.6,4.8L17.2,2.4"
+        android:strokeColor="@color/primary"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.5" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M5.5,8h13a2,2 0 0 1 2,2v5.5a2,2 0 0 1 -2,2h-13a2,2 0 0 1 -2,-2V10a2,2 0 0 1 2,-2z"
+        android:strokeColor="@color/primary"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.7" />
+    <path
+        android:fillColor="@color/primary"
+        android:pathData="M8.2,12.6a1.2,1.2 0 1 0 2.4,0a1.2,1.2 0 1 0 -2.4,0M13.4,12.6a1.2,1.2 0 1 0 2.4,0a1.2,1.2 0 1 0 -2.4,0" />
+</vector>

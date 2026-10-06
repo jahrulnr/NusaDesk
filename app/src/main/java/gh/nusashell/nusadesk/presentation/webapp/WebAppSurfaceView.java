@@ -3,6 +3,7 @@ package gh.nusashell.nusadesk.presentation.webapp;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Message;
 import android.os.Handler;
 import android.os.Looper;
@@ -10,6 +11,7 @@ import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.webkit.HttpAuthHandler;
 import android.webkit.RenderProcessGoneDetail;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -62,6 +64,12 @@ import java.util.concurrent.ExecutorService;
  * and in-page state survive a trip to the launcher. Re-binding to the same
  * definition keeps the live page; re-binding to a changed definition, or
  * retrying, starts a fresh probe and a fresh load.</p>
+ *
+ * <p>A page's file input — and the File System Access pickers WebView routes
+ * through the same callback — is answered by {@link WebAppFileChooser}, which
+ * owns the source choice, the picker launch, and the one answer the page's
+ * callback must receive (ADR-0059). The host routes the system picker's
+ * activity result back in through {@link #deliverUploadResult(int, Intent)}.</p>
  */
 public final class WebAppSurfaceView extends FrameLayout implements WebAppSignInState {
 
@@ -102,6 +110,7 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
     private WebAppWebViewBoundary boundary;
     private ExecutorService probeExecutor;
     private HttpAuthResponder signInResponder;
+    private WebAppFileChooser fileChooser;
     /** Alias for the permanent root tab, retained for existing surface logic. */
     private WebView webView;
     private State state = State.PROBING;
@@ -122,6 +131,7 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
 
     private void init() {
         LayoutInflater.from(getContext()).inflate(R.layout.widget_web_app_surface, this, true);
+        fileChooser = new WebAppFileChooser(getContext());
         viewContainer = findViewById(R.id.webapp_view_container);
         statePanel = findViewById(R.id.webapp_state_panel);
         stateTitle = findViewById(R.id.webapp_state_title);
@@ -277,6 +287,28 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
         closeAllChildTabs();
         destroyWebView();
         startProbe();
+    }
+
+    /**
+     * Delivers a picker's or the camera's activity result to the page that asked
+     * for it. The framework delivers activity results to the Activity, so the
+     * host routes every upload result through here; the surface that owns the
+     * pending chooser consumes it.
+     *
+     * @return {@code true} when this surface was waiting for the result
+     */
+    public boolean deliverUploadResult(int requestCode, int resultCode, Intent data) {
+        return fileChooser.deliver(requestCode, resultCode, data);
+    }
+
+    /**
+     * Delivers the camera-permission outcome to the chooser that asked for it.
+     *
+     * @return {@code true} when this surface was waiting for the grant
+     */
+    public boolean deliverUploadPermissionResult(int requestCode, boolean granted) {
+        return requestCode == WebAppFileChooser.REQUEST_CAMERA_PERMISSION
+                && fileChooser.deliverCameraPermissionResult(granted);
     }
 
     private void startProbe() {
@@ -535,6 +567,23 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
         public void onReceivedTitle(WebView view, String title) {
             notifyTabsChanged();
         }
+
+        /**
+         * Answers a page's file request (ADR-0059). Returning {@code false}
+         * would leave the platform to fail the chooser silently, so every
+         * request this surface can serve is served here; the callback is
+         * answered exactly once by {@link WebAppFileChooser}.
+         */
+        @Override
+        public boolean onShowFileChooser(
+                WebView view,
+                ValueCallback<Uri[]> filePathCallback,
+                FileChooserParams fileChooserParams) {
+            if (released) {
+                return false;
+            }
+            return fileChooser.show(fileChooserParams, filePathCallback);
+        }
     }
 
     private String tabIdFor(WebView target) {
@@ -706,6 +755,7 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
             return;
         }
         released = true;
+        fileChooser.cancel();
         if (signInResponder != null) {
             signInResponder.reset();
         }
@@ -713,6 +763,10 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
     }
 
     private void destroyWebView() {
+        // The WebViews being destroyed own any pending file-chooser callback,
+        // so a chooser waiting on them is dropped with them (and its dialog
+        // dismissed) instead of answering a renderer that is gone.
+        fileChooser.cancel();
         for (String tabId : new ArrayList<>(tabWebViews.keySet())) {
             destroyTabWebView(tabId, null);
         }

@@ -3,7 +3,7 @@
 ## Project status
 
 NusaDesk is an Android/Linux workspace. The current
-version is `0.12.0`. Runtime evidence covers the core runtime (Ubuntu Base
+version is `0.13.0`. Runtime evidence covers the core runtime (Ubuntu Base
 install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
 Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
 Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
@@ -137,6 +137,26 @@ The following are deliberate properties of the current design:
   generated loopback origin. Different loopback ports are blocked, external
   links leave for the system browser, and no broad JavaScript interface is
   registered.
+- **A page's file input is served by the platform picker, with the app's own
+  access.** The file-chooser callback answers the page with the URI the user
+  picked: a `content://` URI from a document provider, or a `file://` URI for a
+  path the built-in picker walked to. The renderer reads that URI through this
+  app, so the reach of an upload is the app's own reach — including app-private
+  files the user deliberately navigates to, which is the point for a product
+  whose guest lives there. No file access was enabled on the WebView, no
+  JavaScript interface was added, the page never receives a path, and no
+  persistable grant is taken: a picked file stays reachable only while the
+  surface that picked it exists (ADR-0059).
+- **A camera capture is served by one non-exported provider.** An image input
+  may offer `Camera`; the photo is written by the camera app into this app's
+  cache through `CameraCaptureProvider`, which is `exported="false"` and
+  `grantUriPermissions="true"`, so the camera app reaches exactly the one URI the
+  launch intent carries. The provider refuses any path outside the cache's
+  `camera/` directory, offers no insert/update/delete contract, and the file is
+  swept after a day. The `CAMERA` permission is the manifest's existing
+  declaration (the guest capability bridge); the user is asked for it on first
+  use, and a refusal is reported to the page as "nothing chosen" — never a
+  capture without the grant.
 - **Web-app HTTP sign-in is answered per app, never through
   `WebViewDatabase`.** A registered app may protect its own endpoint with
   HTTP Basic auth; the challenge is answered only when it names the exact

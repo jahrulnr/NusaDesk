@@ -771,6 +771,52 @@ remains the fallback. The limitations are deliberate:
 - **Never fetched for an app with a user image.** The user's own pick is primary and is not replaced, and no request is made in that case.
 - **Silent by design.** Unreachable, timed out, redirected, too large, or not an image are all the same outcome: the tile keeps its monogram, with no error, toast, or state change.
 
+### Web-app file upload (ADR-0059)
+
+A hosted page's file input works through the platform file chooser, and the
+limits of that slice are deliberate:
+
+- **Two sources, no third one.** The system picker returns `content://` URIs
+  (media, downloads, cloud providers), and the built-in picker walks the real
+  filesystem and returns `file://` URIs for whatever this app may read, hidden
+  entries included. It starts at `/`, but an app may not list `/`, `/storage`,
+  or `/data` (SELinux), so an unlistable folder says so and offers the readable
+  roots — Internal storage, Linux files, System files — and the current path is
+  shown in the picker's own path line. Nothing else is reachable, and the page
+  never sees a path — its `File` object carries a name and bytes.
+- **End-user copy carries no jargon.** The source rows are a mark plus a plain
+  name (`Android files`, `NusaDesk files`); a scheme or a path in a label is
+  noise to the person choosing a file.
+- **The camera is offered for photos, not for recording.** An image-accepting
+  input (including one with `capture`) offers `Camera`, which launches the
+  device camera through `ACTION_IMAGE_CAPTURE` into a cache file this app owns
+  and hands the page that file; the `CAMERA` grant the manifest already declares
+  for the bridge is asked for on first use, and a refusal answers the page with
+  "nothing chosen". Recording is not offered: Android's separate
+  `ACTION_VIDEO_CAPTURE` was device-tested and the S10e's Samsung camcorder
+  ignored an app-owned `EXTRA_OUTPUT` (zero bytes written, nothing saved,
+  no URI returned), so a `Video` source would silently answer nothing — a
+  `MediaStore` target or an in-app recorder is the follow-up if that changes.
+- **A capture lives in the app cache.** The photo sits in the app cache's
+  `camera/` directory, is readable only through the app's own non-exported
+  provider (one URI at a time, through the launch intent's grant), and is swept
+  when a later capture finds it older than a day. Nothing appears in the user's
+  gallery, and a killed app can leave at most one such file behind.
+- **Save and folder requests rest on the 2026 contract.** `MODE_SAVE`,
+  `MODE_OPEN_FOLDER`, and the read/write permission mode are produced only on
+  API 37+ with the WebView File System Access feature enabled for the app's
+  target; the platforms in this project's device matrix (API 29–31) never
+  produce them, so those paths are untested on a device.
+- **No grant is persisted.** The picker's grant lives as long as the activity.
+  A page that keeps a handle and writes again after the surface was recreated
+  fails rather than holding a permanent grant on a user file.
+- **A download link still does nothing.** `Content-Disposition: attachment` and
+  `download` links reach neither the file-chooser callback nor a download
+  handler; downloads are a separate slice.
+- **`accept` is best effort.** Extensions resolve through the platform's MIME
+  table, and an extension it does not know leaves the filter at `*/*` instead of
+  hiding the file the user wants.
+
 ### Terminal tabs and terminal-command apps (ADR-0054)
 
 The terminal is a set of host-owned sessions (ADR-0033 extended): an initial

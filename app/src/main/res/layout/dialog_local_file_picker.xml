@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The built-in real-path file picker (ADR-0059): the current absolute path,
+    the directory's children, an optional name field for a new file, and one
+    status line for a refused name. Deliberately a plain list with the same
+    shape as the workspace folder browser — the picker chooses one or more
+    files, and sizes, dates, and icons would be noise on a phone dialog.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="8dp">
+
+    <TextView
+        android:id="@+id/local_picker_path"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="8dp"
+        android:textSize="12sp"
+        android:ellipsize="middle"
+        android:singleLine="true" />
+
+    <ListView
+        android:id="@+id/local_picker_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:minHeight="240dp" />
+
+    <EditText
+        android:id="@+id/local_picker_filename"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="@string/webapp_local_picker_filename"
+        android:importantForAutofill="no"
+        android:inputType="text"
+        android:singleLine="true"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/local_picker_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="8dp"
+        android:textSize="12sp"
+        android:visibility="gone" />
+</LinearLayout>
