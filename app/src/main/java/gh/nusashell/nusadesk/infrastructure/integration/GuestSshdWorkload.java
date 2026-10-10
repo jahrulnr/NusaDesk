@@ -41,6 +41,7 @@ import gh.nusashell.nusadesk.infrastructure.service.WorkloadListener;
 import gh.nusashell.nusadesk.infrastructure.ssh.GuestSshHostKeyFiles;
 import gh.nusashell.nusadesk.infrastructure.ssh.LocalSshEndpoint;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshHostKeyFingerprintCodec;
+import gh.nusashell.nusadesk.infrastructure.sshserver.JdkTcpHealthProbe;
 import gh.nusashell.nusadesk.infrastructure.sshserver.SshBridgeCredential;
 import gh.nusashell.nusadesk.infrastructure.sshserver.SshBridgeHealthProbe;
 
@@ -58,8 +59,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -115,6 +118,15 @@ import java.util.function.LongSupplier;
  * loopback port, and an unexpected daemon-output end-of-file tears the daemon
  * down before the failure is reported.</p>
  *
+ * <p>A tracer stopped by SIGSTOP — the ADR-0062 wedge shape — never sees
+ * SIGTERM, and on the vendor kernels that lose the ptrace fork event it was
+ * observed surviving even SIGKILL until it resumed. Teardown therefore sends
+ * SIGCONT to the tracer before signalling the guest processes, and the
+ * tracer's death is verified afterwards: a workload process still alive after
+ * the forced window is reported as a typed failure naming the workload, which
+ * the host's one-tap restart escalates to a whole-process-tree self-restart,
+ * never as a stop over a live process (ADR-0063).</p>
+ *
  * <p>Secrets never cross this class unprotected: the Keystore token reaches the
  * guest only through a fixed environment variable consumed by the internal
  * setup script, is never an argv element (visible to {@code ps}), and is zeroed
@@ -131,6 +143,27 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
     private static final long STOP_TIMEOUT_MILLIS = 5_000L;
     /** Short confirmation probe after a stop; a live answer is logged loudly. */
     private static final long STOP_VERIFY_TIMEOUT_MILLIS = 1_000L;
+    /**
+     * Raw connect probe for the stop verdict — port occupancy, not the SSH
+     * banner {@link #healthProbe} requires for readiness.
+     */
+    private static final JdkTcpHealthProbe PORT_CONNECT_PROBE = new JdkTcpHealthProbe();
+    /**
+     * Reason published when the workload survives the forced-stop window:
+     * either the tracer process is still alive or a tracee still holds the
+     * fixed loopback port — both are "the workload did not stop". The named
+     * recovery is the one-tap self-restart escalation (ADR-0063): Restart
+     * Linux kills the app's own process tree so the survivor cannot keep the
+     * port orphaned; the Settings force-stop is the documented last resort,
+     * never the primary instruction. Public so the controller can re-derive
+     * the transient survivor flag from a persisted snapshot after process
+     * death — the string is produced only by this workload's own stop verdict.
+     */
+    public static final String STOP_SURVIVED_REASON =
+            "guest session workload is still alive or still holds the fixed "
+            + "SSH port after forced termination; tap Restart Linux to "
+            + "restart the app itself and recover, or force-stop it in "
+            + "Settings only if that fails";
     /** How long the manager's pid file may take to appear after exec. */
     private static final long MANAGER_LAUNCH_TIMEOUT_MILLIS = 15_000L;
     /**
@@ -259,13 +292,24 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             launcher.stopResolverRefresh();
             ActiveDaemon daemon = active;
             active = null;
+            boolean processGone;
             if (daemon != null) {
-                teardown(daemon);
+                processGone = teardown(daemon);
             } else {
                 reclaimUntrackedDaemon();
                 clearGuestTmpAfterStop();
+                // No process handle exists here — the only honest "gone" is
+                // the fixed endpoint no longer answering. A reclaim that
+                // could not signal its orphan must not report a stop over a
+                // port still held (ADR-0062).
+                RuntimePort endpoint = LocalSshEndpoint.endpoint();
+                processGone = !endpointStillAnswering(endpoint);
+                if (!processGone) {
+                    Log.e(TAG, "guest endpoint still answers after the "
+                            + "untracked reclaim; refusing to report stopped");
+                }
             }
-            callbackExecutor.execute(listener::onStopped);
+            callbackExecutor.execute(stopResultCallback(listener, processGone));
         });
     }
 
@@ -525,6 +569,21 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
     }
 
     /**
+     * The terminal report for a stop request: {@code onStopped} only when the
+     * workload process is really gone. A survivor is the typed
+     * {@link WorkloadListener#onStopSurvived} failure the host escalates to a
+     * whole-process-tree self-restart when the user asked for the restart —
+     * because the state machine must never publish a {@code STOPPED} over a
+     * live process still holding the fixed port (ADR-0062, ADR-0063).
+     */
+    static Runnable stopResultCallback(WorkloadListener listener, boolean processGone) {
+        if (processGone) {
+            return listener::onStopped;
+        }
+        return () -> listener.onStopSurvived(STOP_SURVIVED_REASON);
+    }
+
+    /**
      * Reclaim the guest daemon after a rejected start, mirroring the reclaim
      * half of {@link #teardown(ActiveDaemon)}. The daemon may have bound (and
      * written its pid file) before the start was rejected, and stopping the
@@ -536,6 +595,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
      */
     private void reclaimRejectedDaemon(GuestSshDaemon daemon, Path pidFile, Process process,
                                        GuestServiceBridge bridge, Path rootfs) {
+        // Same rule as teardown: a stopped tracer must be thawed before its
+        // tracees can be signalled at all.
+        thawTracers(prootBinaryPath());
         if (bridge != null) {
             // The shared tracer's supervisor may already have started the
             // manager — and it enabled services — before the start was
@@ -551,7 +613,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         if (pid != null && signalGuestProcess(pid, daemon.getBinaryPath(), "guest sshd")) {
             Log.i(TAG, "signalled rejected guest sshd pid " + pid + " to stop");
         }
-        stopProcess(process);
+        stopProcess(process, prootBinaryPath());
     }
 
     /**
@@ -784,6 +846,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         if (!Files.isRegularFile(pidFile)) {
             return;
         }
+        // A leftover tracer may itself be frozen: signals it intercepts
+        // never reach the tracee until the tracer runs again.
+        thawTracers(prootBinaryPath());
         Long pid = GuestSshdPidFile.read(pidFile);
         if (pid == null || !signalGuestProcess(pid, bridge.getBinaryPath(), bridge.label())) {
             return;
@@ -816,6 +881,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         if (!Files.isRegularFile(pidFile)) {
             return;
         }
+        // The orphan's tracer may be frozen: its tracees cannot take the
+        // reclaim signal until it runs again.
+        thawTracers(prootBinaryPath());
         Long pid = GuestSshdPidFile.read(pidFile);
         if (pid != null && signalGuestProcess(pid, daemon.getBinaryPath(), "guest sshd")) {
             Log.i(TAG, "reclaimed orphaned guest sshd pid " + pid);
@@ -838,6 +906,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
      * pid file can never signal an unrelated process.
      */
     private void reclaimUntrackedDaemon() {
+        // A leftover tracer may itself be frozen: its tracees cannot take
+        // the reclaim signals until it runs again.
+        thawTracers(prootBinaryPath());
         String appId = CuratedRuntimeCatalog.ubuntuBaseArm64().getAppId();
         Path rootfs = ProotPaths.activeRootfsPath(filesDir, appId);
         Path overlay = ProotPaths.activeAddonPath(
@@ -856,12 +927,22 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
     /**
      * Stop the supervised daemon: signal the guest process itself, then tear
      * down the tracer, then confirm the endpoint no longer answers.
+     *
+     * @return whether the workload is gone afterwards — the tracer dead
+     *         and the fixed endpoint quiet. A survivor of either kind is
+     *         reported by the caller as a failure, never as a stop over a
+     *         live workload.
      */
-    private void teardown(ActiveDaemon daemon) {
+    private boolean teardown(ActiveDaemon daemon) {
         // The supervised runtime is going away: stop rewriting the guest
         // resolver. Idempotent, so safe alongside the stop() call below.
         launcher.stopResolverRefresh();
         daemon.stopRequested = true;
+        // A tracer stopped by SIGSTOP — the verified wedge shape — never sees
+        // SIGTERM, and its tracees stay suspended behind it, so the guest
+        // signals below cannot land until the tracer runs again.
+        String tracerArgv0 = prootBinaryPath();
+        thawTracers(tracerArgv0);
         // The service manager goes down first so its SIGTERM can run the
         // enabled services' stop steps while the session is still intact.
         ActiveServiceManager manager = daemon.serviceManager;
@@ -875,7 +956,11 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
                 "guest sshd")) {
             Log.i(TAG, "signalled guest sshd pid " + pid + " to stop");
         }
-        stopProcess(daemon.process);
+        boolean tracerGone = stopProcess(daemon.process, tracerArgv0);
+        if (!tracerGone) {
+            Log.e(TAG, "guest workload tracer is still alive after the "
+                    + "forced stop window");
+        }
         // The tracer is down so the pipes are at EOF; a late drain line landing
         // after close is dropped rather than a failure.
         if (daemon.sessionLog != null) {
@@ -886,14 +971,32 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         }
         clearGuestTmpAfterStop();
         clearPin(daemon.endpoint);
-        if (healthProbe.isHealthy(
-                daemon.endpoint.getHost(), daemon.endpoint.getPort(), STOP_VERIFY_TIMEOUT_MILLIS)) {
-            Log.w(TAG, "guest sshd still answers on " + daemon.endpoint.getHost() + ":"
-                    + daemon.endpoint.getPort() + " after stop");
+        // The tracer being dead is not enough: a tracee that survives it
+        // still owns the fixed port, and a stop reported over a held port
+        // strands the next session's bind (ADR-0062). The verdict is "gone"
+        // only when the endpoint is quiet too.
+        boolean answering = endpointStillAnswering(daemon.endpoint);
+        if (answering) {
+            Log.e(TAG, "guest endpoint still answers on " + daemon.endpoint.getHost()
+                    + ":" + daemon.endpoint.getPort() + " after stop");
         } else {
             Log.i(TAG, "guest sshd stopped; 127.0.0.1:" + daemon.endpoint.getPort()
                     + " no longer answers");
         }
+        return tracerGone && !answering;
+    }
+
+    /**
+     * Whether anything still listens on {@code endpoint}: a raw TCP connect,
+     * deliberately not the SSH-banner probe that proved readiness at start.
+     * The kernel completes the handshake for a bound socket even while its
+     * owner is stopped, so a suspended tracee that never banners is still
+     * "held" here — exactly the shape the stop verdict must catch
+     * (ADR-0062).
+     */
+    private static boolean endpointStillAnswering(RuntimePort endpoint) {
+        return PORT_CONNECT_PROBE.isHealthy(
+                endpoint.getHost(), endpoint.getPort(), STOP_VERIFY_TIMEOUT_MILLIS);
     }
 
     /**
@@ -914,6 +1017,10 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             return false;
         }
         try {
+            // A stopped tracee never sees SIGTERM either: thaw it first so
+            // the signal can be handled. SIGCONT is a no-op on an
+            // already-running process, so this is safe unconditionally.
+            Os.kill((int) pid, OsConstants.SIGCONT);
             Os.kill((int) pid, OsConstants.SIGTERM);
             return true;
         } catch (Exception e) {
@@ -924,9 +1031,14 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
 
     /** Read {@code /proc/<pid>/cmdline}; {@code null} when the process is gone. */
     private static String readCommandLine(long pid) {
+        return readCommandLine(Paths.get("/proc"), pid);
+    }
+
+    /** {@link #readCommandLine(long)} against an explicit procfs root. */
+    private static String readCommandLine(Path procRoot, long pid) {
         try {
             byte[] raw = Files.readAllBytes(
-                    java.nio.file.Paths.get("/proc/" + pid + "/cmdline"));
+                    procRoot.resolve(Long.toString(pid)).resolve("cmdline"));
             String text = GuestSshdPidFile.commandLineText(raw);
             return text.isEmpty() ? null : text;
         } catch (IOException | RuntimeException e) {
@@ -950,11 +1062,27 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         }
     }
 
-    /** Destroy the tracer process, escalating to SIGKILL after a bounded wait. */
-    private static void stopProcess(Process process) {
+    /**
+     * Destroy the tracer process: SIGCONT to thaw a frozen workload first,
+     * then SIGTERM, escalating to SIGKILL after a bounded wait.
+     *
+     * @param process the tracer process handle, or {@code null} (already gone)
+     * @param prootBinaryPath argv0 of this app's tracer children, used to find
+     *        the pids to thaw; the thaw repeats here because a tracer frozen
+     *        again during the graceful window must still be running before
+     *        the forced signal lands
+     * @return {@code true} only when the process is really gone. A process
+     *         still alive after the forced window must never let the session
+     *         claim it stopped.
+     */
+    static boolean stopProcess(Process process, String prootBinaryPath) {
         if (process == null) {
-            return;
+            return true;
         }
+        // A SIGSTOPped tracer never sees SIGTERM, and on the vendor kernels
+        // that lose the ptrace fork event a stopped tracer was observed
+        // surviving even SIGKILL until it resumed — thaw, then terminate.
+        thawTracers(prootBinaryPath);
         process.destroy();
         try {
             if (!process.waitFor(STOP_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
@@ -965,6 +1093,172 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
         }
+        return !process.isAlive();
+    }
+
+    /**
+     * Send SIGCONT to this app's PRoot tracer processes so a tracer frozen by
+     * SIGSTOP (the verified wedge shape) resumes and can receive the
+     * termination signals that follow, and so its suspended tracees can take
+     * the pid-file signals a teardown sends. Best-effort: a scan or signal
+     * failure is logged and termination is still attempted.
+     */
+    private static void thawTracers(String prootBinaryPath) {
+        for (long pid : tracerPids(prootBinaryPath)) {
+            try {
+                Os.kill((int) pid, OsConstants.SIGCONT);
+                Log.i(TAG, "thawed tracer pid " + pid);
+            } catch (Exception e) {
+                Log.w(TAG, "could not thaw tracer pid " + pid, e);
+            }
+        }
+    }
+
+    /**
+     * Pids of this app's live PRoot tracer processes.
+     *
+     * <p>{@code java.lang.Process} exposes no pid on Android, so the pids
+     * come from {@code /proc}, unioning two sources:
+     *
+     * <ul>
+     *   <li>every {@code /proc/self/task/<tid>/children} entry names a direct
+     *       child of this app -- cheap, but the file needs
+     *       {@code CONFIG_PROC_CHILDREN}, which vendor kernels like the
+     *       S10e's Samsung 4.14.113 build without (device-verified: the file
+     *       is unusable there, so this source alone found no tracer and a
+     *       stopped tracer was never thawed);</li>
+     *   <li>a {@code /proc/<pid>/stat} scan keeps every numeric entry whose
+     *       PPid field is this app's own pid. {@code stat} exists on every
+     *       procfs, so this source works where {@code children} does
+     *       not.</li>
+     * </ul>
+     *
+     * <p>The tracer is spawned through {@link ProcessBuilder}, so it is
+     * always a direct child while it lives, and each candidate's own cmdline
+     * argv0 must be {@code prootBinaryPath}. A pid that fails the parent or
+     * the argv0 check is never returned, so a signal can never reach an
+     * unrelated process.</p>
+     */
+    private static List<Long> tracerPids(String prootBinaryPath) {
+        return tracerPids(Paths.get("/proc"), android.os.Process.myPid(),
+                prootBinaryPath);
+    }
+
+    /**
+     * {@link #tracerPids(String)} with its inputs made explicit so a test can
+     * point it at a procfs-shaped fixture instead of the real {@code /proc}:
+     * {@code procRoot} is the directory to scan and {@code selfPid} stands in
+     * for {@code Process.myPid()}.
+     */
+    static List<Long> tracerPids(Path procRoot, long selfPid, String prootBinaryPath) {
+        Set<Long> pids = new LinkedHashSet<>();
+        try (DirectoryStream<Path> taskDirs = Files.newDirectoryStream(
+                procRoot.resolve("self/task"))) {
+            for (Path taskDir : taskDirs) {
+                collectTracerChildren(procRoot, taskDir.resolve("children"),
+                        prootBinaryPath, pids);
+            }
+        } catch (IOException | RuntimeException e) {
+            Log.w(TAG, "could not enumerate child processes; tracer thaw skipped", e);
+        }
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(procRoot)) {
+            for (Path entry : entries) {
+                collectIfTracerChild(procRoot, selfPid, entry, prootBinaryPath, pids);
+            }
+        } catch (IOException | RuntimeException e) {
+            Log.w(TAG, "could not scan /proc for child processes; tracer thaw "
+                    + "skipped", e);
+        }
+        return new ArrayList<>(pids);
+    }
+
+    private static void collectTracerChildren(Path procRoot, Path childrenFile,
+                                              String prootBinaryPath, Set<Long> pids) {
+        String text;
+        try {
+            text = new String(Files.readAllBytes(childrenFile),
+                    StandardCharsets.US_ASCII).trim();
+        } catch (IOException | RuntimeException e) {
+            return;
+        }
+        for (String field : text.split("\\s+")) {
+            long pid;
+            try {
+                pid = Long.parseLong(field);
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            if (isTracerChild(procRoot, pid, prootBinaryPath)) {
+                pids.add(pid);
+            }
+        }
+    }
+
+    /**
+     * Adds {@code entry}'s pid when the procfs stat inside it names
+     * {@code selfPid} as the parent -- a direct child of this app -- and its
+     * argv0 names the tracer binary. Non-numeric entries ({@code self},
+     * {@code sys}, ...), processes gone between listing and read, and
+     * non-children are all skipped.
+     */
+    private static void collectIfTracerChild(Path procRoot, long selfPid, Path entry,
+                                             String prootBinaryPath, Set<Long> pids) {
+        long pid;
+        try {
+            pid = Long.parseLong(entry.getFileName().toString());
+        } catch (NumberFormatException e) {
+            return;
+        }
+        Long parentPid = parentPid(entry);
+        if (parentPid == null || parentPid != selfPid
+                || !isTracerChild(procRoot, pid, prootBinaryPath)) {
+            return;
+        }
+        pids.add(pid);
+    }
+
+    /**
+     * The PPid field of {@code procDir/stat} ({@code /proc/<pid>/stat}), or
+     * {@code null} when the entry is gone, unreadable, or malformed. The
+     * parenthesis belongs to {@code comm}, which may itself contain spaces
+     * and ')' characters, so the split must start after its <em>last</em>
+     * ')': the fields after it are state, ppid, pgrp, ...
+     */
+    private static Long parentPid(Path procDir) {
+        String text;
+        try {
+            text = new String(Files.readAllBytes(procDir.resolve("stat")),
+                    StandardCharsets.US_ASCII).trim();
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+        int close = text.lastIndexOf(')');
+        if (close < 0) {
+            return null;
+        }
+        String[] fields = text.substring(close + 1).trim().split("\\s+");
+        if (fields.length < 2) {
+            return null;
+        }
+        try {
+            return Long.parseLong(fields[1]);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** Whether {@code pid}'s cmdline argv0 is the packaged PRoot binary path. */
+    private static boolean isTracerChild(Path procRoot, long pid, String prootBinaryPath) {
+        String commandLine = readCommandLine(procRoot, pid);
+        return commandLine != null
+                && (commandLine.equals(prootBinaryPath)
+                || commandLine.startsWith(prootBinaryPath + " "));
+    }
+
+    /** Absolute path of the packaged PRoot tracer binary — argv0 of our tracer children. */
+    private String prootBinaryPath() {
+        return ProotPaths.prootBinaryPath(
+                context.getApplicationInfo().nativeLibraryDir).toString();
     }
 
     /**

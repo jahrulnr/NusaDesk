@@ -17,7 +17,14 @@ public enum SessionState {
     STOPPED,
     FAILED,
     RECOVERING,
-    CANCELLED;
+    CANCELLED,
+    /**
+     * The guest still runs under the supervisor but stopped answering the
+     * liveness canary: it is neither {@code RUNNING} nor {@code FAILED} —
+     * the workload is assumed wedged until a probe succeeds again or the
+     * user restarts or stops it (ADR-0062).
+     */
+    UNRESPONSIVE;
 
     public boolean canTransitionTo(SessionState next) {
         if (next == null || next == this) {
@@ -31,7 +38,8 @@ public enum SessionState {
                         || next == STOPPING || next == FAILED || next == CANCELLED;
             case RUNNING:
                 return next == RECONNECTING || next == STOPPING
-                        || next == FAILED || next == CANCELLED;
+                        || next == FAILED || next == CANCELLED
+                        || next == UNRESPONSIVE;
             case RECONNECTING:
                 return next == RUNNING || next == STOPPING
                         || next == FAILED || next == CANCELLED;
@@ -46,6 +54,11 @@ public enum SessionState {
                         || next == FAILED || next == CANCELLED;
             case CANCELLED:
                 return next == STARTING;
+            case UNRESPONSIVE:
+                // A probe success revives it; the user's Stop/Restart and a
+                // workload death take the same paths a running session takes.
+                return next == RUNNING || next == STOPPING
+                        || next == FAILED || next == CANCELLED;
             default:
                 return false;
         }

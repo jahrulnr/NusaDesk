@@ -32,6 +32,12 @@ public interface RuntimeWorkload {
      */
     void start(SessionSnapshot session, WorkloadListener listener);
 
-    /** Stop the guest process gracefully, reporting the outcome via the listener. */
+    /**
+     * Stop the guest process, reporting the outcome via the listener.
+     * {@code onStopped} is reported only once the workload process is really
+     * gone: a process still alive after the forced-stop window is reported as
+     * {@code onFailed}, so the host never publishes a stopped state over a
+     * live workload.
+     */
     void stop(WorkloadListener listener);
 }

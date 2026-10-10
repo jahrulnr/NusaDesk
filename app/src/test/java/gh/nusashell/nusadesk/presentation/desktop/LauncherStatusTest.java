@@ -142,6 +142,23 @@ public class LauncherStatusTest {
     }
 
     @Test
+    public void anUnresponsiveSessionIsNamedAndNeverReady() {
+        LauncherStatus status = status(
+                RuntimeState.READY, GuestSshUiState.installed(), SessionState.UNRESPONSIVE);
+
+        // ADR-0062: the launcher must say Linux is not answering in words,
+        // and must not fold the wedged session into READY or FAILED.
+        assertEquals(LauncherStatus.Kind.UNRESPONSIVE, status.getKind());
+        assertFalse(status.isReady());
+        assertTrue(status.isVisibleInLauncher());
+        assertNotEquals(0, status.getLabelRes());
+        assertNotEquals(0, status.getDetailRes());
+        assertEquals(status.getBackgroundColorRes(),
+                status(RuntimeState.READY, GuestSshUiState.installed(),
+                        SessionState.FAILED).getBackgroundColorRes());
+    }
+
+    @Test
     public void aMissingSessionStatusIsTheHonestStoppedState() {
         LauncherStatus status = LauncherStatus.of(
                 runtime(RuntimeState.READY, ""), GuestSshUiState.installed(), null);
@@ -191,6 +208,9 @@ public class LauncherStatusTest {
             case FAILED:
                 return status(RuntimeState.READY, GuestSshUiState.installed(),
                         SessionState.FAILED);
+            case UNRESPONSIVE:
+                return status(RuntimeState.READY, GuestSshUiState.installed(),
+                        SessionState.UNRESPONSIVE);
             case STOPPED:
             default:
                 return status(RuntimeState.READY, GuestSshUiState.installed(),

@@ -32,7 +32,7 @@ import gh.nusashell.nusadesk.presentation.GuestSshUiState;
 public final class LauncherStatus {
 
     /** Coarse grouping used for copy and colour. */
-    public enum Kind { SETUP, STARTING, READY, STOPPING, STOPPED, FAILED }
+    public enum Kind { SETUP, STARTING, READY, STOPPING, STOPPED, FAILED, UNRESPONSIVE }
 
     private final Kind kind;
     private final int labelRes;
@@ -86,6 +86,11 @@ public final class LauncherStatus {
             case FAILED:
                 return new LauncherStatus(Kind.FAILED, R.string.launcher_status_failed,
                         R.string.launcher_status_failed_detail, normalizeReason(session));
+            case UNRESPONSIVE:
+                // A wedged session is not READY: the launcher must name the
+                // unresponsive state in words, never imply Linux is usable.
+                return new LauncherStatus(Kind.UNRESPONSIVE, R.string.launcher_status_unresponsive,
+                        R.string.launcher_status_unresponsive_detail, null);
             default:
                 return new LauncherStatus(Kind.STOPPED, R.string.launcher_status_stopped,
                         R.string.launcher_status_stopped_detail, null);
@@ -151,6 +156,7 @@ public final class LauncherStatus {
             case STOPPING:
                 return R.color.warning_tint;
             case FAILED:
+            case UNRESPONSIVE:
                 return R.color.danger_tint;
             default:
                 return R.color.surface_subtle;
@@ -166,6 +172,7 @@ public final class LauncherStatus {
             case STOPPING:
                 return R.color.warning;
             case FAILED:
+            case UNRESPONSIVE:
                 return R.color.danger;
             default:
                 return R.color.ink_secondary;

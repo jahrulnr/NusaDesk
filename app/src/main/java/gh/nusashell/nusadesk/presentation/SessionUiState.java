@@ -19,7 +19,7 @@ import gh.nusashell.nusadesk.domain.session.SessionState;
 public final class SessionUiState {
 
     /** Coarse session grouping used for copy and colour. */
-    public enum Kind { STOPPED, STARTING, RUNNING, STOPPING, FAILED }
+    public enum Kind { STOPPED, STARTING, RUNNING, STOPPING, FAILED, UNRESPONSIVE }
 
     private final Kind kind;
     private final int labelRes;
@@ -58,6 +58,9 @@ public final class SessionUiState {
                 return new SessionUiState(Kind.FAILED,
                         R.string.session_failed, R.string.session_failed_detail,
                         normalizeReason(failureReason));
+            case UNRESPONSIVE:
+                return new SessionUiState(Kind.UNRESPONSIVE,
+                        R.string.session_unresponsive, R.string.session_unresponsive_detail, null);
             default:
                 return new SessionUiState(Kind.STOPPED,
                         R.string.session_stopped, R.string.session_stopped_detail, null);
@@ -94,6 +97,8 @@ public final class SessionUiState {
                 return R.string.session_badge_stopping;
             case FAILED:
                 return R.string.session_badge_failed;
+            case UNRESPONSIVE:
+                return R.string.session_badge_unresponsive;
             default:
                 return R.string.session_badge_stopped;
         }

@@ -100,6 +100,47 @@ public class RuntimeNotificationPolicyTest {
     }
 
     @Test
+    public void unresponsiveStaysForegroundAndOffersRestart() {
+        RuntimePort endpoint = new RuntimePort("127.0.0.1", 22_022);
+        HostRuntimeStatus status = status(SessionState.UNRESPONSIVE, endpoint, true);
+
+        // ADR-0062: the notification must never claim RUNNING while the canary
+        // is failing — the state is named in words and keeps the service's
+        // ongoing treatment plus a user-recoverable Restart action.
+        assertFalse(status.isRuntimeRunning());
+        assertEquals("Linux stopped answering", RuntimeNotificationPolicy.title(status));
+        assertEquals("Still running but not answering. Tap Restart Linux to recover.",
+                RuntimeNotificationPolicy.text(status));
+        assertTrue(RuntimeNotificationPolicy.isOngoing(status));
+        assertTrue(RuntimeNotificationPolicy.requiresForeground(status));
+        assertTrue(RuntimeNotificationPolicy.showsStopAction(status));
+        assertTrue(RuntimeNotificationPolicy.showsRestartAction(status));
+    }
+
+    @Test
+    public void failedSurvivorStillOffersRestart() {
+        // ADR-0063: the stop path's survivor is the failure Restart Linux
+        // escalates to a self-restart — so the action stays on the FAILED
+        // notification rather than leaving the user the Settings trip.
+        assertTrue(RuntimeNotificationPolicy.showsRestartAction(
+                failedSurvivorStatus("workload survived the forced stop")));
+    }
+
+    @Test
+    public void restartActionIsHiddenOutsideUnresponsiveAndSurvivor() {
+        RuntimePort endpoint = new RuntimePort("127.0.0.1", 22_022);
+        assertFalse(RuntimeNotificationPolicy.showsRestartAction(
+                status(SessionState.RUNNING, endpoint, true)));
+        assertFalse(RuntimeNotificationPolicy.showsRestartAction(
+                status(SessionState.STARTING, null, true)));
+        assertFalse(RuntimeNotificationPolicy.showsRestartAction(
+                status(SessionState.STOPPED, null, true)));
+        assertFalse(RuntimeNotificationPolicy.showsRestartAction(
+                failedStatus("guest exited before readiness")));
+        assertFalse(RuntimeNotificationPolicy.showsRestartAction(null));
+    }
+
+    @Test
     public void nullStatusIsSafe() {
         assertEquals("Linux runtime", RuntimeNotificationPolicy.title(null));
         assertEquals("", RuntimeNotificationPolicy.text(null));
@@ -117,5 +158,11 @@ public class RuntimeNotificationPolicyTest {
         SessionSnapshot snapshot = new SessionSnapshot(
                 SESSION, APP_ID, VERSION, SessionState.FAILED, null, 10L, 10L, reason, 0);
         return new HostRuntimeStatus(snapshot, true, "ubuntu-base-arm64/ssh");
+    }
+
+    private static HostRuntimeStatus failedSurvivorStatus(String reason) {
+        SessionSnapshot snapshot = new SessionSnapshot(
+                SESSION, APP_ID, VERSION, SessionState.FAILED, null, 10L, 10L, reason, 0);
+        return new HostRuntimeStatus(snapshot, true, "ubuntu-base-arm64/ssh", true);
     }
 }

@@ -477,6 +477,21 @@
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!--
+            One-tap recovery revival (ADR-0063). Armed only by the Restart Linux
+            action when a wedged workload provably survives the forced stop:
+            the dying process schedules this job, kills its own process tree,
+            and the platform delivers the job in a fresh process, where it
+            re-enters the same ensure-running boundary an app launch uses.
+            Never armed by the canary, a timer, or any other background path.
+            BIND_JOB_SERVICE is held by the system, so only the platform can
+            run it.
+        -->
+        <service
+            android:name=".infrastructure.service.RuntimeRevivalJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!--
             Opt-in boot start (ADR-0037). Enabled by the user's "Start Linux
             at boot" toggle on the Linux system screen (default OFF); without
             that stored opt-in this receiver is inert. Unexported — both

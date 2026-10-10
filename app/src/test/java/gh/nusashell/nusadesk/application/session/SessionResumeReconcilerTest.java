@@ -64,6 +64,17 @@ public class SessionResumeReconcilerTest {
     }
 
     @Test
+    public void interruptedUnresponsiveBecomesFailed() {
+        // ADR-0062: a wedge that died with the process is honestly failed,
+        // never resurrected as still-unresponsive and never as RUNNING.
+        SessionSnapshot unresponsive = snapshot(SessionState.UNRESPONSIVE, 0);
+
+        SessionSnapshot reconciled = SessionResumeReconciler.reconcile(unresponsive, 30L);
+
+        assertEquals(SessionState.FAILED, reconciled.getState());
+    }
+
+    @Test
     public void cancelledStateIsPreservedOnResume() {
         SessionSnapshot cancelled = snapshot(SessionState.CANCELLED, 0);
 

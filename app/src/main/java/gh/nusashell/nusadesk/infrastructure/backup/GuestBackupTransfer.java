@@ -407,6 +407,7 @@ public final class GuestBackupTransfer implements GuestBackupUseCase {
             case RECONNECTING:
             case STOPPING:
             case RECOVERING:
+            case UNRESPONSIVE:
                 return true;
             default:
                 return false;

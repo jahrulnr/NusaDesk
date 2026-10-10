@@ -94,4 +94,17 @@ public class SessionUiStateTest {
         assertEquals(SessionUiState.Kind.RUNNING, ui.getKind());
         assertTrue(ui.isHealthy());
     }
+
+    @Test
+    public void unresponsiveIsItsOwnKindAndNeverHealthy() {
+        SessionUiState ui = SessionUiState.from(SessionState.UNRESPONSIVE, null);
+
+        // ADR-0062: surfaces read isHealthy() to decide whether they need to
+        // say anything — a wedged session must never render as running.
+        assertEquals(SessionUiState.Kind.UNRESPONSIVE, ui.getKind());
+        assertFalse(ui.isHealthy());
+        assertNotEquals(0, ui.getBadgeRes());
+        assertNotEquals(0, ui.getLabelRes());
+        assertNotEquals(0, ui.getDetailRes());
+    }
 }

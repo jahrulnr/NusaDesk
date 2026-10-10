@@ -22,11 +22,25 @@ public final class HostRuntimeStatus {
     private final SessionSnapshot snapshot;
     private final boolean workloadRegistered;
     private final String workloadId;
+    /**
+     * True when the published {@code FAILED} is specifically "the workload
+     * survived the forced stop" — the failure the one-tap restart escalates
+     * to a whole-process-tree self-restart (ADR-0063). Transient controller
+     * state, not persisted: a fresh process reconciles from the snapshot's
+     * reason alone.
+     */
+    private final boolean survivedStop;
 
     public HostRuntimeStatus(SessionSnapshot snapshot, boolean workloadRegistered, String workloadId) {
+        this(snapshot, workloadRegistered, workloadId, false);
+    }
+
+    public HostRuntimeStatus(SessionSnapshot snapshot, boolean workloadRegistered,
+                             String workloadId, boolean survivedStop) {
         this.snapshot = snapshot;
         this.workloadRegistered = workloadRegistered;
         this.workloadId = workloadId == null ? "" : workloadId;
+        this.survivedStop = survivedStop;
     }
 
     /** Returns the session snapshot, or {@code null} before any session has been started. */
@@ -57,6 +71,15 @@ public final class HostRuntimeStatus {
     }
 
     /**
+     * True only when this {@code FAILED} status is the workload's typed
+     * "survived the forced stop" report — the one failure a user-requested
+     * restart may escalate to killing the app's own process tree (ADR-0063).
+     */
+    public boolean survivedStop() {
+        return survivedStop;
+    }
+
+    /**
      * True only when the session is {@code RUNNING} and a concrete loopback
      * endpoint exists. This is the single honest signal that a runtime is up;
      * the service being foreground is not sufficient.
@@ -77,12 +100,13 @@ public final class HostRuntimeStatus {
         }
         HostRuntimeStatus that = (HostRuntimeStatus) o;
         return workloadRegistered == that.workloadRegistered
+                && survivedStop == that.survivedStop
                 && Objects.equals(snapshot, that.snapshot)
                 && Objects.equals(workloadId, that.workloadId);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(snapshot, workloadRegistered, workloadId);
+        return Objects.hash(snapshot, workloadRegistered, workloadId, survivedStop);
     }
 }

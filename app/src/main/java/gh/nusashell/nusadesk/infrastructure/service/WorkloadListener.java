@@ -35,4 +35,16 @@ public interface WorkloadListener {
 
     /** Guest failed; {@code reason} should be non-blank. */
     void onFailed(String reason);
+
+    /**
+     * A stop request failed in the specific way that means a workload
+     * process or its bound port survived the forced-stop sequence — the
+     * failure the host may escalate to a whole-process-tree self-restart
+     * (ADR-0063). Every other failure reports {@link #onFailed} instead.
+     * Defaults to {@link #onFailed} so a listener that does not escalate
+     * simply sees a failure.
+     */
+    default void onStopSurvived(String reason) {
+        onFailed(reason);
+    }
 }

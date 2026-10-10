@@ -22,6 +22,8 @@
     <string name="launcher_status_stopped_detail">Linux starts again next time you open the app.</string>
     <string name="launcher_status_failed">Linux needs attention</string>
     <string name="launcher_status_failed_detail">%1$s</string>
+    <string name="launcher_status_unresponsive">Linux not responding</string>
+    <string name="launcher_status_unresponsive_detail">Linux stopped answering. Restart it from the notification or the terminal.</string>
 
     <!-- Linux session vocabulary. One session, owned by the Android host and
          started from an app launch; no surface offers a start/stop control. -->
@@ -40,11 +42,14 @@
     <string name="session_failed">Linux session needs attention</string>
     <string name="session_failed_detail">%1$s</string>
     <string name="session_failed_no_reason">The session stopped without a reported reason.</string>
+    <string name="session_unresponsive">Linux is not responding</string>
+    <string name="session_unresponsive_detail">Linux stopped answering. Restart it to get it back.</string>
     <string name="session_badge_stopped">Stopped</string>
     <string name="session_badge_starting">Starting</string>
     <string name="session_badge_running">Running</string>
     <string name="session_badge_stopping">Stopping</string>
     <string name="session_badge_failed">Needs attention</string>
+    <string name="session_badge_unresponsive">Not responding</string>
 
     <!-- Launcher setup: the curated Linux system and its terminal component are
          installed once as a single pipeline (ADR-0017). The launcher states the
@@ -95,6 +100,8 @@
     <string name="terminal_failed_unknown">unknown reason</string>
     <string name="terminal_dropped_banner">The terminal disconnected. Linux is still running.</string>
     <string name="terminal_reconnect">Reconnect terminal</string>
+    <string name="terminal_unresponsive_body">Linux stopped answering, so your terminal is frozen too. Restarting Linux stops the session and starts it again.</string>
+    <string name="terminal_restart_linux">Restart Linux</string>
     <!-- Multi-tab terminal: an initial shell plus every tab opened from the
          ⋮ options menu or from a terminal-command launcher app. The initial
          shell can be closed like any other tab; if none remain, the options

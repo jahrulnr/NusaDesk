@@ -43,6 +43,8 @@ public final class RuntimeNotificationPolicy {
                 return "Recovering Linux runtime";
             case CANCELLED:
                 return "Linux runtime cancelled";
+            case UNRESPONSIVE:
+                return "Linux stopped answering";
             default:
                 return "Linux runtime";
         }
@@ -59,6 +61,9 @@ public final class RuntimeNotificationPolicy {
         if (status.getState() == SessionState.FAILED) {
             String reason = status.getFailureReason();
             return reason.isEmpty() ? "Runtime failed." : reason;
+        }
+        if (status.getState() == SessionState.UNRESPONSIVE) {
+            return "Still running but not answering. Tap Restart Linux to recover.";
         }
         if (status.isRuntimeRunning() && status.getEndpoint() != null) {
             return "Loopback " + status.getEndpoint().toUrl("http");
@@ -83,6 +88,7 @@ public final class RuntimeNotificationPolicy {
             case RECONNECTING:
             case STOPPING:
             case RECOVERING:
+            case UNRESPONSIVE:
                 return true;
             default:
                 return false;
@@ -99,10 +105,27 @@ public final class RuntimeNotificationPolicy {
             case RUNNING:
             case RECONNECTING:
             case RECOVERING:
+            case UNRESPONSIVE:
                 return true;
             default:
                 return false;
         }
+    }
+
+    /**
+     * Whether the Restart Linux action is offered (ADR-0062). An
+     * {@code UNRESPONSIVE} session carries it, and a {@code FAILED} session
+     * whose workload survived the forced stop carries it too — its escalation
+     * is the one-tap recovery that state names (ADR-0063). A healthy,
+     * stopping, or ordinary-failed session never shows it, mirroring how the
+     * Stop action hides when idle.
+     */
+    public static boolean showsRestartAction(HostRuntimeStatus status) {
+        if (status == null) {
+            return false;
+        }
+        return status.getState() == SessionState.UNRESPONSIVE
+                || (status.getState() == SessionState.FAILED && status.survivedStop());
     }
 
     /**

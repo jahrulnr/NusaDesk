@@ -23,6 +23,7 @@ public final class SessionStateStyle {
             case STOPPING:
                 return R.color.warning_tint;
             case FAILED:
+            case UNRESPONSIVE:
                 return R.color.danger_tint;
             default:
                 return R.color.surface_subtle;
@@ -38,6 +39,7 @@ public final class SessionStateStyle {
             case STOPPING:
                 return R.color.warning;
             case FAILED:
+            case UNRESPONSIVE:
                 return R.color.danger;
             default:
                 return R.color.ink_secondary;

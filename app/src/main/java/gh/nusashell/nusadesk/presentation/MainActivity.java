@@ -976,6 +976,7 @@ public final class MainActivity extends Activity {
             surface = new TerminalAppView(this);
             surface.setTabScope(TerminalSurfaceScope.commandApp(id));
             surface.setOnGoToDesktopListener(view -> showShell());
+            surface.setOnRestartLinuxListener(view -> RuntimeHostService.requestRestart(this));
             surface.setOnTabsChangedListener(snapshot -> {
                 if (id.equals(activeTerminalAppId)) {
                     renderTerminalAppMenu(id, snapshot);
@@ -1191,6 +1192,7 @@ public final class MainActivity extends Activity {
         TerminalAppView terminal = new TerminalAppView(this);
         terminal.setTabScope(TerminalSurfaceScope.shellTabs());
         terminal.setOnGoToDesktopListener(view -> showShell());
+        terminal.setOnRestartLinuxListener(view -> RuntimeHostService.requestRestart(this));
         terminal.setOnTabsChangedListener(snapshot -> {
             if (activeDestination == DesktopDestination.TERMINAL) {
                 renderTerminalMenu(snapshot);

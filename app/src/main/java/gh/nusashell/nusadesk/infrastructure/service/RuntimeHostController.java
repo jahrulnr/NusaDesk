@@ -2,9 +2,11 @@ package gh.nusashell.nusadesk.infrastructure.service;
 
 import gh.nusashell.nusadesk.domain.network.RuntimePort;
 import gh.nusashell.nusadesk.domain.session.ReadinessFrame;
+import gh.nusashell.nusadesk.domain.session.SessionLivenessPolicy;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
 import gh.nusashell.nusadesk.domain.session.SessionState;
 import gh.nusashell.nusadesk.domain.session.SessionTransitionPolicy;
+import gh.nusashell.nusadesk.infrastructure.integration.GuestSshdWorkload;
 
 import java.util.function.LongSupplier;
 
@@ -26,6 +28,19 @@ public final class RuntimeHostController {
     private final RuntimeWorkloadRegistry registry;
     private final LongSupplier clock;
     private SessionSnapshot snapshot;
+    /**
+     * The canary's miss counter for the current session. A fresh session gets
+     * a fresh policy, so a wedge cannot inherit failures from a previous one.
+     */
+    private SessionLivenessPolicy liveness = new SessionLivenessPolicy();
+    /**
+     * Set when the current {@code FAILED} came from the workload's typed
+     * "survived the forced stop" report — the one failure a user-requested
+     * restart may escalate to killing the app's own process tree (ADR-0063).
+     * Cleared by a fresh start, a clean stop, any other failure kind, and a
+     * reconcile, so it can never leak into a session it did not describe.
+     */
+    private boolean stopSurvived;
 
     /**
      * @param registry source of the single allowlisted workload
@@ -46,7 +61,7 @@ public final class RuntimeHostController {
     public HostRuntimeStatus status() {
         RuntimeWorkload workload = registry.get();
         return new HostRuntimeStatus(snapshot, workload != null,
-                workload == null ? "" : workload.workloadId());
+                workload == null ? "" : workload.workloadId(), stopSurvived);
     }
 
     /**
@@ -69,6 +84,8 @@ public final class RuntimeHostController {
                 sessionId, appId, appVersion, SessionState.NOT_STARTED, null, now, now, "", 0);
         SessionSnapshot starting = SessionTransitionPolicy.attempt(fresh, SessionState.STARTING, now, "");
         snapshot = starting;
+        liveness = new SessionLivenessPolicy();
+        stopSurvived = false;
         publish(listener);
 
         RuntimeWorkload workload = registry.get();
@@ -95,8 +112,15 @@ public final class RuntimeHostController {
      * runtime the user just stopped with the notification's Stop action.</p>
      *
      * <p>It is deliberately not a background-start path: nothing here runs
-     * without a user-visible launch, and there is no boot receiver, job,
-     * alarm, or sticky restart that could call it.</p>
+     * without a user-visible launch, and there is no boot receiver, alarm,
+     * or sticky restart that could call it. The one scheduled caller is the
+     * ADR-0063 revival job, armed only by the user's own Restart tap while a
+     * failed workload still survives — it is the same boundary, re-entered
+     * from the fresh process the platform starts.</p>
+     *
+     * <p>{@code UNRESPONSIVE} counts as live here: a wedged session is not
+     * resurrected by a foreground event either; the user's Restart action
+     * takes it through {@code STOPPING} first.</p>
      */
     public void ensureRunning(String appId, String appVersion, String sessionId, HostListener listener) {
         SessionState current = snapshot == null ? SessionState.NOT_STARTED : snapshot.getState();
@@ -168,7 +192,7 @@ public final class RuntimeHostController {
      * <p>A fresh controller has no snapshot. When the service recovers one from
      * the session state store, any state that required a live workload
      * ({@code STARTING}, {@code RUNNING}, {@code RECONNECTING}, {@code STOPPING},
-     * {@code RECOVERING}) is demoted to {@code FAILED} with an explicit reason —
+     * {@code RECOVERING}, {@code UNRESPONSIVE}) is demoted to {@code FAILED} with an explicit reason —
      * after a real process death the workload is gone, so claiming it still
      * runs would be a false {@code RUNNING}. The demotion also asks the
      * registered workload to stop: the registry holds app-level singletons, so
@@ -193,12 +217,20 @@ public final class RuntimeHostController {
                     stored.getSessionId(), stored.getAppId(), stored.getAppVersion(),
                     SessionState.FAILED, null, stored.getStartedAtEpochMillis(), now,
                     "host process restarted; runtime was lost", stored.getReconnectAttempts());
+            stopSurvived = false;
             RuntimeWorkload workload = registry.get();
             if (workload != null) {
                 workload.stop(WorkloadListener.NONE);
             }
         } else {
             snapshot = stored;
+            // The survivor flag is transient, but its reason is persisted:
+            // re-derive it so a failed survivor still offers its Restart
+            // action after a process restart (e.g. the escalation's revival
+            // job was armed but never delivered). The reason is produced only
+            // by the workload's own stop verdict, never by guest input.
+            stopSurvived = GuestSshdWorkload.STOP_SURVIVED_REASON.equals(
+                    stored.getFailureReason());
         }
         publish(listener);
     }
@@ -223,6 +255,7 @@ public final class RuntimeHostController {
             case RECONNECTING:
             case STOPPING:
             case RECOVERING:
+            case UNRESPONSIVE:
                 return true;
             default:
                 return false;
@@ -237,12 +270,18 @@ public final class RuntimeHostController {
         long now = clock.getAsLong();
         if (snapshot.getState() == SessionState.STOPPING) {
             snapshot = SessionTransitionPolicy.attempt(snapshot, SessionState.STOPPED, now, "");
+        } else if (snapshot.getState() == SessionState.UNRESPONSIVE) {
+            snapshot = SessionTransitionPolicy.attempt(
+                    snapshot, SessionState.FAILED, now, "unresponsive session ended");
         } else if (snapshot.getState().canTransitionTo(SessionState.FAILED)) {
             snapshot = SessionTransitionPolicy.attempt(
                     snapshot, SessionState.FAILED, now, "guest stopped before readiness");
         } else {
             return;
         }
+        // Clear only once a real transition publishes: a stale report that
+        // changes nothing must not disarm a survivor's escalation flag.
+        stopSurvived = false;
         publish(listener);
     }
 
@@ -254,8 +293,56 @@ public final class RuntimeHostController {
         if (!snapshot.getState().canTransitionTo(SessionState.FAILED)) {
             return;
         }
+        stopSurvived = false;
         long now = clock.getAsLong();
         snapshot = SessionTransitionPolicy.attempt(snapshot, SessionState.FAILED, now, reason);
+        publish(listener);
+    }
+
+    /**
+     * The workload's typed "the stop request left a survivor" report — a
+     * process still alive after the forced window, or the fixed port still
+     * held (ADR-0062). The transition is the same {@code FAILED} as any other
+     * failure, but the status carries {@link HostRuntimeStatus#survivedStop()}
+     * so the service's one-tap restart can escalate it to a self-restart of
+     * the whole process tree — the only recovery left on a kernel where the
+     * stopped tracer could not be killed (ADR-0063).
+     */
+    public void onWorkloadStopSurvived(String reason, HostListener listener) {
+        if (snapshot == null) {
+            return;
+        }
+        // A survivor report only exists as the answer to a stop in flight:
+        // from any other state it is stale or a bug, and must never mark an
+        // unrelated failure as escalatable.
+        if (snapshot.getState() != SessionState.STOPPING) {
+            return;
+        }
+        stopSurvived = true;
+        long now = clock.getAsLong();
+        snapshot = SessionTransitionPolicy.attempt(snapshot, SessionState.FAILED, now, reason);
+        publish(listener);
+    }
+
+    /**
+     * The liveness canary reports one bounded guest probe (ADR-0062).
+     * {@link SessionLivenessPolicy} decides whether the result changes the
+     * state: enough consecutive misses flip {@code RUNNING} to
+     * {@code UNRESPONSIVE}, and the first success while unresponsive flips it
+     * back — the guest never asked to stop, so nothing else is restarted.
+     * Results while the session is not live are ignored.
+     */
+    public void onLivenessProbe(boolean alive, HostListener listener) {
+        if (snapshot == null) {
+            return;
+        }
+        SessionState next = liveness.record(snapshot.getState(), alive);
+        if (next == null) {
+            return;
+        }
+        // The snapshot's reason field is FAILED-specific; UNRESPONSIVE copy is
+        // fixed wording in the notification and presentation policies.
+        snapshot = SessionTransitionPolicy.attempt(snapshot, next, clock.getAsLong(), "");
         publish(listener);
     }
 
@@ -280,6 +367,11 @@ public final class RuntimeHostController {
             @Override
             public void onFailed(String reason) {
                 RuntimeHostController.this.onWorkloadFailed(reason, hostListener);
+            }
+
+            @Override
+            public void onStopSurvived(String reason) {
+                RuntimeHostController.this.onWorkloadStopSurvived(reason, hostListener);
             }
         };
     }

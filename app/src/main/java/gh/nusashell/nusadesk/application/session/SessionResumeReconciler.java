@@ -35,6 +35,7 @@ public final class SessionResumeReconciler {
             case STARTING:
             case RECONNECTING:
             case STOPPING:
+            case UNRESPONSIVE:
                 return new SessionSnapshot(
                         snapshot.getSessionId(),
                         snapshot.getAppId(),

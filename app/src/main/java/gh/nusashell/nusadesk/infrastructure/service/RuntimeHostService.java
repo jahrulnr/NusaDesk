@@ -6,6 +6,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
@@ -17,17 +18,21 @@ import gh.nusashell.nusadesk.application.terminal.TerminalSessionPort;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
+import gh.nusashell.nusadesk.domain.session.SessionState;
 import gh.nusashell.nusadesk.domain.terminal.TerminalSessionStatus;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabSnapshot;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabsSnapshot;
 import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesHostKeyTrustStore;
 import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesSessionStateStore;
+import gh.nusashell.nusadesk.infrastructure.ssh.GuestLivenessProbe;
 import gh.nusashell.nusadesk.infrastructure.ssh.KeystoreVaultCredentialProvider;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshClientBridgeTransportFactory;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshReconnectPolicy;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshSecurityInitializer;
 
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Foreground service host shell for the local Linux runtime.
@@ -75,6 +80,16 @@ public final class RuntimeHostService extends Service {
     private static final int STOP_REQUEST_CODE = 1;
     private static final int CONTENT_REQUEST_CODE = 2;
     private static final int TERMINAL_RECONNECT_REQUEST_CODE = 3;
+    private static final int RESTART_REQUEST_CODE = 4;
+
+    /**
+     * Liveness canary cadence and per-probe bound (ADR-0062): one probe every
+     * 15 s with an 8 s hard timeout, so three consecutive misses declare the
+     * session unresponsive after about 45 s while a single busy-guest stall
+     * never reaches the user.
+     */
+    private static final long LIVENESS_PROBE_INTERVAL_MILLIS = 15_000L;
+    private static final long LIVENESS_PROBE_TIMEOUT_MILLIS = 8_000L;
 
     /** Intent action to start the runtime session. */
     public static final String ACTION_START =
@@ -97,6 +112,14 @@ public final class RuntimeHostService extends Service {
      */
     public static final String ACTION_TERMINAL_RECONNECT =
             "gh.nusashell.nusadesk.action.TERMINAL_RECONNECT";
+    /**
+     * Intent action to restart the Linux session: stop through the existing
+     * workload stop path, then start again through the same
+     * {@code ensureRunning} boundary an app launch uses (ADR-0062). Offered to
+     * the user while the session is {@code UNRESPONSIVE}.
+     */
+    public static final String ACTION_RESTART =
+            "gh.nusashell.nusadesk.action.RUNTIME_RESTART";
 
     /** Intent extra: app id of the runtime to start. */
     public static final String EXTRA_APP_ID = "appId";
@@ -109,11 +132,27 @@ public final class RuntimeHostService extends Service {
     private RuntimeHostController controller;
     private TerminalTabsController terminalTabs;
     private SharedPreferencesSessionStateStore sessionStateStore;
+    /** The canary itself; bound in {@link #onCreate} to the same SSH wiring the terminal uses. */
+    private GuestLivenessProbe livenessProbe;
+    /** Single background thread for blocking probes; the main thread only schedules and consumes. */
+    private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "guest-liveness-probe");
+        t.setDaemon(true);
+        return t;
+    });
+    /** Guards against overlapping probes while a slow one is still inside its bound. */
+    private boolean probeInFlight;
+    /** A user-requested restart waiting for the stop path to reach a startable state. */
+    private boolean restartPending;
+    /** Set in onDestroy: no queued callback may re-foreground or restart after it. */
+    private boolean destroyed;
     /** Last runtime status; the terminal-driven notification refresh re-renders it. */
     private HostRuntimeStatus lastStatus;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     // Stored once: a capturing method reference creates a fresh object per
-    // evaluation, so register/unregister must share one instance.
+    // evaluation, so removeCallbacks and register/unregister must share one
+    // instance each.
+    private final Runnable livenessTick = this::onLivenessTick;
     private final TerminalTabsBus.Listener terminalTabsListener = this::onTerminalTabs;
 
     @Override
@@ -139,6 +178,13 @@ public final class RuntimeHostService extends Service {
                 mainHandler::post);
         TerminalTabsRegistry.getInstance().register(terminalTabs);
         TerminalTabsBus.getInstance().register(terminalTabsListener);
+        // The canary reuses the terminal's SSH wiring: the same vault
+        // credential and pinned host-key store, on the fixed loopback
+        // endpoint. No new network surface (ADR-0062).
+        livenessProbe = new GuestLivenessProbe(
+                new KeystoreVaultCredentialProvider(this),
+                new SharedPreferencesHostKeyTrustStore(this),
+                System::currentTimeMillis);
         // A snapshot persisted before the process died is reconciled honestly:
         // states that require a live workload become FAILED so no view can show
         // a false RUNNING for a runtime that no longer exists. This bookkeeping
@@ -180,6 +226,8 @@ public final class RuntimeHostService extends Service {
         promoteForeground();
 
         if (ACTION_STOP.equals(action)) {
+            // An explicit Stop is the last word: it cancels a queued restart.
+            restartPending = false;
             controller.stop(this::onStatus);
         } else if (ACTION_TERMINAL_RECONNECT.equals(action)) {
             // Explicit re-attach from the notification after the selected
@@ -194,21 +242,26 @@ public final class RuntimeHostService extends Service {
             if (selectedTab != null) {
                 selectedTab.reconnect();
             }
-            if (lastStatus == null || !lastStatus.isRuntimeRunning()) {
-                stopForeground(STOP_FOREGROUND_REMOVE);
-                stopSelf();
-            }
+            // A stale action while a session is stopping or restarting must
+            // not destroy the host mid-flight (ADR-0062).
+            releaseIfIdle();
         } else if (ACTION_START.equals(action)) {
             String appId = intent.getStringExtra(EXTRA_APP_ID);
             String appVersion = intent.getStringExtra(EXTRA_APP_VERSION);
             String sessionId = intent.getStringExtra(EXTRA_SESSION_ID);
             if (isBlank(appId) || isBlank(appVersion) || isBlank(sessionId)) {
-                // Malformed start intent: nothing valid to do, release the slot.
-                stopForeground(STOP_FOREGROUND_REMOVE);
-                stopSelf();
+                // Malformed start intent: nothing valid to do, release the
+                // slot — unless live work or a restart is still in flight.
+                releaseIfIdle();
             } else {
                 controller.start(appId, appVersion, sessionId, this::onStatus);
             }
+        } else if (ACTION_RESTART.equals(action)) {
+            // Restart Linux (ADR-0062): take the existing stop path, and let
+            // publishStatus re-enter through ensureRunning once the session
+            // reaches a startable state. This is not a second lifecycle.
+            restartPending = true;
+            controller.stop(this::onStatus);
         } else if (ACTION_ENSURE_RUNNING.equals(action)) {
             // App-visible autostart: the app is in the foreground, so the local
             // Linux runtime must be up. The identity comes from the curated
@@ -217,8 +270,9 @@ public final class RuntimeHostService extends Service {
             controller.ensureRunning(entry.getAppId(), entry.getVersion(),
                     UUID.randomUUID().toString(), this::onStatus);
         } else {
-            // Unknown or null action (including a redelivered start): nothing to do.
-            stopSelf();
+            // Unknown or null action (including a redelivered start): nothing
+            // to do — but never release a live workload or a pending restart.
+            releaseIfIdle();
         }
         return START_NOT_STICKY;
     }
@@ -247,12 +301,141 @@ public final class RuntimeHostService extends Service {
         // not (ADR-0033). Feed it before rendering so the notification
         // reflects the new terminal state together with the runtime state.
         terminalTabs.onRuntimeStatus(status);
-        updateNotification(status);
         RuntimeStatusBus.getInstance().publish(status);
         persistSnapshot(status);
         Log.i(TAG, "runtime session state=" + status.getState()
                 + " endpoint=" + endpointText(status)
                 + failureText(status));
+        if (destroyed) {
+            // A workload callback queued before onDestroy must not re-arm the
+            // canary, re-foreground the service, or resurrect a session.
+            return;
+        }
+        updateLivenessSchedule(status);
+        updateNotification(status);
+        if (isTerminal(status.getState())) {
+            // The service dies only here, when a publish proves nothing is
+            // live and no restart is coming. A user-requested restart answers
+            // at the first terminal publish. A real STOPPED means the
+            // workload is gone and the new session can bind the fixed port
+            // through the same ensureRunning boundary an app launch uses
+            // (ADR-0062). A FAILED stop that carries the workload's typed
+            // survivor report escalates instead (ADR-0063): the app arms a
+            // revival job and kills its own process tree, because a workload
+            // that survived termination would otherwise keep holding
+            // 127.0.0.1:22022 orphaned — an ordinary self-kill leaves exactly
+            // that behind. Any other terminal outcome is not retried: the
+            // honest failure is what the user must see.
+            SelfRestartEscalation.Action action =
+                    SelfRestartEscalation.decide(restartPending, status);
+            restartPending = false;
+            switch (action) {
+                case RESTART_SESSION: {
+                    RuntimeCatalogEntry entry = CuratedRuntimeCatalog.ubuntuBaseArm64();
+                    controller.ensureRunning(entry.getAppId(), entry.getVersion(),
+                            UUID.randomUUID().toString(), this::onStatus);
+                    break;
+                }
+                case RESTART_PROCESS_TREE: {
+                    Log.w(TAG, "workload survived the forced stop; restarting "
+                            + "the app process tree to recover");
+                    boolean armed = SelfRestartEscalation.run(
+                            new JobSchedulerSelfRestart(this));
+                    // When armed, run() kills this process: reaching the next
+                    // line means the kill could not complete or no trigger
+                    // could be armed — either way the FAILED snapshot is the
+                    // honest record, so release the slot normally.
+                    if (!armed) {
+                        Log.e(TAG, "no revival trigger could be armed; leaving "
+                                + "the failed session to the user");
+                    } else {
+                        Log.e(TAG, "the process-tree kill returned; releasing "
+                                + "the slot with FAILED persisted");
+                    }
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    stopSelf();
+                    break;
+                }
+                default:
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    stopSelf();
+            }
+        }
+    }
+
+    /**
+     * Release the foreground slot for an intent that carries no live work —
+     * a stale re-attach, a malformed start, an unknown action. A live
+     * workload or a pending restart is never released by an intent.
+     */
+    private void releaseIfIdle() {
+        if (!restartPending && !controller.requiresLiveWorkload()) {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelf();
+        }
+    }
+
+    /**
+     * Arm or cancel the canary for the freshly published state (ADR-0062).
+     * Only a live session — {@code RUNNING} or {@code UNRESPONSIVE} — is
+     * probed; reaching {@code RUNNING} probes immediately instead of waiting
+     * a full interval, so a wedge at start is caught within one bound.
+     */
+    private void updateLivenessSchedule(HostRuntimeStatus status) {
+        mainHandler.removeCallbacks(livenessTick);
+        if (status != null && isProbedState(status.getState())) {
+            mainHandler.post(livenessTick);
+        }
+    }
+
+    private static boolean isProbedState(SessionState state) {
+        return state == SessionState.RUNNING || state == SessionState.UNRESPONSIVE;
+    }
+
+    /** States in which a stop request has fully answered. */
+    private static boolean isTerminal(SessionState state) {
+        return state == SessionState.STOPPED
+                || state == SessionState.FAILED
+                || state == SessionState.CANCELLED
+                || state == SessionState.NOT_STARTED;
+    }
+
+    /**
+     * One cadence tick on the main thread: hand a bounded probe to the
+     * background executor and re-arm. Probe results are marshalled back to the
+     * main thread before they touch the controller, which is deliberately not
+     * thread-safe. A miss while the session is still healthy changes nothing
+     * the user can see; the threshold lives in the domain policy.
+     */
+    private void onLivenessTick() {
+        HostRuntimeStatus status = lastStatus;
+        // A tick already queued when onDestroy ran must not touch the
+        // shut-down probe executor.
+        if (destroyed || status == null || !isProbedState(status.getState())) {
+            return;
+        }
+        // Re-arm before deciding: a probe that outlives the interval skips
+        // this tick but must never let the chain die.
+        mainHandler.postDelayed(livenessTick, LIVENESS_PROBE_INTERVAL_MILLIS);
+        if (probeInFlight) {
+            return;
+        }
+        probeInFlight = true;
+        probeExecutor.execute(() -> {
+            boolean alive;
+            try {
+                alive = livenessProbe.probeOnce(LIVENESS_PROBE_TIMEOUT_MILLIS);
+            } catch (RuntimeException e) {
+                // A probe that cannot even run (e.g. credential still absent)
+                // is a miss, never a crash of the supervision thread.
+                alive = false;
+            }
+            final boolean result = alive;
+            mainHandler.post(() -> {
+                probeInFlight = false;
+                controller.onLivenessProbe(result, this::onStatus);
+            });
+        });
     }
 
     /**
@@ -295,13 +478,21 @@ public final class RuntimeHostService extends Service {
         // with the same id (the documented FGS update pattern). This avoids
         // NotificationManager.notify(), which would require the POST_NOTIFICATIONS
         // runtime permission on Android 13+; FGS notifications are exempt.
+        // This method only renders: it never calls stopSelf. A queued
+        // re-render (e.g. a terminal-tabs bus delivery arriving between a
+        // restart's STOPPED publish and its STARTING publish) must not be
+        // able to schedule the destroy that would kill the in-flight restart
+        // (ADR-0062) — the slot is released only by publishStatus's terminal
+        // branch and onStartCommand's idle release.
         if (RuntimeNotificationPolicy.requiresForeground(status)) {
             startForeground(NOTIFICATION_ID, buildNotification(status),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST);
-        } else {
+        } else if (!restartPending) {
             stopForeground(STOP_FOREGROUND_REMOVE);
-            stopSelf();
         }
+        // With a restart pending a terminal render is transient: the
+        // notification stays up through the stop-to-start gap instead of
+        // flickering out for one main-queue turn.
     }
 
     private Notification buildNotification(HostRuntimeStatus status) {
@@ -329,6 +520,10 @@ public final class RuntimeHostService extends Service {
         if (RuntimeNotificationPolicy.showsStopAction(status)) {
             builder.addAction(new Notification.Action.Builder(
                     null, "Stop", stopPendingIntent()).build());
+        }
+        if (RuntimeNotificationPolicy.showsRestartAction(status)) {
+            builder.addAction(new Notification.Action.Builder(
+                    null, "Restart Linux", restartPendingIntent()).build());
         }
         if (TerminalNotificationPolicy.showsReconnectAction(terminal)) {
             builder.addAction(new Notification.Action.Builder(
@@ -375,6 +570,13 @@ public final class RuntimeHostService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
+    private PendingIntent restartPendingIntent() {
+        Intent intent = new Intent(this, RuntimeHostService.class)
+                .setAction(ACTION_RESTART);
+        return PendingIntent.getService(this, RESTART_REQUEST_CODE, intent,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
@@ -388,6 +590,14 @@ public final class RuntimeHostService extends Service {
         // must not be left running unsupervised with its loopback port held.
         // Terminal states are a no-op: the normal stop path has already torn
         // the runtime down.
+        // A destroy is final: no queued publish may re-foreground the service
+        // or resurrect a session through a stale restart flag (ADR-0062).
+        destroyed = true;
+        restartPending = false;
+        // The canary dies first: no probe may still be running — or get
+        // scheduled — while the workload underneath it is being torn down.
+        mainHandler.removeCallbacks(livenessTick);
+        probeExecutor.shutdownNow();
         if (controller.requiresLiveWorkload()) {
             Log.i(TAG, "service destroyed while the runtime was live; stopping it");
             controller.stop(this::publishDestroyedStatus);
@@ -440,18 +650,34 @@ public final class RuntimeHostService extends Service {
      * <p>Callers must only use this from a user-visible launch or the user's
      * own opt-in "Start Linux at boot" trigger (ADR-0037): that receiver is
      * unexported, defaults OFF, and re-checks the persisted install state
-     * before calling in. Jobs, alarms, and sticky-restart paths remain
-     * deliberately absent (ADR-0013).</p>
+     * before calling in. The one further caller is the self-restart revival
+     * job (ADR-0063), delivered by the platform only after the user tapped
+     * Restart — the same boundary, re-entered from a fresh process.</p>
+     *
+     * @return the platform's started-service result so a background caller
+     *         can tell a refused start from an accepted one
      */
-    public static void ensureRunning(Context context) {
+    public static ComponentName ensureRunning(Context context) {
         Intent intent = new Intent(context, RuntimeHostService.class)
                 .setAction(ACTION_ENSURE_RUNNING);
-        context.startForegroundService(intent);
+        return context.startForegroundService(intent);
     }
 
     /** Helper for callers to request a runtime stop. */
     public static void requestStop(Context context) {
         Intent intent = new Intent(context, RuntimeHostService.class).setAction(ACTION_STOP);
+        context.startForegroundService(intent);
+    }
+
+    /**
+     * Helper for callers to request a runtime restart — the {@code Restart
+     * Linux} action offered while the session is {@code UNRESPONSIVE}
+     * (ADR-0062). Stops through the existing workload path, then starts again
+     * through {@link #ensureRunning(Context)}'s boundary.
+     */
+    public static void requestRestart(Context context) {
+        Intent intent = new Intent(context, RuntimeHostService.class)
+                .setAction(ACTION_RESTART);
         context.startForegroundService(intent);
     }
 

@@ -60,9 +60,12 @@ import java.util.Objects;
  * <p>Linux is background infrastructure: it starts from an app launch, so this
  * surface has no session control. While the runtime is not running — or no tab
  * exists yet — it says so and offers a way back to the launcher, never a
- * second start button. A selected tab whose shell dropped or failed while
- * Linux stayed up shows the reconnect banner; the same action is offered by
- * the host notification.</p>
+ * second start button. The exceptions are {@code UNRESPONSIVE} (ADR-0062) and
+ * a {@code FAILED} whose workload survived the forced stop (ADR-0063): both
+ * offer the host's {@code Restart Linux} action, the one-tap recovery whose
+ * last leg restarts the app itself. A selected tab whose shell dropped or
+ * failed while Linux stayed up shows the reconnect banner; the same action is
+ * offered by the host notification.</p>
  *
  * <p>The terminal itself is a real WebView host ({@link TerminalBridgeView})
  * running the packaged xterm bundle over an owned origin. Terminal I/O crosses
@@ -101,6 +104,10 @@ public final class TerminalAppView extends FrameLayout
     private TerminalTabsRegistry tabsRegistry;
     private TerminalTabsBus tabsBus;
     private TabsListener tabsListener;
+    /** Attach-panel action for stopped/failed sessions: back to the launcher. */
+    private OnClickListener goToDesktopListener;
+    /** Attach-panel action while the session is {@code UNRESPONSIVE} (ADR-0062). */
+    private OnClickListener restartLinuxListener;
 
     private TerminalTabsSnapshot tabsSnapshot = TerminalTabsSnapshot.empty();
     /**
@@ -155,7 +162,19 @@ public final class TerminalAppView extends FrameLayout
 
     /** Wires the attach prompt's "Go to all apps" action to host navigation. */
     public void setOnGoToDesktopListener(OnClickListener listener) {
-        attachAction.setOnClickListener(listener);
+        goToDesktopListener = listener;
+        updateUi();
+    }
+
+    /**
+     * Wires the attach prompt's {@code Restart Linux} action (ADR-0062), shown
+     * only while the session is {@code UNRESPONSIVE}. The host binds it to the
+     * same service restart path the notification action uses; this surface
+     * never owns a lifecycle.
+     */
+    public void setOnRestartLinuxListener(OnClickListener listener) {
+        restartLinuxListener = listener;
+        updateUi();
     }
 
     /**
@@ -450,7 +469,12 @@ public final class TerminalAppView extends FrameLayout
 
     /**
      * Honest waiting prompt. It explains what Linux is doing and points at the
-     * launcher; it never offers a second start/stop control of its own.
+     * launcher; it never offers a second start/stop control of its own — the
+     * {@code UNRESPONSIVE} case's {@code Restart Linux} is the same host
+     * service action the notification carries, not a second lifecycle. A
+     * {@code FAILED} session whose workload survived the forced stop offers
+     * the same action again: its escalation to an app self-restart is the
+     * one-tap recovery that failure names (ADR-0063).
      */
     private void renderAttachPanel(SessionState session) {
         switch (session) {
@@ -462,7 +486,11 @@ public final class TerminalAppView extends FrameLayout
                         reason == null || reason.trim().isEmpty()
                                 ? getContext().getString(R.string.session_failed_no_reason)
                                 : reason));
-                attachAction.setVisibility(VISIBLE);
+                if (hostStatus != null && hostStatus.survivedStop()) {
+                    showRestartLinuxAction();
+                } else {
+                    showGoToDesktopAction();
+                }
                 break;
             case STARTING:
             case RECOVERING:
@@ -475,12 +503,45 @@ public final class TerminalAppView extends FrameLayout
                 attachBody.setText(R.string.session_stopping_detail);
                 attachAction.setVisibility(GONE);
                 break;
+            case UNRESPONSIVE:
+                attachTitle.setText(R.string.session_unresponsive);
+                attachBody.setText(R.string.terminal_unresponsive_body);
+                showRestartLinuxAction();
+                break;
             default:
                 attachTitle.setText(R.string.terminal_attach_stopped_title);
                 attachBody.setText(R.string.terminal_attach_stopped_body);
-                attachAction.setVisibility(VISIBLE);
+                showGoToDesktopAction();
                 break;
         }
+    }
+
+    /**
+     * The attach panel's {@code Restart Linux} action: the same host service
+     * path the notification's action fires, never a lifecycle this surface
+     * owns.
+     */
+    private void showRestartLinuxAction() {
+        attachAction.setText(R.string.terminal_restart_linux);
+        attachAction.setOnClickListener(
+                view -> {
+                    if (restartLinuxListener != null) {
+                        restartLinuxListener.onClick(view);
+                    }
+                });
+        attachAction.setVisibility(VISIBLE);
+    }
+
+    /** The attach panel's one action, bound to launcher navigation. */
+    private void showGoToDesktopAction() {
+        attachAction.setText(R.string.terminal_attach_go_desktop);
+        attachAction.setOnClickListener(
+                view -> {
+                    if (goToDesktopListener != null) {
+                        goToDesktopListener.onClick(view);
+                    }
+                });
+        attachAction.setVisibility(VISIBLE);
     }
 
     /**
