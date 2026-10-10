@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-11
+
+### Added
+
+- **A wedged Linux session is now an explicit, recoverable state.** While a
+  session is live, the foreground service probes the guest every 15 s over
+  the app's pinned loopback SSH session: one `/bin/true` exec that must fork
+  in the guest, hard-bounded at 8 s. Three consecutive misses flip the
+  session to `UNRESPONSIVE` instead of leaving a frozen terminal claiming
+  `RUNNING` for minutes; the first success flips it back. The launcher,
+  the notification, and the terminal all name the state in words, and a new
+  `Restart Linux` action -- on the notification and the terminal surface --
+  stops the session and starts it again through the existing paths. There is
+  no auto-restart, no automatic tracer kill, and no guest-side watchdog
+  (ADR-0062).
+
+### Fixed
+
+- **`Restart Linux` now actually recovers a frozen session.** On the
+  verified SIGSTOP recipe the restart used to declare `STOPPED` while the
+  frozen tracer was still alive and its `sshd` still held
+  `127.0.0.1:22022`, so the new session failed on the fixed-port conflict
+  and only `adb shell am force-stop` cleared it. The stop path now sends
+  `SIGCONT` to the tracer and the signalled guest processes before
+  terminating -- a stopped process never sees `SIGTERM`, and on this device
+  the frozen tracer also outlived the forced kill until it was resumed --
+  escalates to a forced kill, and reports `STOPPED` only once the tracer
+  is really gone and nothing still holds the port. The tracer pids come
+  from a `/proc/<pid>/stat` scan for the app's own children, with the
+  `CONFIG_PROC_CHILDREN`-gated `children` file kept only as a second
+  source: the verified wedge device (S10e, Samsung 4.14.113) has no usable
+  `children` file, so the thaw used to find no tracer and a stopped tracer
+  survived the forced window. A workload that
+  survives anyway ends `FAILED` -- never a false stop -- and the same tap
+  escalates it further (next entry); the service now releases its
+  foreground slot only at the terminal publish itself, so a queued render
+  or a stale intent can no longer destroy it mid-restart (ADR-0062).
+
+- **A session that survives even the forced kill now recovers on the same
+  tap.** `Restart Linux` on that `FAILED` state escalates to a self-restart
+  of the app's own process tree (ADR-0063): the app arms a scheduled
+  `JobScheduler` revival, thaws and `SIGKILL`s every process its own uid
+  owns -- the documented `Process.killProcessGroup` is a hidden API, so the
+  equivalent `/proc` uid sweep is used, which also reaches a tracee that
+  called `setsid` and escaped the process group -- then kills itself. The
+  platform delivers the job in a fresh process, which re-enters
+  `ensureRunning`; if the API-31+ background rules refuse the
+  foreground-service start, the restart notice raised before the kill stays
+  up as a tap-to-open fallback. If no revival could be armed the app stays
+  alive and the persisted `FAILED` is the honest record; its reason names
+  `Restart Linux` as the recovery and mentions a Settings force-stop only
+  as the last resort, so the primary instruction is never "go to
+  Settings".
+
+- **A guest command that forks can no longer wedge the whole session.** The
+  emulated hard-link storage is now kept outside the guest's own directories: the
+  session points the bridge's `PROOT_L2S_DIR` at an app-private directory and
+  binds that same path into the guest, so the extension's `.l2s.` backing files
+  never appear in a guest listing. The directory filter that used to hide them
+  was removed with it: its compaction wedged the tracer on the S10e, which is
+  what made a concurrent `git clone` hang, and the bisect is recorded in
+  `docs/research/proot-fork-hang-vendor-kernels.md`. Five concurrent-clone rounds
+  on the S10e pass, `rm -rf` over a tree with emulated links keeps links outside
+  it readable, and the workaround in `docs/limitations.md` stays for sessions
+  that already wedged. The bridge also carries two further fixes: it keeps the
+  kernel's syscall result when the extension's bookkeeping fails, and publishes a
+  link-count change without a window in which a name a reader follows is missing.
+
 ## [0.14.1] - 2026-10-10
 
 ### Fixed
