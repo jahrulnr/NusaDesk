@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-10
+
+### Fixed
+
+- **The execution bridge is bumped to termux/proot v5.1.107.96.** The previous
+  pin (v5.1.107.92) predates upstream's fix for vendor kernels that lose the
+  ptrace fork-event PID (`8b994150`), and with it any guest command that forks
+  could wedge permanently while the tracer spun. The new pin also carries the
+  seccomp event fix (`d4d2a190`), two `link2symlink` fixes, and the `fake_id0`
+  open fix; the freestanding loader is bit-identical, and the build script's
+  pinned digests are updated with it. Device verification on the S10e shows the
+  remote-clone path passing; the Samsung kernel still reproduces the wedge, so
+  the hazard stays documented with a workaround and a recovery step in
+  `docs/limitations.md` (`docs/research/proot-fork-hang-vendor-kernels.md`).
+
 ## [0.14.0] - 2026-10-10
 
 ### Added
