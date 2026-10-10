@@ -510,6 +510,55 @@ The temporary app and all test sessions were removed; the guest/runtime was
 preserved.
 
 
+## Terminal IME input (ADR-0060)
+
+The terminal's input path is page-side up to the host bridge: xterm's hidden
+`.xterm-helper-textarea` feeds the single stdin path. The pinned bundle empties
+that field only on blur and on a real Enter/Ctrl+C keydown, and its Android
+`keyCode 229` diff then re-emits the whole accumulated field when an IME edit is
+not a clean append (xtermjs/xterm.js#6078), which reaches the shell as if the
+earlier text had been typed again. `ime-guard.js` sweeps the field after 400 ms
+of quiet, never while composing and never inside xterm's settle windows, and it
+skips `screenReaderMode`.
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| IMG-001 | Type a long line with an IME keyboard (no Enter), pause past the idle window, then keep typing | Only the newly typed characters are echoed; no earlier word reappears, in front of or after the new character |
+| IMG-002 | Accept an IME suggestion/autocorrect that rewrites the last word in place (a same-length edit) | Only the corrected in-flight word reaches the shell; nothing from earlier in the line is replayed |
+| IMG-003 | Hold a key while typing (rollover: the next key lands before the previous keyup) | No duplicated or dropped character beyond the upstream rollover behaviour; no earlier text is emitted |
+| IMG-004 | Keep a composition open (candidate bar visible) past the idle window, then commit | Nothing is cleared while composing; the committed text arrives once and the field empties afterwards |
+| IMG-005 | Debug build, `chrome://inspect` on the terminal WebView, read `document.querySelector('.xterm-helper-textarea').value` between keystrokes | Empty; a residue equal to the text typed since the last Enter means the guard is not running |
+
+**Run 2026-10-09 (headless Google Chrome over CDP, packaged `terminal.html` plus
+the pinned bundle, served locally).** `ime-guard.js` is installed by the page and
+the sweep cleared a seeded `apt upgrade` residue once the idle window passed.
+With the sweep starved (an `input` event every 100 ms), one synthetic
+`keyCode 229` keydown plus an in-place edit reproduced the upstream defect
+verbatim: the page emitted `apt upgradé`, the whole field, as input. With the
+guard live, the same sequence emitted only the in-flight character (`é`) and the
+field was empty beforehand. An open composition stayed intact across the idle
+window and the field emptied after `compositionend`. Node policy tests:
+`app/src/test/js/ime-guard-policy.test.js` (gate, schedule, adapter, and the
+before/after model), run by `make test`.
+
+**Device pass 2026-10-09 (Samsung SM-G970F, Android 12/API 31, arm64, Samsung
+Honeyboard keyboard; QA-debuggable APK signed with the installed release key, so
+the installed 0.13.0 signature matched and the guest data was preserved).** The
+terminal was driven against the live guest shell (`root@localhost:~#`) with the
+WebView devtools socket attached; the installed page loads `ime-guard.js`.
+
+| Case | Result |
+| --- | --- |
+| IMG-005 | PASS — between keystrokes the helper field was empty |
+| IMG-004 | PASS (synthetic composition, no real IME) — the field kept its value across the idle window while a composition was open (`apt`) and emptied after `compositionend` |
+| Defect, sweep held off | PASS (reproduced on device) — with the sweep starved, one `keyCode 229` keydown plus an in-place edit made the page emit the whole accumulated field: `{"t":"input","d":"apt upgradé"}`. The same mechanism was seen on screen first as a leaked `aptapt upgrad...` line at the prompt before the capture hook was fixed |
+| Guard live | PASS — the field was empty before the next keystroke and the identical sequence emitted only `{"t":"input","d":"é"}` |
+| Input smoke test | PASS — `echo IMG-SMOKE-OK` and `echo IMG-FINAL-OK`, typed into the focused WebView with `adb shell input text`, each echoed exactly once with the expected output, after the probe had patched and restored the page |
+
+IMG-001..IMG-003 remain NOT RUN: they need a human typing on the device keyboard
+(composition, an autocorrect that rewrites a word in place, key rollover). The
+synthetic sequence above drives the same code path that a real IME feeds.
+
 ## Guest log cases (ADR-0034)
 
 The session console is persisted to `/var/log/lw/boot.log` in the rootfs;

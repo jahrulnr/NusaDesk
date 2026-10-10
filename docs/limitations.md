@@ -871,6 +871,26 @@ The bounds are deliberate:
   session it could no longer reach would be unclosable. Removing the definition
   never deletes anything inside Linux.
 
+### Terminal IME input (ADR-0060)
+
+- **xterm's hidden IME field is swept between keystrokes.** The pinned
+  `@xterm/xterm` bundle empties `.xterm-helper-textarea` only on blur and on a
+  real Enter/Ctrl+C keydown, and its Android `keyCode 229` diff then re-emits the
+  whole accumulated field as input whenever an IME edit is not a clean append
+  (xtermjs/xterm.js#6078, with #6012, #6045, #5887). That is the defect a user
+  saw as earlier text reappearing in the prompt. `ime-guard.js` clears the field
+  after 400 ms of quiet, never while a composition is open and never inside
+  xterm's settle windows, and it stays inert under `screenReaderMode`.
+- **It is a stopgap for a bundle we do not patch.** Re-pinning a release that
+  carries the upstream fix (a positional diff instead of `replace`) is the real
+  fix, after which the adapter can be deleted.
+- **A mis-diff of the character being typed is upstream behaviour.** A key
+  rollover can still duplicate or drop that character (#6045). The guard only
+  guarantees that text from before the current input can no longer be replayed.
+- **The helper field is not page state.** A pause mid-line lets the sweep run, so
+  the field cannot be used as a record of the current line; nothing in the page
+  depends on that.
+
 ### Native-code distribution
 
 The future APK will likely need a small native execution bridge even though the Linux rootfs is downloaded. Any JNI/native `.so` must support the device ABI and 16 KB page-size devices. Native files must be reproducibly built, checksum/signature verified, licensed, and tested.

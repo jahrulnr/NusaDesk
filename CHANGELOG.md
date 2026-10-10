@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Earlier text can no longer be re-typed into the terminal by the IME path.**
+  Typing a character occasionally echoed text from before into the prompt (`a`
+  becoming `aapt upgrade`), as if a command history had been replayed. The cause
+  is upstream in the pinned `@xterm/xterm` bundle: its hidden helper textarea is
+  emptied only on blur and on a real Enter/Ctrl+C keydown, and the Android
+  `keyCode 229` diff then re-emits the whole accumulated field as input when an
+  IME edit is not a clean append (xtermjs/xterm.js#6078, with #6012, #6045,
+  #5887). The host was never the source: one FIFO stdin path, no input queue, no
+  replay buffer, no local echo. `ime-guard.js` now keeps xterm's field empty
+  between keystrokes (ADR-0060), after 400 ms of quiet, never while composing and
+  never inside xterm's settle windows, and it skips `screenReaderMode`.
+
 ## [0.13.0] - 2026-10-06
 
 ### Added

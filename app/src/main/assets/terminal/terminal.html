@@ -122,6 +122,7 @@
   <script src="addon-fit.js"></script>
   <script src="touch-scroll.js"></script>
   <script src="dom-selection.js"></script>
+  <script src="ime-guard.js"></script>
   <script>
     (function () {
       "use strict";
@@ -224,6 +225,16 @@
         touchScroll = window.LinuxWrapperTouchScroll.install(container, term);
       }
 
+      // Keep xterm's hidden IME field empty between keystrokes (ime-guard.js).
+      // On Android WebView the field accumulates typed text, and xterm's
+      // replace()-based diff then re-emits that whole residue as input when an
+      // IME edit is not a clean append, so earlier text reappears in the shell
+      // as if it had been typed again (xtermjs/xterm.js#6078).
+      var imeGuard = null;
+      if (window.LinuxWrapperImeGuard) {
+        imeGuard = window.LinuxWrapperImeGuard.install(container, term);
+      }
+
       // Tell the host whether the viewport is scrolled away from the live
       // bottom so it can show or hide its "scroll to live output" button.
       // Emitted only on transitions, and only for real viewport movement.
@@ -285,6 +296,10 @@
           if (touchScroll) {
             touchScroll();
             touchScroll = null;
+          }
+          if (imeGuard) {
+            imeGuard.dispose();
+            imeGuard = null;
           }
           if (domSelection) { domSelection.dispose(); }
           term.dispose();
