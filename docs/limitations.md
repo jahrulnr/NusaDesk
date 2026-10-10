@@ -95,6 +95,39 @@ Consequences to keep in mind:
   extension does not filter them). Tools that enumerate a tree see them as
   extra entries.
 
+### A lost ptrace fork event can wedge the whole guest (vendor kernels)
+
+Some vendor kernels carry `sys_ptrace: reset ptrace_message on
+ptrace_check_attach` (or an equivalent), which clears the message a
+`PTRACE_GETEVENTMSG` returns for a fork event. PRoot then never registers the
+new child: the child stays stopped while its parent waits for it, and any guest
+command that forks can wedge. The frozen command shows as `State: t (tracing
+stop)` with `wchan=ptrace_stop` and `TracerPid` pointing at `libproot.so`; the
+tracer burns system time (or the tracee spins in userspace), and a sibling
+process is often a `Z` zombie. Once one tracee is lost, **every later command
+in that session hangs too**: a plain `rm -rf` was observed stopped this way. It
+is a race; the same clone can pass several times and then wedge.
+
+Observed on the S10e (SM-G970F, Android 12, kernel 4.14.113-25257816) with the
+bridge that shipped before 2026-10-10, and reported from an Android 11 ROG 2
+where `git clone` stopped inside `index-pack`. The upstream fix
+(`termux/proot` `8b994150`, tag v5.1.107.95 and later), which the shipped
+bridge now carries (v5.1.107.96), covers the kernel variant that fix names;
+this Samsung kernel still reproduces it, so the hazard is not fully closed. Full
+evidence and the reproduction recipe:
+`docs/research/proot-fork-hang-vendor-kernels.md`.
+
+What works today:
+
+- **Workaround for a clone:** `git init` + `git remote add` +
+  `git -c transfer.unpackLimit=100000 fetch --depth=1 --no-tags origin <branch>`
+  + `git checkout -B <branch> FETCH_HEAD`. It uses `unpack-objects` instead of
+  `index-pack` and completes where `git clone` wedges.
+- **Recovery once wedged:** stop Linux from the notification (or force-stop the
+  app) and reopen the app; the session restarts. Killing guest processes while
+  the tracer is alive does nothing, because a stopped tracee only dies once its
+  tracer lets it run.
+
 ### Guest SSH server is not supplied by Ubuntu Base
 
 The SSH-first UX requires a guest SSH server explicitly installed and

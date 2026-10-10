@@ -24,7 +24,7 @@
 #                       domain may execute.
 #
 # Pinned inputs (reproducibility):
-#   PRoot   : termux/proot  v5.1.107.92  (git rev 7266fb3e8516535682f5a9c8f3a7e70f6506eddb)
+#   PRoot   : termux/proot  v5.1.107.96  (git rev a179d3e8a4e045aaa1fb8cc3284f23509d96d353)
 #             GPL-2.0-or-later — a compatible fork of upstream proot-me/proot
 #             (also GPL-2.0-or-later) carrying the Android ptrace/proc patches.
 #   Talloc  : samba talloc 2.4.2 tarball (LGPL-3.0-or-later), statically linked.
@@ -50,9 +50,9 @@ set -euo pipefail
 # Configuration (pinned for reproducibility)
 # ---------------------------------------------------------------------------
 PROOT_REPO="https://github.com/termux/proot.git"
-PROOT_TAG="v5.1.107.92"
-PROOT_REV="7266fb3e8516535682f5a9c8f3a7e70f6506eddb"
-PROOT_VERSION="5.1.107.92"
+PROOT_TAG="v5.1.107.96"
+PROOT_REV="a179d3e8a4e045aaa1fb8cc3284f23509d96d353"
+PROOT_VERSION="5.1.107.96"
 
 TALLOC_URL="https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz"
 TALLOC_TGZ="talloc-2.4.2.tar.gz"
@@ -72,7 +72,7 @@ THREADS_FLAG="-Wl,--threads=1"
 # regenerated with patches A/B/C/C 2/C 3 applied. A rebuild of the pinned
 # revision with the same patch chain must reproduce it — the script dies
 # otherwise, which is the point of the pin.
-EXPECTED_SHA256="2228cde334b4de223300b19c76b97f1d86ada5e1209cc2d938fcb6fed6383098"
+EXPECTED_SHA256="51801225bd6a71e7b97487327ac8766ef4bddd31d3ecc94adeb47813f8f3d132"
 # Same for the freestanding loader shipped as libproot-loader.so.
 EXPECTED_LOADER_SHA256="12d2b63e897fd91a334fce23edea5d2419cae4d5fd2a369f05d03ab75682add0"
 
