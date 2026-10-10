@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A web app can be reloaded from its task bar.** A page can navigate inside
+  the app to a view with no route back, and the only recovery was editing the
+  app definition and saving it again. The task bar now carries a reload action
+  (`Refresh this app`), visible only while a web app is the open surface, which
+  re-probes the app and loads its registered address again on a fresh renderer
+  (ADR-0061).
+
 ### Fixed
+
+- **A dead link in a popup no longer closes the app.** Tapping a link to an
+  address this app does not own (the reported case was `http://127.0.0.1` shown
+  by a guest-served page) opened a popup whose blocked navigation was handled by
+  tearing the child WebView down *inside its own callback*, which aborted the
+  process (`Fatal signal 5 (SIGTRAP)` through
+  `WebAppSurfaceView.destroyTabWebView`). Every child teardown triggered by a
+  callback is now deferred to the main loop, a refused popup states why the tap
+  did nothing, and the external-link handoff can no longer kill the surface
+  (ADR-0061).
 
 - **Earlier text can no longer be re-typed into the terminal by the IME path.**
   Typing a character occasionally echoed text from before into the prompt (`a`

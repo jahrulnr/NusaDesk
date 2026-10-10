@@ -20,12 +20,13 @@ import java.util.List;
  * Chrome and container for an open surface.
  *
  * <p>The bar is deliberately small and contextual: a way back to the launcher,
- * the surface title, and — only for a surface that really has app-level actions
- * — one options button. A user web app uses that menu for edit and its internal
- * tabs; the terminal uses it for the compact terminal list and per-tab actions.
- * It carries no session chrome, because Linux is background infrastructure: an
- * app surface says nothing about the session, and the launcher owns the single
- * readiness statement (ADR-0013).</p>
+ * the surface title, a reload action only for a surface that can be re-loaded
+ * from a known entry point (a user web app), and — only for a surface that
+ * really has app-level actions — one options button. A user web app uses that
+ * menu for edit and its internal tabs; the terminal uses it for the compact
+ * terminal list and per-tab actions. It carries no session chrome, because
+ * Linux is background infrastructure: an app surface says nothing about the
+ * session, and the launcher owns the single readiness statement (ADR-0013).</p>
  *
  * <p>Surfaces stay attached and are switched by visibility, which is what keeps
  * a live terminal's WebView and scrollback alive across a trip back to the
@@ -59,6 +60,8 @@ public final class AppSurfaceHostView extends LinearLayout {
 
     private TextView titleView;
     private ImageButton moreButton;
+    private ImageButton refreshButton;
+    private Runnable refreshAction;
     private FrameLayout surfaceContainer;
     private final List<MenuAction> menuActions = new ArrayList<>();
 
@@ -83,6 +86,9 @@ public final class AppSurfaceHostView extends LinearLayout {
         moreButton.setContentDescription(getContext().getString(R.string.taskbar_more_desc));
         moreButton.setOnClickListener(this::showMenu);
         renderMenuButton();
+        refreshButton = findViewById(R.id.taskbar_refresh);
+        refreshButton.setContentDescription(getContext().getString(R.string.taskbar_refresh_desc));
+        renderRefreshButton();
     }
 
     /** Container the host adds retained surfaces into. */
@@ -118,6 +124,23 @@ public final class AppSurfaceHostView extends LinearLayout {
 
     private void renderMenuButton() {
         moreButton.setVisibility(menuActions.isEmpty() ? GONE : VISIBLE);
+    }
+
+    /**
+     * Sets the reload action this surface offers, or {@code null} to hide it.
+     * Only a surface whose content loads from a known entry point can offer it
+     * (a user web app): a page can navigate somewhere that has no way back, and
+     * reloading the registered app is the escape hatch that does not require
+     * editing and re-saving the app definition.
+     */
+    public void setRefreshAction(Runnable action) {
+        refreshAction = action;
+        refreshButton.setOnClickListener(action == null ? null : view -> action.run());
+        renderRefreshButton();
+    }
+
+    private void renderRefreshButton() {
+        refreshButton.setVisibility(refreshAction == null ? GONE : VISIBLE);
     }
 
     private void showMenu(View anchor) {

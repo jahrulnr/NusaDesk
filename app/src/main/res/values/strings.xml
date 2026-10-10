@@ -80,6 +80,7 @@
     <!-- App surface task bar: one compact bar with a way back and the surface
          title. A web app surface additionally carries its own app actions. -->
     <string name="taskbar_home_desc">Back to all apps</string>
+    <string name="taskbar_refresh_desc">Refresh this app</string>
     <string name="taskbar_more_desc">App options and tabs</string>
 
     <!-- Terminal app surface -->
@@ -252,6 +253,7 @@
     <string name="webapp_state_failed_body">%1$s</string>
     <string name="webapp_state_retry">Try again</string>
     <string name="webapp_state_blocked">The page tried to open an address that is not this app.</string>
+    <string name="webapp_link_blocked_toast">That link is outside this app, so it was not opened.</string>
     <string name="webapp_state_crashed">The page stopped responding.</string>
     <string name="webapp_state_signin_title">%1$s needs a sign-in</string>
     <string name="webapp_state_signin_body">The app is running, but it asks for a username and password before it opens.</string>

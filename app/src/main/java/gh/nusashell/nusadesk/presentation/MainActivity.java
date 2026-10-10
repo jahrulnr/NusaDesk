@@ -794,6 +794,9 @@ public final class MainActivity extends Activity {
         }
         appSurfaceHost.setAppTitle(destination.getTitleRes());
         appSurfaceHost.setMenuActions(Collections.emptyList());
+        // Only a web app loads from a known entry point, so only a web app
+        // offers the reload action (ADR-0061).
+        appSurfaceHost.setRefreshAction(null);
         if (destination == DesktopDestination.TERMINAL) {
             // Isolation (ADR-0054 amendment): the terminal owns the shell tabs
             // only, and showing it brings one of them back to the front — a
@@ -835,6 +838,10 @@ public final class MainActivity extends Activity {
         }
         appSurfaceHost.setAppTitle(definition.getDisplayName());
         renderWebAppMenu(definition, surface);
+        // The reload action re-probes and reloads this app from its registered
+        // address on a fresh renderer: the recovery for a page that navigated
+        // somewhere with no way back (ADR-0061).
+        appSurfaceHost.setRefreshAction(surface::reload);
     }
 
     /** Renders edit plus the live internal tabs for the active web app. */
@@ -947,6 +954,8 @@ public final class MainActivity extends Activity {
         }
         appSurfaceHost.setAppTitle(app.getDisplayName());
         renderTerminalAppMenu(app.getId().value(), TerminalTabsBus.getInstance().current());
+        // A terminal session is not reloadable content; no refresh action.
+        appSurfaceHost.setRefreshAction(null);
 
         TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
         if (port == null) {

@@ -137,6 +137,8 @@ and persistence.
 | WA-045 | Choose `Camera` again in the same session, and a capture that wrote nothing | The second capture behaves like the first; a capture with no bytes answers `cancel` instead of handing the page an empty file |
 | WA-046 | A video-only input (`accept="video/*"`) | No still-camera row is offered; recording is not offered at all, so only the two file sources appear |
 | WA-042 | Cancel any chooser or picker (the source chooser, the system picker, and the built-in picker's Cancel/Back/outside-tap) | The page's `cancel` event fires for each of them, no answer is duplicated, and the same input opens a chooser again afterwards |
+| WA-047 | A page opens a dead link in a popup (`target="_blank"` / `window.open()` to a loopback address this app does not own) | The popup closes, the surface states in words that the link is outside the app, the page the user was on stays, and the process survives (ADR-0061) |
+| WA-048 | A page navigated somewhere with no way back (no history entry to return from) | The task bar's refresh action reloads the registered app on a fresh renderer, so the user recovers without editing the app definition (ADR-0061) |
 
 **Run 2026-09-27, Samsung S10e (SM-G970F, API 31, arm64).** A throwaway
 Basic-auth fixture was served from inside the live guest on `127.0.0.1:18099`
@@ -224,6 +226,22 @@ Device-only findings:
 4. The QA app registration, the files pushed to `Download`, the `adb reverse`
    mapping, and the device's temporary `svc power stayon` were removed after
    the run.
+
+**Run 2026-10-10, Samsung S10e (SM-G970F, Android 12/API 31, arm64).** QA build
+of 0.13.0 carrying the ADR-0061 changes (`-PqaDebuggable=true`, versionCode 22,
+release signing key, installed in place over the published build so the guest
+data survived). The page under test was a fixture written into the live guest
+(`/root/qa-fixture/index.html`) and served by the guest's own
+`python3 -m http.server` on `10994`, the port the existing `NusaShell` tile uses;
+its whole viewport was one `<a href="http://127.0.0.1" target="_blank">`.
+
+| Case | Result |
+| --- | --- |
+| WA-047, before the fix | **FAIL, reproduced.** With the build that preceded ADR-0061, tapping the link killed the app: `logcat` recorded `Fatal signal 5 (SIGTRAP)` in the app's own tid with the stack `WebViewChromium.loadUrl` ← `android.webkit.WebView.loadUrl` ← `WebAppSurfaceView.destroyTabWebView` ← `LoopbackWebViewClient.shouldOverrideUrlLoading` ← `SurfaceWebViewClient.shouldOverrideUrlLoading`, and `pidof` returned nothing afterwards |
+| WA-047, after the fix | PASS. The same tap left the process alive (same pid) with no `Fatal signal` or `FATAL EXCEPTION` in `logcat`, the popup closed, the toast read `That link is outside this app, so it was not opened.`, and the root page was still rendered |
+| WA-048 | PASS, with the URL as evidence. `location.replace('/index.html?stuck=1')` (history length stayed 1, so there was nothing to go back to) moved the page to `http://127.0.0.1:10994/index.html?stuck=1`; tapping the task bar's `Refresh this app` returned the live page to `http://127.0.0.1:10994/` |
+| refresh affordance | PASS. `uiautomator` reported the button's content description as `Refresh this app` at the bar's trailing edge, next to `Back to all apps`; the action exists only while a web app is the open surface |
+| cleanup | The fixture files, the guest server process, the pushed helper scripts, the `adb forward`, the temporary `svc power stayon` and the screen timeout were removed after the run; the QA build stayed installed |
 
 ### Regression checks tied to shipped defects
 

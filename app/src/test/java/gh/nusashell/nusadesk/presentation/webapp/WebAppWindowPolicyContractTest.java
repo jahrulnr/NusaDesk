@@ -94,4 +94,50 @@ public class WebAppWindowPolicyContractTest {
         assertTrue(source.contains("onPageFinished"));
         assertTrue(source.contains("handlePageLoaded()"));
     }
+
+    /**
+     * Guards the ADR-0061 recovery rules that only a real renderer can execute:
+     * a child tab is never torn down from inside its own WebView callback (that
+     * destroy is what took the process down when a page opened a dead link in a
+     * popup), a blocked popup says why the tap did nothing, and the task bar
+     * offers the web app's reload action, so a page that navigated somewhere
+     * with no way back can be recovered without editing the app definition.
+     */
+    @Test
+    public void childTeardownIsDeferredAndTheReloadActionIsWired() throws Exception {
+        String surface = source(
+                "app/src/main/java/gh/nusashell/nusadesk/presentation/webapp/WebAppSurfaceView.java");
+        String activity = source(
+                "app/src/main/java/gh/nusashell/nusadesk/presentation/MainActivity.java");
+        String host = source(
+                "app/src/main/java/gh/nusashell/nusadesk/presentation/desktop/AppSurfaceHostView.java");
+
+        assertTrue("every child teardown goes through the deferred helper",
+                surface.contains("private void postChildTabClose("));
+        assertTrue("the helper is what keeps the WebView out of its own callback",
+                surface.contains("mainHandler.post(() -> closeTab(tabId))"));
+        assertTrue("the four child failure listeners (load error, HTTP error, "
+                        + "blocked navigation, dead renderer) all defer their close",
+                countOf(surface, "postChildTabClose(tabId);") >= 4);
+        assertTrue("a blocked popup says why the tap did nothing",
+                surface.contains("postBlockedLinkNotice()"));
+        assertTrue("a refused window transport defers its cleanup too",
+                surface.contains("postChildTabClose(tab.getId())"));
+        assertTrue("the task bar owns the reload affordance",
+                host.contains("setRefreshAction("));
+        assertTrue("a web app wires the action to the surface's own reload",
+                activity.contains("setRefreshAction(surface::reload)"));
+        assertTrue("a surface that cannot be reloaded clears the action",
+                activity.contains("setRefreshAction(null)"));
+    }
+
+    private static int countOf(String source, String token) {
+        int count = 0;
+        int index = source.indexOf(token);
+        while (index >= 0) {
+            count++;
+            index = source.indexOf(token, index + token.length());
+        }
+        return count;
+    }
 }

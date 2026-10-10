@@ -46,6 +46,17 @@
                 android:textStyle="bold" />
 
             <ImageButton
+                android:id="@+id/taskbar_refresh"
+                android:layout_width="@dimen/task_bar_button_size"
+                android:layout_height="@dimen/task_bar_button_size"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/taskbar_refresh_desc"
+                android:padding="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_refresh"
+                android:visibility="gone" />
+
+            <ImageButton
                 android:id="@+id/taskbar_more"
                 android:layout_width="@dimen/task_bar_button_size"
                 android:layout_height="@dimen/task_bar_button_size"

@@ -1,6 +1,5 @@
 package gh.nusashell.nusadesk.presentation.webapp;
 
-import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -23,6 +22,7 @@ import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
@@ -397,10 +397,37 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             try {
                 getContext().startActivity(intent);
-            } catch (ActivityNotFoundException noHandler) {
-                // No browser or app can open it; the surface stays where it is.
+            } catch (RuntimeException noHandler) {
+                // No browser or app can open it, or the platform's own resolver
+                // refused: the surface stays where it is. A link must never be
+                // able to take the process down (ADR-0061).
             }
         };
+    }
+
+    /**
+     * Closes a child tab after the current callback returns.
+     *
+     * <p>A WebView must never be destroyed from inside one of its own
+     * callbacks: a failure report such as {@code onBlockedNavigation} arrives
+     * while the renderer is committing a navigation, and tearing the WebView
+     * down there takes the whole process with it instead of closing a tab
+     * (ADR-0061). Every child teardown triggered by a WebView callback goes
+     * through here; a teardown the user asked for (Back, a menu close) stays
+     * synchronous because no renderer callback is on the stack.</p>
+     */
+    private void postChildTabClose(String tabId) {
+        mainHandler.post(() -> closeTab(tabId));
+    }
+
+    /**
+     * States, in words, that a tapped link was refused, so the tap is never
+     * silent. Posted like every other state report; the wording matches the
+     * blocked failure panel.
+     */
+    private void postBlockedLinkNotice() {
+        mainHandler.post(() -> Toast.makeText(getContext(),
+                R.string.webapp_link_blocked_toast, Toast.LENGTH_SHORT).show());
     }
 
     /**
@@ -448,25 +475,32 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
         // so an auth-protected child closes like any other failed page. Its
         // challenge still ran through the surface's responder first, so a
         // submitted pair is already stored before the tab goes away.
+        //
+        // Every close is posted (ADR-0061): these reports arrive from inside
+        // the child's own WebView callbacks, and destroying a WebView there is
+        // what killed the process when a page opened a dead link in a popup.
         return new WebViewFailureListener() {
             @Override
             public void onLoadError(int errorCode, String description, String failingUrl) {
-                closeTab(tabId);
+                postChildTabClose(tabId);
             }
 
             @Override
             public void onHttpError(int statusCode, String failingUrl) {
-                closeTab(tabId);
+                postChildTabClose(tabId);
             }
 
             @Override
             public void onBlockedNavigation(String url) {
-                closeTab(tabId);
+                // The address is outside this app by policy, not broken: say so
+                // before the popup goes away, so the tap is not a silent no-op.
+                postBlockedLinkNotice();
+                postChildTabClose(tabId);
             }
 
             @Override
             public void onRenderProcessGone() {
-                closeTab(tabId);
+                postChildTabClose(tabId);
             }
         };
     }
@@ -548,7 +582,9 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
             try {
                 resultMsg.sendToTarget();
             } catch (RuntimeException deliveryFailed) {
-                closeTab(tab.getId());
+                // The transport refused the delivery; the child that was added
+                // for it is closed after this callback returns (ADR-0061).
+                postChildTabClose(tab.getId());
                 return false;
             }
             notifyTabsChanged();
@@ -559,7 +595,10 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
         public void onCloseWindow(WebView window) {
             String tabId = tabIdFor(window);
             if (tabId != null && !WebAppTabStack.ROOT_TAB_ID.equals(tabId)) {
-                closeTab(tabId);
+                // Posted like every other child teardown: the rule is that no
+                // WebView is destroyed from inside one of its own callbacks
+                // (ADR-0061).
+                postChildTabClose(tabId);
             }
         }
 
