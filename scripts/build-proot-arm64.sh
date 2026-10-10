@@ -72,7 +72,7 @@ THREADS_FLAG="-Wl,--threads=1"
 # regenerated with patches A/B/C/C 2/C 3 applied. A rebuild of the pinned
 # revision with the same patch chain must reproduce it — the script dies
 # otherwise, which is the point of the pin.
-EXPECTED_SHA256="51801225bd6a71e7b97487327ac8766ef4bddd31d3ecc94adeb47813f8f3d132"
+EXPECTED_SHA256="30236acb30550d59a96b038c9f1899b352831e1b495a9da85606c716b3800e6b"
 # Same for the freestanding loader shipped as libproot-loader.so.
 EXPECTED_LOADER_SHA256="12d2b63e897fd91a334fce23edea5d2419cae4d5fd2a369f05d03ab75682add0"
 
@@ -817,263 +817,290 @@ L2S_PATCH_C_2
   log "  Patch C 2: made link2symlink group membership changes transaction-safe"
 fi
 
-# Patch C 3 (NusaDesk issue #1, third part): hide this extension's own
-# entries from guest directory enumeration.  An emulated hard link is
-# stored as extra entries next to the link itself -- an intermediate
-# symlink ".l2s.<name><NNNN>" and the backing file it resolves to,
-# ".l2s.<name><NNNN>.<NNNN>" -- and the backing file is renamed every
-# time the link count encoded in its name changes.  The kernel reports
-# those entries to every reader of the directory, so a consumer that
-# enumerates a tree and then acts on each reported name can be handed a
-# name that no longer exists by the time it uses it: a bulk installer
-# hardlinking a tree into its cache fails the whole operation with
-# ENOENT on ".l2s.<name><NNNN>.<NNNN>".  The patch filters getdents64(2)
-# results in place, dropping every entry whose name starts with the
-# extension's PREFIX and moving the kernel's resume offset onto the last
-# surviving record.  Only enumeration is filtered: the entries still
-# resolve when named directly, which the extension's own bookkeeping --
-# and the Patch C resolution of a source that names an internal entry --
-# relies on, so stat/readlink behaviour is deliberately unchanged.  When
-# filtering drops every record a call returned, another getdents64(2) is
-# chained on the same descriptor so the enumeration continues at the
-# position the kernel already reached instead of reporting a premature
-# end of directory.  A caller whose getdents64 buffer cannot hold one
-# internal record is unaffected either way: the kernel fails that call
-# with EINVAL before the filter runs, which is also the unpatched
-# behaviour on a directory that contains such names.
-if ! grep -q 'filter_l2s_dirents' "${L2S_SOURCE}"; then
-  git -C "${PROOT_SRC}" apply <<'L2S_PATCH_C_3'
-diff --git a/src/extension/link2symlink/link2symlink.c b/src/extension/link2symlink/link2symlink.c
-index 5750280..e23384b 100644
+# Patch C 3 was removed from the set.  It hid the extension's own ".l2s."
+# entries from getdents64(2) results, and its compaction wedged the tracer on
+# the S10e: a build with the same trap but a no-op filter ran five
+# concurrent-clone rounds clean, while any build that compacted the batch
+# wedged (docs/research/proot-fork-hang-vendor-kernels.md records the bisect and
+# every attempt to repair it).  The hiding is now structural instead: the
+# session points PROOT_L2S_DIR at an app-private directory and binds that same
+# path into the guest (ProotPaths.l2sDirPath, ProotLauncher), so the backing
+# files never live inside a guest directory and no filter is needed.  Legacy
+# entries created by earlier sessions stay visible where they are, which
+# docs/limitations.md records.
+
+# Patch D: never let an internal link2symlink failure replace a syscall result
+# the kernel already produced.  handle_sysexit_end() runs at SYSCALL_EXIT_END and
+# its return value is poked as SYSARG_RESULT (src/syscall/exit.c), so returning
+# -ENOENT/-EFAULT from the stat path -- when my_readlink()/lstat() lose a race
+# against a concurrent rename of the ".l2s." entries -- turns a successful
+# fstatat(2) into ENOENT for the guest.  The fstat(2) branch of the same handler
+# already keeps the kernel result on an internal failure; this patch makes the
+# path branch do the same and names the failure at verbose level 3.
+if ! grep -q 'keep_kernel_result' "${L2S_SOURCE}"; then
+  git -C "${PROOT_SRC}" apply <<'L2S_PATCH_D'
+diff --git a/src/extension/link2symlink/link2symlink.c b/b/src/extension/link2symlink/link2symlink.c
+index 25a2636..8b10be1 100644
 --- a/src/extension/link2symlink/link2symlink.c
 +++ b/src/extension/link2symlink/link2symlink.c
-@@ -17,6 +17,7 @@
- #include "tracee/tracee.h"
- #include "tracee/mem.h"
- #include "tracee/statx.h"
-+#include "syscall/chain.h"
- #include "syscall/syscall.h"
- #include "syscall/sysnum.h"
- #include "path/path.h"
-@@ -991,6 +992,174 @@
- }
+@@ -1280,6 +1280,27 @@ out:
+  */
+ #define SIZEOF_RELEVANT_STRUCT_STAT 72
  
++/**
++ * Keep the result the kernel already produced.
++ *
++ * This handler runs at SYSCALL_EXIT_END and its return value is poked as
++ * SYSARG_RESULT (src/syscall/exit.c), so an internal failure here -- an
++ * lstat(2) or readlink(2) that loses a race against a concurrent rename of
++ * the ".l2s." entries -- must not turn a syscall the kernel completed into
++ * ENOENT for the guest: the guest would see a file that exists as missing,
++ * and a caller that rescans on a missing pack directory can then spin
++ * without issuing another syscall.  Report the missed nlink override at
++ * verbose level 3 and leave the kernel's result in place.
++ */
++static int keep_kernel_result(Extension *extension, const char *what, int status)
++{
++	Tracee *tracee = TRACEE(extension);
++
++	VERBOSE(tracee, 3, "link2symlink: keeping the kernel result, %s failed (%d)",
++		what, status);
++	return 0;
++}
++
  /**
-+ * Layout of one record returned by getdents64(2): a fixed-size header
-+ * followed by the entry name, nul terminated, the whole record padded
-+ * so @d_reclen is a multiple of eight bytes.  The records sit in the
-+ * buffer exactly at the offsets this layout describes, so casting a
-+ * record position that was checked against the buffer size is safe.
-+ */
-+struct l2s_dirent64 {
-+	uint64_t	 d_ino;
-+	int64_t		 d_off;
-+	unsigned short	 d_reclen;
-+	unsigned char	 d_type;
-+	char		 d_name[];
-+};
-+
-+/**
-+ * Tell whether @dirent is one of the entries this extension creates
-+ * next to an emulated hard link -- its intermediate symbolic link
-+ * ("<PREFIX><name><NNNN>"), the file that link resolves to
-+ * ("<PREFIX><name><NNNN>.<NNNN>"), or the scratch link
-+ * repoint_intermediate() renames over the intermediate.  Every such
-+ * name starts with PREFIX, so the record must leave room for PREFIX
-+ * itself -- the bound also keeps the comparison inside this record.
-+ */
-+static bool is_l2s_entry(const struct l2s_dirent64 *dirent)
-+{
-+	return dirent->d_reclen
-+		>= offsetof(struct l2s_dirent64, d_name) + strlen(PREFIX)
-+	    && strncmp(dirent->d_name, PREFIX, strlen(PREFIX)) == 0;
-+}
-+
-+/**
-+ * Remove this extension's own entries from the listing a getdents64(2)
-+ * call just returned to @tracee.
-+ *
-+ * The state of an emulated hard link is stored as extra entries next
-+ * to the link itself, and the kernel faithfully reports them to every
-+ * reader of the directory.  Those names are also unstable: each
-+ * membership change renames the backing file to encode the new link
-+ * count, so a consumer that enumerates a directory and then acts on
-+ * every reported name -- a bulk installer hardlinking a tree into its
-+ * cache, for instance -- can be handed a ".l2s.<name><NNNN>.<NNNN>"
-+ * name that no longer exists by the time it uses it, which fails the
-+ * whole operation with ENOENT.  Keeping the internal entries out of
-+ * the listing leaves readers only the names of the emulated links,
-+ * which exist for as long as their group does.
-+ *
-+ * The entries are hidden from enumeration only: they still resolve
-+ * when named directly, which is what this extension's own bookkeeping
-+ * needs.  When filtering drops every record a call returned, another
-+ * getdents64(2) is chained on the same descriptor so the enumeration
-+ * continues at the position the kernel already reached instead of
-+ * reporting a premature end of directory.
-+ *
-+ * This function returns -errno if an error occured, otherwise 0.  A
-+ * failure also stores that error as the result of the syscall: the
-+ * value returned by a chained syscall is not examined, so reporting
-+ * through the registers is the only way to keep unfiltered records
-+ * from being handed out then.
-+ */
-+static int filter_l2s_dirents(Tracee *tracee)
-+{
-+	char fallback_buffer[32768];
-+	char *buffer = fallback_buffer;
-+	struct l2s_dirent64 *dirent;
-+	struct l2s_dirent64 *last_kept;
-+	word_t dirp;
-+	word_t count;
-+	word_t fd;
-+	int64_t resume_offset;
-+	size_t size;
-+	size_t read_pos;
-+	size_t write_pos;
-+	int status;
-+	bool filtered;
-+
-+	/* An error, or a directory at its end, has nothing to hide.  */
-+	size = (size_t) peek_reg(tracee, CURRENT, SYSARG_RESULT);
-+	if ((int) size <= 0)
-+		return 0;
-+
-+	dirp  = peek_reg(tracee, CURRENT, SYSARG_2);
-+	fd    = peek_reg(tracee, CURRENT, SYSARG_1);
-+	count = peek_reg(tracee, CURRENT, SYSARG_3);
-+
-+	if (size > sizeof(fallback_buffer)) {
-+		buffer = malloc(size);
-+		if (buffer == NULL)
-+			return -ENOMEM;
-+	}
-+
-+	status = read_data(tracee, buffer, dirp, size);
-+	if (status < 0)
-+		goto out;
-+
-+	/* Walk the records once: a call that carries none of this
-+	 * extension's entries is left exactly as the kernel wrote it.  */
-+	filtered = false;
-+	read_pos = 0;
-+	while (read_pos + offsetof(struct l2s_dirent64, d_name) <= size) {
-+		dirent = (struct l2s_dirent64 *) (buffer + read_pos);
-+		if (dirent->d_reclen < offsetof(struct l2s_dirent64, d_name)
-+		    || read_pos + dirent->d_reclen > size)
-+			break;
-+		if (is_l2s_entry(dirent)) {
-+			filtered = true;
-+			break;
-+		}
-+		read_pos += dirent->d_reclen;
-+	}
-+	if (!filtered) {
-+		status = 0;
-+		goto out;
-+	}
-+
-+	/* Compact the records that are not ours.  Each dropped record
-+	 * moves the following ones down, and the last surviving record
-+	 * takes over the resume position the kernel stored in the last
-+	 * record it wrote, so a reader that seeks on it still continues
-+	 * the enumeration where this call ended.  */
-+	write_pos = 0;
-+	resume_offset = 0;
-+	last_kept = NULL;
-+	for (read_pos = 0;
-+	     read_pos + offsetof(struct l2s_dirent64, d_name) <= size; ) {
-+		dirent = (struct l2s_dirent64 *) (buffer + read_pos);
-+		if (dirent->d_reclen < offsetof(struct l2s_dirent64, d_name)
-+		    || read_pos + dirent->d_reclen > size)
-+			break;
-+
-+		resume_offset = dirent->d_off;
-+
-+		if (!is_l2s_entry(dirent)) {
-+			if (write_pos != read_pos)
-+				memmove(buffer + write_pos, dirent, dirent->d_reclen);
-+			last_kept = (struct l2s_dirent64 *) (buffer + write_pos);
-+			write_pos += dirent->d_reclen;
-+		}
-+		read_pos += dirent->d_reclen;
-+	}
-+
-+	/* Nothing survived: do not hand the reader an end of directory
-+	 * the kernel did not mean.  Its position already moved past
-+	 * these records, so chain another getdents64(2) on the same
-+	 * descriptor to continue the enumeration from there.  */
-+	if (write_pos == 0) {
-+		status = register_chained_syscall(tracee, PR_getdents64,
-+						  fd, dirp, count, 0, 0, 0);
-+		goto out;
-+	}
-+
-+	last_kept->d_off = resume_offset;
-+
-+	status = write_data(tracee, dirp, buffer, write_pos);
-+	if (status < 0)
-+		goto out;
-+
-+	poke_reg(tracee, SYSARG_RESULT, write_pos);
-+	status = 0;
-+
-+out:
-+	if (buffer != fallback_buffer)
-+		free(buffer);
-+	if (status < 0)
-+		poke_reg(tracee, SYSARG_RESULT, (word_t) status);
-+	return status;
-+}
-+
-+/**
-  * sizeof(struct stat) cut to contain only fields that are at same addresses
-  * regardless of whenever tracee is 32-bit or 64-bit.
-  *
-@@ -1018,6 +1187,14 @@
+  * Make it so fake hard links look like real hard link with respect to number of links and inode
+  * This function returns -errno if an error occured, otherwise 0.
+@@ -1359,7 +1380,7 @@ static int handle_sysexit_end(Extension *extension)
+ 				sysarg_path = SYSARG_1;
+ 			size = read_string(tracee, original, peek_reg(tracee, MODIFIED, sysarg_path), PATH_MAX);
+ 			if (size < 0)
+-				return size;
++				return keep_kernel_result(extension, "read_string of the guest path", (int) size);
+ 			if (size >= PATH_MAX)
+ 				return -ENAMETOOLONG;
+ 		}
+@@ -1388,7 +1409,7 @@ static int handle_sysexit_end(Extension *extension)
  
- 	sysnum = get_sysnum(tracee, ORIGINAL);
+ 		size = my_readlink(original, intermediate);
+ 		if (size < 0)
+-			return size;
++			return keep_kernel_result(extension, "readlink of the link name", (int) size);
  
-+	/* getdents64(2) is checked against the syscall that was really
-+	 * executed, not the one the tracee asked for: a chained syscall
-+	 * is reported at this very stage too, and only a getdents64(2)
-+	 * that actually ran -- the original one, or one chained on it --
-+	 * has records to filter.  */
-+	if (get_sysnum(tracee, CURRENT) == PR_getdents64)
-+		return filter_l2s_dirents(tracee);
-+
- 	#ifdef USERLAND
- 		if ((get_sysnum(tracee, CURRENT) == PR_fstat) || (get_sysnum(tracee, CURRENT) == PR_fstat64))
- 			return 0;
-@@ -1398,6 +1575,7 @@
- 			{ PR_rename,		FILTER_SYSEXIT },
- 			{ PR_renameat,		FILTER_SYSEXIT },
- 			{ PR_renameat2,		FILTER_SYSEXIT },
-+			{ PR_getdents64,	FILTER_SYSEXIT },
- 			FILTERED_SYSNUM_END,
- 		};
- 		extension->filtered_sysnums = filtered_sysnums;
-@@ -1534,6 +1712,18 @@
+ 		name = strrchr(intermediate, '/');
+ 		if (name == NULL)
+@@ -1401,11 +1422,11 @@ static int handle_sysexit_end(Extension *extension)
+ 
+ 		intermediate_proc: size = my_readlink(intermediate, final);
+ 		if (size < 0)
+-			return size;
++			return keep_kernel_result(extension, "readlink of the intermediate name", (int) size);
+ 
+ 		final_proc: status = lstat(final,&finalStat);
+ 		if (status < 0)
+-			return status;
++			return keep_kernel_result(extension, "stat of the backing file", status);
+ 
+ 		finalStat.st_nlink = atoi(final + strlen(final) - 4);
+ 
+@@ -1425,7 +1446,7 @@ static int handle_sysexit_end(Extension *extension)
+ 		status = write_data(tracee, peek_reg(tracee, ORIGINAL,  sysarg_stat), &finalStat,
+ 			is_32on64_mode(tracee) ? SIZEOF_RELEVANT_STRUCT_STAT : sizeof(finalStat));
+ 		if (status < 0)
+-			return status;
++			return keep_kernel_result(extension, "write of the stat buffer", status);
+ 
  		return 0;
  	}
+L2S_PATCH_D
+  log "  Patch D: kept the kernel's syscall result when link2symlink bookkeeping fails"
+fi
+
+# Patch E: keep every name a reader can be traversing valid while a group's link
+# count changes.  The count used to be published by renaming the backing file and
+# repointing the intermediate afterwards, so between the two steps the name the
+# intermediate spelled did not exist.  This patch publishes the new count as a
+# link to a stable backing file first, repoints the intermediate second, and
+# never renames the backing; the stat path follows the extra hop and the deletion
+# of the last link removes the backing the count name pointed at.
+if ! grep -q 'resolve_stable_backing' "${L2S_SOURCE}"; then
+  git -C "${PROOT_SRC}" apply <<'L2S_PATCH_E'
+diff --git a/src/extension/link2symlink/link2symlink.c b/b/src/extension/link2symlink/link2symlink.c
+index 8b10be1..25e0500 100644
+--- a/src/extension/link2symlink/link2symlink.c
++++ b/src/extension/link2symlink/link2symlink.c
+@@ -349,6 +349,32 @@ static int my_readlink(const char symlink[PATH_MAX], char value[PATH_MAX])
+ 	return 0;
+ }
  
-+	case SYSCALL_CHAINED_EXIT: {
-+		/* A getdents64(2) this extension chained is the only
-+		 * chained call whose result it filters here; any other
-+		 * chained syscall belongs to its own extension.  */
-+		Tracee *tracee = TRACEE(extension);
++/**
++ * Resolve the name a group's data actually lives under.
++ *
++ * The name an intermediate link spells is either the backing file itself
++ * (the first link of a group) or one of the count names this extension
++ * publishes next to it.  Both resolve to the same stable backing file,
++ * which is the only name that has to keep existing for every link of the
++ * group to stay usable.
++ */
++static int resolve_stable_backing(const char name[PATH_MAX], char stable[PATH_MAX])
++{
++	struct stat statl;
 +
-+		if (get_sysnum(tracee, CURRENT) == PR_getdents64)
-+			return filter_l2s_dirents(tracee);
++	if (lstat(name, &statl) < 0)
++		return errno > 0 ? -errno : -ENOENT;
 +
-+		return 0;
-+	}
++	if (S_ISLNK(statl.st_mode))
++		return my_readlink(name, stable);
 +
- 	case SYSCALL_EXIT_END: {
- 		return handle_sysexit_end(extension);
++	if (strlen(name) >= PATH_MAX)
++		return -ENAMETOOLONG;
++
++	strcpy(stable, name);
++	return 0;
++}
++
+ /**
+  * Check whether @sysnum is a syscall that returns a descriptor on the
+  * file it is given the path of.
+@@ -703,6 +729,7 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 	char new_intermediate[PATH_MAX];
+ 	char final[PATH_MAX];
+ 	char new_final[PATH_MAX];
++	char stable[PATH_MAX];
+ 	char resolved[PATH_MAX];
+ 	char * name;
+ 	char * source_name;
+@@ -921,14 +948,27 @@ restart:
+ 		strncpy(new_final, final, strlen(final) - 4);
+ 		sprintf(new_final + strlen(final) - 4, "%04d", link_count);
+ 
+-		status = l2s_rename(final, new_final);
++		/* Publish the new count as a link to the group's stable
++		 * backing *before* the intermediate is repointed.
++		 * Renaming the backing itself -- which is what this code
++		 * used to do -- leaves a window in which the name the
++		 * intermediate still spells does not exist: a tracee that
++		 * resolved the intermediate before the rename, or a
++		 * concurrent one resolving it right now, is told ENOENT
++		 * for a file that exists.  A concurrent git clone wedged
++		 * on exactly that on the S10e; see
++		 * docs/research/proot-fork-hang-vendor-kernels.md.  */
++		status = resolve_stable_backing(final, stable);
+ 		if (status < 0)
+ 			return status;
++
++		status = l2s_symlink(stable, new_final);
++		if (status < 0)
++			return status;
++
+ 		status = notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) final, (intptr_t) new_final);
+ 		if (status < 0) {
+-			/* The intermediate still spells the old name:
+-			 * move the file back under it.  */
+-			l2s_rename(new_final, final);
++			l2s_unlink(new_final);
+ 			return status;
+ 		}
+ 
+@@ -942,9 +982,13 @@ restart:
+ 		 * usable.  */
+ 		status = repoint_intermediate(tracee, intermediate, new_final);
+ 		if (status < 0) {
+-			l2s_rename(new_final, final);
++			l2s_unlink(new_final);
+ 			return status;
+ 		}
++		/* The previous count name stays behind on purpose: it is a
++		 * link to the stable backing, so a reader that already
++		 * followed the intermediate keeps resolving.  The
++		 * directory filter hides it from the guest.  */
  	}
-L2S_PATCH_C_3
-  log "  Patch C 3: hid link2symlink internal entries from guest directory enumeration"
+ 
+ 	/* Perform symlink() operation within PRoot.  */
+@@ -988,6 +1032,7 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
+ 	char intermediate[PATH_MAX];
+ 	char final[PATH_MAX];
+ 	char new_final[PATH_MAX];
++	char stable[PATH_MAX];
+ 	char * name;
+ 	struct stat statl;
+ 	ssize_t size;
+@@ -1051,25 +1096,35 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
+ 		strncpy(new_final, final, strlen(final) - 4);
+ 		sprintf(new_final + strlen(final) - 4, "%04d", link_count);
+ 
+-		status = l2s_rename(final, new_final);
++		/* Same order as the count bump: publish the new count as
++		 * a link to the stable backing first, repoint the
++		 * intermediate second, and never rename the backing.  */
++		status = resolve_stable_backing(final, stable);
+ 		if (status < 0) {
+ 			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
+ 			return 0;
+ 		}
++
++		status = l2s_symlink(stable, new_final);
++		if (status < 0) {
++			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
++			return 0;
++		}
++
+ 		status = notify_extensions(tracee, LINK2SYMLINK_RENAME, (intptr_t) final, (intptr_t) new_final);
+ 		if (status < 0) {
+-			l2s_rename(new_final, final);
++			l2s_unlink(new_final);
+ 			return 0;
+ 		}
+ 
+-		/* Repoint the intermediate onto the renamed file.  The
+-		 * intermediate may already be gone, that is exactly what
+-		 * the rename-over restores; on a failure the file is
+-		 * moved back under the name the intermediate still
+-		 * spells, so the rest of the group keeps working.  */
++		/* Repoint the intermediate onto the new count name.  The
++		 * intermediate may already be gone, which is exactly what
++		 * the rename-over restores; on a failure the new name is
++		 * dropped and the group keeps working through the old
++		 * one.  */
+ 		status = repoint_intermediate(tracee, intermediate, new_final);
+ 		if (status < 0) {
+-			l2s_rename(new_final, final);
++			l2s_unlink(new_final);
+ 			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
+ 			return 0;
+ 		}
+@@ -1087,6 +1142,17 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
+ 			VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
+ 			return 0;
+ 		}
++		/* The name just removed may have been one of the count
++		 * links; the backing file it pointed at is the group's
++		 * data and has to go too.  */
++		status = resolve_stable_backing(final, stable);
++		if (status == 0 && strcmp(stable, final) != 0) {
++			status = l2s_unlink(stable);
++			if (status < 0 && status != -ENOENT) {
++				VERBOSE(tracee, 1, "Skiping deref of broken link2symlink \"%s\" -> \"%s\"", original, intermediate);
++				return 0;
++			}
++		}
+ 		status = notify_extensions(tracee, LINK2SYMLINK_UNLINK, (intptr_t) final, 0);
+ 		if (status < 0)
+ 			return 0;
+@@ -1424,7 +1490,10 @@ static int handle_sysexit_end(Extension *extension)
+ 		if (size < 0)
+ 			return keep_kernel_result(extension, "readlink of the intermediate name", (int) size);
+ 
+-		final_proc: status = lstat(final,&finalStat);
++		/* Follow the name: the second hop can be one of the count
++		 * links, and lstat(2) would describe that link instead of
++		 * the file the guest asked about.  */
++		final_proc: status = stat(final,&finalStat);
+ 		if (status < 0)
+ 			return keep_kernel_result(extension, "stat of the backing file", status);
+ 
+L2S_PATCH_E
+  log "  Patch E: made link2symlink count changes window-free for readers"
 fi
 
 # ---------------------------------------------------------------------------

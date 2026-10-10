@@ -45,6 +45,14 @@ This file is the operational truth for what the current base project does **not*
   no infinite-lifetime guarantee and no silent re-attach: a dropped/failed
   shell requires the explicit Reconnect action. Scrollback is not restored
   across surface recreation — the shell continues, the xterm page starts fresh.
+  A guest that stops answering without dying is not a dropped shell: the
+  liveness canary (ADR-0062) probes the guest every 15 s, and three missed
+  probes (about 45 s) flip the session to the explicit **not responding**
+  state, which the launcher, the notification, and the terminal attach panel
+  all name in words. `Restart Linux` on the notification or the terminal
+  stops the session and starts it again; the first successful probe also
+  revives it on its own, and the state reconciles to `FAILED` if the host
+  process dies.
 - No QEMU, PTY layer, or desktop guest server is included; the desktop screen remains honestly unavailable until a real guest-owned server exists.
 - No remote signed catalog service exists; the first catalog entry is compile-time pinned.
 - No LAN exposure is supported.
@@ -91,9 +99,18 @@ Consequences to keep in mind:
   pass: the link-count update renames a backing file while the first pass
   walks the directory, and that first pass then reports `Directory not
   empty`. `rm` no longer answers `EPERM` for such files.
-- The emulation's `.l2s.` entries are visible in directory listings (the
-  extension does not filter them). Tools that enumerate a tree see them as
-  extra entries.
+- The emulation's backing entries (`.l2s.`) do not appear in a guest directory:
+  the session keeps them in an app-private directory
+  (`<filesDir>/linux-wrapper/l2s`, passed as `PROOT_L2S_DIR`) and binds that same
+  path into the guest so the link symlinks resolve. Entries created by sessions
+  from before that change (0.14.1 and earlier) still live next to their links and
+  stay visible until their group is removed; a tree that contains them is still
+  safe to delete, because removing the last link of a group removes the group's
+  backing file with it.
+- That storage directory is not swept automatically: a group whose members are
+  removed while the extension's bookkeeping skips a broken step can leave its
+  backing file behind, out of the guest's sight. Uninstalling the app, or
+  clearing its data, removes them with everything else.
 
 ### A lost ptrace fork event can wedge the whole guest (vendor kernels)
 
@@ -123,10 +140,29 @@ What works today:
   `git -c transfer.unpackLimit=100000 fetch --depth=1 --no-tags origin <branch>`
   + `git checkout -B <branch> FETCH_HEAD`. It uses `unpack-objects` instead of
   `index-pack` and completes where `git clone` wedges.
-- **Recovery once wedged:** stop Linux from the notification (or force-stop the
-  app) and reopen the app; the session restarts. Killing guest processes while
-  the tracer is alive does nothing, because a stopped tracee only dies once its
-  tracer lets it run.
+- **Recovery once wedged:** the liveness canary notices inside roughly a
+  minute and the session shows **not responding** with a `Restart Linux`
+  action on the notification and the terminal surface — one tap stops the
+  session and starts it again. The stop path now thaws the frozen tracer
+  with `SIGCONT` before terminating it (a `SIGSTOP`ped process never sees
+  `SIGTERM`), escalates to a forced kill, and only reports `STOPPED` once
+  the tracer is really gone and the fixed port is quiet — so the new
+  session's `sshd` can bind `127.0.0.1:22022`. A workload that survives
+  anyway, or a port that stays held, escalates on the same tap
+  (ADR-0063): the app arms a scheduled `JobScheduler` revival, thaws and
+  `SIGKILL`s every process its own uid owns — the documented
+  `Process.killProcessGroup` is a hidden API, so the equivalent `/proc`
+  uid sweep is used, which also reaches a tracee that called `setsid` and
+  escaped the process group — then kills itself. The platform delivers
+  the job in a fresh process, which re-enters `ensureRunning`; if the
+  API-31+ background rules refuse that start, the restart notice raised
+  before the kill stays up as a tap-to-open fallback. If no revival could
+  be armed the app stays alive and `FAILED` remains the honest state; its
+  reason names `Restart Linux` as the recovery and mentions a Settings
+  force-stop only as the last resort. Stopping Linux from the notification
+  and reopening the app works too. Killing guest processes while the
+  tracer is alive does nothing, because a stopped tracee only dies once
+  its tracer lets it run.
 
 ### Guest SSH server is not supplied by Ubuntu Base
 

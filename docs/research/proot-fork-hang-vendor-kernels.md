@@ -126,3 +126,124 @@ Next step: reduce it to a minimal guest-side reproducer (create/rename/fstat a f
 concurrency, no git needed), find the l2s code path that mishandles it, patch it in the vendored set,
 rebuild through `scripts/build-proot-arm64.sh`, and verify with the concurrent-clone harness across
 repeated rounds plus the guest smoke tests (dpkg hardlink, session start, service bridge).
+
+## Patch D attempt and the frozen syscall (2026-10-10, later)
+
+A sixth local patch (**Patch D**) now keeps the kernel's syscall result when the l2s
+`stat`/`fstatat` bookkeeping fails: `handle_sysexit_end()` runs at `SYSCALL_EXIT_END` and its return
+value is poked as `SYSARG_RESULT` (`src/syscall/exit.c:805`), so an internal `lstat`/`readlink`
+failure used to turn a successful `fstatat(2)` into ENOENT for the guest. The build script, the
+pinned digest (`9e2bf135…`) and `ProotBridgePinTest` all pass, and the device ran the patched bridge
+(digest verified from the installed APK).
+
+It is **not** the cure: the concurrent-clone harness wedged again on the first round (baseline with
+the unpatched bridge was 3 of 3 rounds; the patched bridge wedged round 1 of 5). Under `-v 6` with
+the patched bridge the same run produced:
+
+- no `keeping the kernel result` line at all (the new path was never taken), and
+- no `getdents64` in the tail (the chained-directory-filter loop is not involved either).
+
+The frozen tracee's last syscall is an `fstatat64` on the **final pack name**
+(`…/objects/pack/ffda95f5ba16b3959bd82.pack`, not an `.l2s.` name) whose result the kernel reported
+as **ENOENT**, while the pack existed moments before and after. Its child is a zombie and the tracee
+then spins in userspace without issuing another syscall. That points at the l2s rename machinery
+(Patch C 2's scratch-symlink rename-over plus rename-back) leaving a window in which the canonical
+name is momentarily absent to a concurrent reader, or at the POKEDATA stub path (the workaround
+exists for exactly this era of arm64 kernels) resuming the tracee into a wild userspace loop.
+
+Next candidates, in order: (1) make the l2s membership rename atomic for readers, e.g. swap the two
+names with a single `renameat2(…, RENAME_EXCHANGE)` (available since Linux 3.15, so on 4.14) instead
+of rename-away plus rename-back; (2) determine whether the POKEDATA stub workaround is active on this
+kernel and whether forcing it off changes the outcome.
+
+## The wedge is ours, not upstream's (diagnostic build, 2026-10-10)
+
+A diagnostic bridge built from the same pinned revision with **only Patches A and B** (the two build
+fixes; no C, C2, C3 or D) ran the same five-round concurrent-clone harness on the S10e and did **not**
+wedge once (round results `0,0` / `0,128` / `0,0` / `0,0` / `0,0`; the single 128 is the plain
+`link(2)`-on-a-symlink-source failure that Patch C exists to fix, a clean error rather than a hang).
+
+So the wedge is introduced by the local l2s patch set, not by upstream termux/proot at this revision.
+Together with the frozen trace (a real ENOENT on the plain pack name, whose resolution walks guest
+name -> intermediate symlink -> count-encoded backing name) the suspect is Patch C 2's count change:
+it renames the backing to a new count-encoded name *before* repointing the intermediate, so a
+concurrent reader that already resolved the intermediate looks up a backing name that no longer
+exists and gets ENOENT.
+
+Plan for the next patch: give the backing file a **stable** name and keep the link count only in the
+intermediate symlink name, which `repoint_intermediate()` already swaps atomically (scratch symlink
+plus rename). A count change then becomes a single atomic repoint, the backing never moves, and the
+`st_nlink` fabrication reads the count from the intermediate instead of the backing name; the
+deletion path must read the same place.
+
+## Bisect results (2026-10-11)
+
+- **Stock (Patches A+B only)**: five of five concurrent-clone rounds clean -> the wedge is not
+  upstream's.
+- **Patch C only** (no C2, C3, D, E): five of five rounds clean -> Patch C is not the cause.
+- **C + C2 + C3 + D**: wedged on round one.
+- **Patch E** (window-free count changes layered on C2: publish the new count as a link to a stable
+  backing, repoint the intermediate second, never rename the backing): still wedged on round one, so
+  the count-rename window was not the trigger either.
+
+The trigger therefore sits in Patch C 2 or Patch C 3. The next bisect step is a build with **C + C2
+only** (no C3, D or E): if it wedges, C2 is the culprit and its hunks can be bisected one by one; if
+it does not, C3's directory filter is.
+
+Device state after the runs: restored to the released 0.14.1 bridge (sha256 `51801225…`) so the phone
+runs the shipped pin; the development patch set (D and E) stays in the working tree, uncommitted.
+
+## The compaction is the culprit, and what was tried on it (2026-10-11)
+
+The trap is not the problem: a build that keeps the `getdents64(2)` trap but makes the filter a no-op
+ran five concurrent-clone rounds clean on the S10e.  The compaction in `filter_l2s_dirents()` is.
+
+Attempts so far, each built and run on the device:
+
+- **Patch F** (fail open on any unreadable or unwalkable batch, bound the chained re-arms): still wedged.
+- **Patch G** (never chain an all-internal batch, hand it out unfiltered): still wedged.
+- **Patch I** (refuse guest mutations of internal names, so that removing Patch C 3 would not let
+  `rm -rf` take a group's storage with it): the clones then failed with `rc=128` -- git's own
+  directory cleanup removes the internal names it enumerates, so refusing that removal breaks it.
+  Removing C 3 without such a guard is worse: the cleanup succeeds and deletes the group's storage.
+  **The entries have to stay hidden**, which puts the fix back on the compaction.
+- **Patch J** (stop copying the last examined record's `d_off`, a position from the unfiltered stream,
+  into the last surviving record): one round gave `rc=128,128` (both clones failed with a git error),
+  the next `rc=124,0` (a wedge), so it changes the failure modes without fixing either.
+
+Next candidates, in order: (1) give every surviving record the `d_off` of the *next surviving* record
+and the batch end to the last one, so the offsets form a consistent chain inside the batch the guest
+actually receives; (2) rebuild the compacted batch in a second buffer, so in-place aliasing cannot be
+involved; (3) only if neither works, look for a different way to hide the entries.
+
+State after this round: the working tree and the device are back on the released 0.14.1 bridge
+(sha256 `51801225…`) and the shipped patch set; only this note carries the new work.
+
+## Resolution: hide the entries structurally, not in the extension (2026-10-11)
+
+The wedge came from the filter, so the filter went away.  The extension already
+supports keeping its storage elsewhere (`PROOT_L2S_DIR`), so the session now:
+
+- points `PROOT_L2S_DIR` at an app-private directory
+  (`<filesDir>/linux-wrapper/l2s`, `ProotPaths.l2sDirPath`), and
+- binds that same path into the guest under the same name
+  (`ProotLauncher`), so the link symlinks resolve.
+
+The backing files then never live inside a guest directory and no listing can
+show them: Patch C 3 was removed from the build set, and with it the only
+patch that ever wedged.  The shipped set is A, B, C, C 2, D and E.
+
+Device verification on the S10e (QA build, bridge sha256
+`30236acb30550d59a96b038c9f1899b352831e1b495a9da85606c716b3800e6b`, session env
+and argv inspected from `/proc`):
+
+- five concurrent-clone rounds: `rc=0,0` each, no wedge;
+- the guest's own listing of a directory with emulated links shows the links and
+  **zero** `.l2s.` entries, while the app-private storage directory holds them;
+- `rm -rf` over a tree that contains emulated links keeps a link outside the tree
+  readable (`keeper reads: payload`), and git's own directory cleanup still works;
+- the dpkg hardlink path, the SSH add-on and the bridge python are unaffected.
+
+Legacy entries created before this change stay where they are and remain visible
+until their group is removed; `docs/limitations.md` records that, along with the
+storage directory never being swept automatically.

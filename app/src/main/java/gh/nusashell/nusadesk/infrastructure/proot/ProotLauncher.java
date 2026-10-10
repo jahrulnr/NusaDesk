@@ -101,6 +101,18 @@ public final class ProotLauncher {
     public static final String ENV_TERM = "linux";
     public static final String ENV_LANG = "C.UTF-8";
     public static final String ENV_PROOT_TMP_DIR = "PROOT_TMP_DIR";
+
+    /**
+     * Directory the link2symlink extension keeps emulated hard-link storage in.
+     *
+     * <p>Set to an app-private path that the session also binds into the guest
+     * under the same name, so the backing files of an emulated hard link never
+     * live inside the guest's own directories and the guest never sees the
+     * extension's internal {@code .l2s.} names in a listing. See
+     * {@link ProotPaths#l2sDirPath}.</p>
+     */
+    public static final String ENV_PROOT_L2S_DIR = "PROOT_L2S_DIR";
+
     /**
      * Path to the packaged PRoot ELF loader in {@code nativeLibraryDir}
      * ({@code apk_data_file}, exec-allowed under {@code untrusted_app}).
@@ -324,6 +336,19 @@ public final class ProotLauncher {
         for (ProotBindMount addonBind : activatedAddonBinds(filesDir)) {
             binds.add(addonBind);
         }
+        // Emulated hard-link storage (link2symlink) lives outside the guest's own
+        // directories: the extension keeps its ".l2s." backing files under this
+        // app-private path, and the session binds that same path into the guest so
+        // the link symlinks resolve. A guest directory listing therefore never
+        // carries the extension's internal entries, which is what used to require a
+        // directory filter inside the extension (and wedged the tracer).
+        Path l2sDir = ProotPaths.l2sDirPath(filesDir);
+        try {
+            Files.createDirectories(l2sDir);
+        } catch (IOException e) {
+            throw new ProotLaunchException("could not create the emulated hard-link directory", e);
+        }
+        binds.add(ProotBindMount.of(l2sDir.toString(), l2sDir.toString()));
         // User-chosen workspace folder. This is the single deliberate exception
         // to the app-private rule enforced for caller-supplied binds below; see
         // workspaceBind() for what it validates and why.
@@ -427,6 +452,7 @@ public final class ProotLauncher {
         env.put("TERM", ENV_TERM);
         env.put("LANG", ENV_LANG);
         env.put(ENV_PROOT_TMP_DIR, context.getCacheDir().getAbsolutePath());
+        env.put(ENV_PROOT_L2S_DIR, ProotPaths.l2sDirPath(context.getFilesDir().toPath()).toString());
         return env;
     }
 

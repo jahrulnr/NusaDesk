@@ -39,6 +39,27 @@ public final class ProotPaths {
     private ProotPaths() {
     }
 
+    /** Root-relative directory the PRoot bridge keeps emulated hard-link storage in. */
+    public static final String L2S_DIR = "l2s";
+
+    /**
+     * Resolve the emulated hard-link storage directory for a files dir.
+     *
+     * <p>Layout: {@code <filesDir>/linux-wrapper/l2s}. PRoot's link2symlink
+     * extension keeps the backing files of every emulated hard link here instead
+     * of next to the link itself, and the session binds this very path into the
+     * guest under the same name so the link symlinks resolve. Keeping the entries
+     * out of the guest's own directories is what keeps directory listings in the
+     * guest free of the extension's internal {@code .l2s.} names.</p>
+     */
+    public static Path l2sDirPath(Path filesDir) {
+        if (filesDir == null) {
+            throw new IllegalArgumentException("filesDir must not be null");
+        }
+        requireAbsolutePath(filesDir.toString(), "filesDir");
+        return filesDir.resolve(RUNTIME_ROOT).resolve(L2S_DIR);
+    }
+
     /**
      * Resolve the curated active rootfs directory for an app id.
      *

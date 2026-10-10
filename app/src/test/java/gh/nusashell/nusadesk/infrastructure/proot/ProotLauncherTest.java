@@ -372,6 +372,23 @@ public class ProotLauncherTest {
         return active;
     }
 
+    @Test
+    public void buildSpecKeepsEmulatedHardLinkStorageOutsideTheGuest() throws Exception {
+        ProotLaunchSpec spec = new ProotLauncher(context).buildSpec(
+                ProotLauncher.SUPPORTED_APP_ID,
+                ProotLauncher.GUEST_PROBE_ARGV,
+                Collections.<ProotBindMount>emptyList(),
+                Collections.<String, String>emptyMap());
+
+        Path l2sDir = ProotPaths.l2sDirPath(filesDir);
+        assertTrue("the emulated hard-link directory must exist",
+                Files.isDirectory(l2sDir));
+        assertTrue("the storage directory must be bound at its own path",
+                containsBind(spec.getBindMounts(), l2sDir, l2sDir.toString()));
+        assertTrue("the extension must be pointed at that directory",
+                l2sDir.toString().equals(spec.getEnv().get(ProotLauncher.ENV_PROOT_L2S_DIR)));
+    }
+
     private static boolean containsBind(List<ProotBindMount> binds, Path hostPath,
                                         String guestPath) {
         for (ProotBindMount bind : binds) {
