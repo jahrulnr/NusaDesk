@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-21
+
+### Fixed
+
+- **The soft keyboard no longer rides across surface switches.** Every
+  transition -- to the launcher, a fixed surface, a web app, or a
+  terminal-command app -- settles the IME before the surface changes, with a
+  decor-view token fallback for keyboards raised by a WebView field that
+  already lost view focus. Each surface now declares whether it owns text
+  input (`SoftKeyboardAware`), so surfaces without it have stray focus swept
+  while forms and web pages keep theirs (ADR-0065). Returning to the launcher
+  with Back or the Home action no longer leaves the keyboard covering it, and
+  a hidden web-app tab can no longer hold the keyboard open.
+
+### Added
+
+- **Web-app surfaces now carry two cache actions.** The options menu gains
+  `Reload without cache` -- the app's WebView cache is dropped and the page
+  the user is on reloads in place, keeping its URL and history -- and `Clear
+  cache`, which drops the same HTTP cache and reports the outcome in a toast
+  (ADR-0064). Cookies, DOM storage, and stored sign-ins are untouched.
+- **`.ico` icons decode deterministically.** Tile icons no longer depend on
+  whether the device's platform decoder ships an ICO codec: the container is
+  unwrapped in-app (`IcoImage`), with PNG frames decoded directly, DIB frames
+  rewritten as BMP, and the AND transparency mask reapplied. The same decode
+  backs a user-picked image, so choosing an `.ico` file works too (ADR-0015
+  amendment).
+- **A runnable favicon/cache test lab.** `scripts/webapp-lab/serve.py` serves
+  sixteen single-purpose edge-case web apps on consecutive loopback ports --
+  declared links of every format, the `/favicon.ico` fallback, ICO containers
+  (PNG and masked DIB frames), cross-port and mislabeled rejections, and a
+  self-evidencing cache-staleness page -- each printable next to its tile for
+  device verification.
+
 ## [0.14.2] - 2026-10-11
 
 ### Added

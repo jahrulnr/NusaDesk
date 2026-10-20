@@ -18,6 +18,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
@@ -766,6 +767,7 @@ public final class MainActivity extends Activity {
 
     /** Shows the launcher. */
     private void showShell() {
+        settleKeyboardFor(desktopHome);
         activeDestination = DesktopDestination.HOME;
         activeWebAppId = null;
         activeTerminalAppId = null;
@@ -776,13 +778,13 @@ public final class MainActivity extends Activity {
 
     /** Shows one fixed surface (terminal, system, add/edit form). */
     private void showSurface(DesktopDestination destination) {
-        dismissLauncherInput();
         activeDestination = destination;
         activeWebAppId = null;
         activeTerminalAppId = null;
+        View surface = fixedSurfaceFor(destination);
+        settleKeyboardFor(surface);
         desktopHome.setVisibility(View.GONE);
         appSurfaceHost.setVisibility(View.VISIBLE);
-        View surface = fixedSurfaceFor(destination);
         for (View other : fixedSurfaces.values()) {
             other.setVisibility(other == surface ? View.VISIBLE : View.GONE);
         }
@@ -820,13 +822,13 @@ public final class MainActivity extends Activity {
 
     /** Shows one user web app surface, probing its endpoint before it loads. */
     private void showWebApp(WebAppDefinition definition) {
-        dismissLauncherInput();
         activeDestination = DesktopDestination.HOME;
         activeWebAppId = definition.getId().value();
         activeTerminalAppId = null;
+        WebAppSurfaceView surface = webAppSurfaceFor(definition);
+        settleKeyboardFor(surface);
         desktopHome.setVisibility(View.GONE);
         appSurfaceHost.setVisibility(View.VISIBLE);
-        WebAppSurfaceView surface = webAppSurfaceFor(definition);
         for (View other : fixedSurfaces.values()) {
             other.setVisibility(View.GONE);
         }
@@ -844,11 +846,21 @@ public final class MainActivity extends Activity {
         appSurfaceHost.setRefreshAction(surface::reload);
     }
 
-    /** Renders edit plus the live internal tabs for the active web app. */
+    /**
+     * Renders edit, the cache actions, and the live internal tabs for the
+     * active web app.
+     */
     private void renderWebAppMenu(WebAppDefinition definition, WebAppSurfaceView surface) {
         List<AppSurfaceHostView.MenuAction> actions = new ArrayList<>();
         actions.add(new AppSurfaceHostView.MenuAction(
                 R.string.webapp_menu_edit, () -> openAppForm(definition, null)));
+        // Cache actions answer "is the app stale or is the cache stale": the
+        // reload drops the WebView cache and reloads the page in place, while
+        // the clear leaves the open page untouched (ADR-0064).
+        actions.add(new AppSurfaceHostView.MenuAction(
+                R.string.webapp_menu_reload_no_cache, surface::reloadWithoutCache));
+        actions.add(new AppSurfaceHostView.MenuAction(
+                R.string.webapp_menu_clear_cache, surface::clearWebCache));
         for (WebAppTabStack.Tab tab : surface.getTabs()) {
             String tabId = tab.getId();
             String tabTitle = tab.isRoot()
@@ -871,20 +883,43 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Puts the launcher's search field away before another surface takes over.
-     * Tapping a tile while the soft keyboard is open would otherwise leave the
-     * keyboard covering the surface the user just opened.
+     * Settles the soft keyboard for the surface a transition is about to show
+     * (ADR-0065). Called before the visibility switch on every surface change:
+     * no screen opens mid-typing, and surfaces that own text input
+     * re-establish their own focus once shown — {@code AppFormView} focuses
+     * its first field, a shown terminal re-focuses its bridge.
+     *
+     * <p>The window token comes from the focused view when one exists and is
+     * still attached, else from the decor view: an IME raised for a WebView
+     * field can survive that field losing view focus, and a view whose token
+     * is already null would make the hide a silent no-op. A surface that
+     * declares {@link SoftKeyboardAware#ownsTextInput()} false additionally
+     * has its focus swept, since a field in it can never legitimately hold
+     * focus; input-owning surfaces are not swept, so whatever focus they keep
+     * internally is their own to manage.</p>
      */
-    private void dismissLauncherInput() {
-        View focused = getCurrentFocus();
-        if (focused == null) {
+    private void settleKeyboardFor(View surface) {
+        if (surface == null) {
             return;
         }
+        View focused = getCurrentFocus();
+        IBinder token = focused != null ? focused.getWindowToken() : null;
         InputMethodManager inputMethodManager = getSystemService(InputMethodManager.class);
         if (inputMethodManager != null) {
-            inputMethodManager.hideSoftInputFromWindow(focused.getWindowToken(), 0);
+            inputMethodManager.hideSoftInputFromWindow(
+                    token != null ? token : getWindow().getDecorView().getWindowToken(), 0);
         }
-        focused.clearFocus();
+        if (focused != null) {
+            focused.clearFocus();
+        }
+        if (!ownsTextInput(surface)) {
+            surface.clearFocus();
+        }
+    }
+
+    private static boolean ownsTextInput(View surface) {
+        return surface instanceof SoftKeyboardAware
+                && ((SoftKeyboardAware) surface).ownsTextInput();
     }
 
     private void openEntry(LauncherEntry entry) {
@@ -936,13 +971,13 @@ public final class MainActivity extends Activity {
             refreshUserApps();
             return;
         }
-        dismissLauncherInput();
+        TerminalAppView surface = terminalAppSurfaceFor(app);
+        settleKeyboardFor(surface);
         activeDestination = DesktopDestination.HOME;
         activeWebAppId = null;
         activeTerminalAppId = app.getId().value();
         desktopHome.setVisibility(View.GONE);
         appSurfaceHost.setVisibility(View.VISIBLE);
-        TerminalAppView surface = terminalAppSurfaceFor(app);
         for (View other : fixedSurfaces.values()) {
             other.setVisibility(View.GONE);
         }

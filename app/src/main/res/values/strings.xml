@@ -200,6 +200,8 @@
     <string name="webapp_delete_confirm_action">Remove</string>
     <string name="webapp_cancel">Cancel</string>
     <string name="webapp_menu_edit">Edit app…</string>
+    <string name="webapp_menu_reload_no_cache">Reload without cache</string>
+    <string name="webapp_menu_clear_cache">Clear cache</string>
     <string name="webapp_tab_main">Main page</string>
     <string name="webapp_tab_current">Current: %1$s</string>
     <string name="webapp_tab_open">Open %1$s</string>
@@ -261,6 +263,8 @@
     <string name="webapp_state_retry">Try again</string>
     <string name="webapp_state_blocked">The page tried to open an address that is not this app.</string>
     <string name="webapp_link_blocked_toast">That link is outside this app, so it was not opened.</string>
+    <string name="webapp_cache_cleared_toast">Cache cleared.</string>
+    <string name="webapp_cache_clear_failed_toast">The cache could not be cleared.</string>
     <string name="webapp_state_crashed">The page stopped responding.</string>
     <string name="webapp_state_signin_title">%1$s needs a sign-in</string>
     <string name="webapp_state_signin_body">The app is running, but it asks for a username and password before it opens.</string>

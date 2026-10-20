@@ -1,7 +1,6 @@
 package gh.nusashell.nusadesk.infrastructure.webapp;
 
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.webapp.WebAppSignInCredential;
@@ -29,7 +28,8 @@ import java.util.List;
  * request uses explicit connect and read timeouts, no redirect following, no
  * cache, and {@code Connection: close}. Every body is read through a hard byte
  * cap, and the bytes only become a tile image if {@link FaviconResponsePolicy}
- * accepts the response and {@link BitmapFactory} actually decodes it,
+ * accepts the response and {@link IconBitmapDecoder} actually decodes them —
+ * the platform formats plus an {@code .ico} container ({@link IcoImage}),
  * downsampled so the bitmap's memory is bounded by the tile rather than by
  * whatever the server sent.</p>
  *
@@ -108,9 +108,9 @@ public final class WebAppFaviconFetcher {
     private final int connectTimeoutMillis;
     private final int readTimeoutMillis;
 
-    /** Fetches through {@link BitmapFactory} with the default timeouts. */
+    /** Fetches through the platform decoder with the default timeouts. */
     public WebAppFaviconFetcher() {
-        this(new BitmapFactoryDecoder(),
+        this(new IconBitmapDecoder(),
                 DEFAULT_CONNECT_TIMEOUT_MILLIS, DEFAULT_READ_TIMEOUT_MILLIS);
     }
 
@@ -346,27 +346,5 @@ public final class WebAppFaviconFetcher {
             return null;
         }
         return bitmap;
-    }
-
-    /** Decodes through the platform image decoder, downsampled to the tile. */
-    private static final class BitmapFactoryDecoder implements Decoder {
-
-        @Override
-        public Size boundsOf(byte[] bytes, int length) {
-            BitmapFactory.Options bounds = new BitmapFactory.Options();
-            bounds.inJustDecodeBounds = true;
-            BitmapFactory.decodeByteArray(bytes, 0, length, bounds);
-            return new Size(bounds.outWidth, bounds.outHeight);
-        }
-
-        @Override
-        public Bitmap decode(byte[] bytes, int length, int sampleSize) {
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inSampleSize = sampleSize;
-            // Transparency is preserved: favicons are usually PNG or ICO with an
-            // alpha channel, and the tile plate shows through it.
-            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-            return BitmapFactory.decodeByteArray(bytes, 0, length, options);
-        }
     }
 }

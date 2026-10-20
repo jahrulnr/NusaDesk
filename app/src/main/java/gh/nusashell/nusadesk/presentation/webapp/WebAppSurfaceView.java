@@ -32,6 +32,7 @@ import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackWebViewClient;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.WebViewFailureListener;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppReadinessObserver;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppWebViewBoundary;
+import gh.nusashell.nusadesk.presentation.SoftKeyboardAware;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -71,7 +72,8 @@ import java.util.concurrent.ExecutorService;
  * callback must receive (ADR-0059). The host routes the system picker's
  * activity result back in through {@link #deliverUploadResult(int, Intent)}.</p>
  */
-public final class WebAppSurfaceView extends FrameLayout implements WebAppSignInState {
+public final class WebAppSurfaceView extends FrameLayout
+        implements WebAppSignInState, SoftKeyboardAware {
 
     /** What the surface currently shows. */
     public enum State { PROBING, UNREACHABLE, FAILED, LOADED, AUTH_REQUIRED }
@@ -287,6 +289,64 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
         closeAllChildTabs();
         destroyWebView();
         startProbe();
+    }
+
+    /**
+     * Reloads the page the user is on without its cached resources: the app's
+     * WebView cache is dropped first, so every request misses and is fetched
+     * fresh, then the selected tab reloads its current URL. Unlike
+     * {@link #reload()}, the page the user navigated to is kept rather than
+     * returning to the registered entry point — this is the answer to "the app
+     * may be serving stale bytes", not the recovery for a page with no way
+     * back (ADR-0061, ADR-0064). With nothing loaded it degrades to
+     * {@link #reload()}; a FAILED surface that still holds a WebView reloads
+     * that page in place instead of re-probing. Cookies and DOM storage are
+     * not touched, so a signed-in app stays signed in.
+     */
+    public void reloadWithoutCache() {
+        WebView selected = tabWebViews.get(tabStack.selectedTabId());
+        if (selected == null) {
+            reload();
+            return;
+        }
+        selected.clearCache(true);
+        selected.reload();
+    }
+
+    /**
+     * Drops the app's WebView cache without touching the open page. The cache
+     * is shared by every WebView in the process, so a live tab's instance
+     * clears it when there is one and a throwaway WebView clears it otherwise —
+     * entries left by a previous process run exist either way. Only the HTTP
+     * resource cache is dropped: DOM storage and cookies keep the app's
+     * sign-in and state. The outcome is stated in a toast, because the action
+     * changes nothing the user can see (ADR-0064).
+     */
+    public void clearWebCache() {
+        WebView existing = tabWebViews.get(tabStack.selectedTabId());
+        boolean cleared;
+        WebView throwaway = null;
+        try {
+            WebView instance = existing != null ? existing : (throwaway = new WebView(getContext()));
+            instance.clearCache(true);
+            cleared = true;
+        } catch (RuntimeException failed) {
+            // No WebView provider is answerable for the clear: say so instead
+            // of claiming a cache that was never touched.
+            cleared = false;
+        }
+        if (throwaway != null) {
+            try {
+                throwaway.destroy();
+            } catch (RuntimeException destroyFailed) {
+                // The clear already reported its own outcome; a failed
+                // teardown of a never-shown WebView must not take the menu
+                // down with it.
+            }
+        }
+        Toast.makeText(getContext(), cleared
+                ? R.string.webapp_cache_cleared_toast
+                : R.string.webapp_cache_clear_failed_toast, Toast.LENGTH_SHORT).show();
     }
 
     /**
@@ -640,8 +700,15 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
     private void showSelectedTab() {
         String selectedId = tabStack.selectedTabId();
         for (Map.Entry<String, WebView> entry : tabWebViews.entrySet()) {
-            entry.getValue().setVisibility(
-                    selectedId.equals(entry.getKey()) ? VISIBLE : GONE);
+            WebView webView = entry.getValue();
+            if (selectedId.equals(entry.getKey())) {
+                webView.setVisibility(VISIBLE);
+            } else {
+                // A hidden tab's DOM-focused field would otherwise keep the
+                // IME open while another tab renders (ADR-0065).
+                webView.clearFocus();
+                webView.setVisibility(GONE);
+            }
         }
     }
 
@@ -828,5 +895,11 @@ public final class WebAppSurfaceView extends FrameLayout implements WebAppSignIn
     protected void onDetachedFromWindow() {
         release();
         super.onDetachedFromWindow();
+    }
+
+    /** Web pages and the sign-in card carry fields the IME legitimately serves. */
+    @Override
+    public boolean ownsTextInput() {
+        return true;
     }
 }

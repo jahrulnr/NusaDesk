@@ -6,6 +6,18 @@ Accepted and implemented in `infrastructure/webapp/`, `presentation/`, and their
 tests. UX-verified on the x86_64 UI emulator (API 35) against a
 loopback fixture server; see `docs/test-plan.md`.
 
+**Amended 2026-10-20: the ICO container is unwrapped explicitly.** A real
+`.ico` used to depend on whether the device's `BitmapFactory` carried Skia's
+ICO codec — verified on the API 35 emulator but unverified on every other
+device, where the same bytes report "not an image" and the tile keeps its
+monogram. The decoder (`IconBitmapDecoder`) now parses the container itself
+(`IcoImage`): a PNG frame is decoded from its byte range, a DIB frame is
+rewritten as a `.bmp` file with the AND mask applied to the decoded pixels, and
+non-ICO bytes reach the platform decoder untouched. The same decoder is the
+fallback for a user-picked image the platform cannot render, so a picked
+`.ico` shows on the tile and in the form preview instead of reading as a
+monogram.
+
 **Amended 2026-09-21: the document is read, and the declared icon is the first
 source.** The original decision fetched exactly `/favicon.ico` and refused HTML
 parsing (see the rejected alternative below). A real app proved the convention is
@@ -81,9 +93,11 @@ request per app, never per render — while allowing the request itself.
 3. **The decode is the format check.**
    There is no `Content-Type` allowlist: a server that serves its favicon as
    `application/octet-stream` is common, and the only check that actually proves
-   "this is an image" is `BitmapFactory` decoding it. `BitmapFactory` first reads
-   the header with `inJustDecodeBounds` (cheap, no pixels), the policy judges the
-   dimensions, and only then are pixels decoded.
+   "this is an image" is decoding it. `IconBitmapDecoder` reads the header with
+   `inJustDecodeBounds` (cheap, no pixels), the policy judges the dimensions,
+   and only then are pixels decoded. Since the 2026-10-20 amendment the decoder
+   unwraps an ICO container itself before calling `BitmapFactory`, so a real
+   `favicon.ico` no longer depends on which Skia codecs the device's OEM built.
 
 4. **Bounded in every dimension, and blocking by contract.**
    `WebAppFaviconFetcher` uses explicit connect and read timeouts, no redirects,

@@ -822,7 +822,7 @@ Uninstalling the Android app removes app-specific runtime and state. A future ba
 
 Loopback limits reachability but does not provide authentication. Target apps with sensitive APIs must use an application token or a host proxy. WebView must be restricted to the owned origin and must not expose a general-purpose Android bridge to downloaded web content.
 
-### Web-app favicon fallback (ADR-0015, amended 2026-09-21)
+### Web-app favicon fallback (ADR-0015, amended 2026-10-20)
 
 A launcher tile without a user-picked image reads the app's own document once for
 its icon declarations (`<link rel="icon">` and friends) and asks only for the URLs
@@ -833,12 +833,25 @@ remains the fallback. The limitations are deliberate:
   that names another scheme, host, or port is refused, not followed, and at most
   three declared candidates are tried. There is no `<base>` handling, no CSS or
   script parsing, and no URL from any other source.
-- **Whatever the platform decoder accepts.** The payload is decoded with `BitmapFactory`, so a vector or otherwise undecodable "favicon" (for example an SVG, including a declared one) falls back to the monogram.
+- **Whatever the decoder accepts.** PNG, JPEG, WebP, and BMP go through the platform decoder; an ICO container is unwrapped first (`IcoImage`: a PNG frame decodes from its byte range, a DIB frame is rewritten as `.bmp` with the AND mask reapplied), so a real `favicon.ico` no longer depends on the device's Skia build. An undecodable "favicon" (for example an SVG, including a declared one) still falls back to the monogram — GIF included: the platform decoder returns null for it on at least API 31, where the fetch succeeded and the tile kept its monogram. The same decode backs a user-picked image the platform cannot render, so a picked `.ico` shows too.
 - **Bounded reads, not a browser.** The document read stops at 256 KiB and an image at 2 MiB; the image must fit a 1024 px source cap and decodes downsampled to 256 px.
 - **Not persisted.** The decoded image lives in memory for the life of the app process; there is no disk cache, so it is fetched once per app per process.
 - **One retry, on a real event.** The launcher's first attempt usually happens before the app's server is running. A missing favicon is retried only when the app's own surface proves the endpoint answers, so an app that is never opened keeps its monogram.
 - **Never fetched for an app with a user image.** The user's own pick is primary and is not replaced, and no request is made in that case.
 - **Silent by design.** Unreachable, timed out, redirected, too large, or not an image are all the same outcome: the tile keeps its monogram, with no error, toast, or state change.
+
+### Web-app cache actions (ADR-0064)
+
+An open web app's options menu carries `Reload without cache` and `Clear
+cache`. The limits are deliberate:
+
+- **HTTP cache only.** Cookies, DOM storage, and the stored sign-in pair are
+  untouched; the actions never sign the user out or drop in-page state.
+- **Process-wide.** `WebView.clearCache` drops the app's shared WebView cache,
+  so every surface re-fetches afterwards — not just the app in view.
+- **In place, not a reset.** `Reload without cache` reloads the page the user
+  is on; the task-bar refresh stays the recovery that reloads the registered
+  entry point on a fresh renderer (ADR-0061).
 
 ### Web-app file upload (ADR-0059)
 

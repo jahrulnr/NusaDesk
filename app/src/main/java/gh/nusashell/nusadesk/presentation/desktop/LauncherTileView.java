@@ -13,6 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import gh.nusashell.nusadesk.R;
+import gh.nusashell.nusadesk.infrastructure.webapp.IconBitmapDecoder;
 
 /**
  * One launcher tile: a single focusable accessibility node with an icon plate, a
@@ -226,6 +227,14 @@ public final class LauncherTileView extends LinearLayout {
             imageView.setImageDrawable(null);
             return false;
         }
+        if (imageView.getDrawable() != null) {
+            return true;
+        }
+        // The platform's image decoder lacks an ICO codec on some API levels:
+        // a picked .ico resolves but draws nothing, so the tile's own decoder
+        // gets a turn before the pick is declared unusable.
+        imageView.setImageBitmap(IconBitmapDecoder.decodePicked(
+                getContext().getContentResolver(), uri));
         return imageView.getDrawable() != null;
     }
 

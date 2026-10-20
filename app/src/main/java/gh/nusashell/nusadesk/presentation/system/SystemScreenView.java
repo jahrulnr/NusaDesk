@@ -20,6 +20,7 @@ import gh.nusashell.nusadesk.presentation.GuestSshStatusAware;
 import gh.nusashell.nusadesk.presentation.GuestSshUiState;
 import gh.nusashell.nusadesk.presentation.ScreenView;
 import gh.nusashell.nusadesk.presentation.SessionStatusAware;
+import gh.nusashell.nusadesk.presentation.SoftKeyboardAware;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
 /**
@@ -35,7 +36,8 @@ import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
  * foreground-service notification (ADR-0013).</p>
  */
 public final class SystemScreenView extends FrameLayout
-        implements ScreenView, SessionStatusAware, GuestSshStatusAware {
+        implements ScreenView, SessionStatusAware, GuestSshStatusAware,
+        SoftKeyboardAware {
 
     private ScrollView hubPane;
     private SystemSettingsPageView settingsPage;
@@ -335,5 +337,11 @@ public final class SystemScreenView extends FrameLayout
     @Override
     public void renderGuestSsh(GuestSshUiState state) {
         aboutPage.renderGuestSsh(state);
+    }
+
+    /** Settings, status, and backup pages are actions and read-outs, no typing. */
+    @Override
+    public boolean ownsTextInput() {
+        return false;
     }
 }

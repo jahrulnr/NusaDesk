@@ -11,7 +11,7 @@ android {
         minSdk 29
         targetSdk 37
         versionCode 25
-        versionName '0.14.2'
+        versionName '0.14.3'
     }
 
     // Release signing (ADR-0040). The published GitHub/F-Droid APK must be

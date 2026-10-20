@@ -131,6 +131,34 @@ public class WebAppWindowPolicyContractTest {
                 activity.contains("setRefreshAction(null)"));
     }
 
+    /**
+     * Guards the ADR-0064 cache actions: the web-app menu offers the no-cache
+     * reload and the cache clear, and the surface implements them against the
+     * WebView cache — the reload drops it and reloads in place, the clear
+     * leaves the page alone and reports its outcome.
+     */
+    @Test
+    public void cacheActionsAreWiredFromTheMenuToTheWebViewCache() throws Exception {
+        String surface = source(
+                "app/src/main/java/gh/nusashell/nusadesk/presentation/webapp/WebAppSurfaceView.java");
+        String activity = source(
+                "app/src/main/java/gh/nusashell/nusadesk/presentation/MainActivity.java");
+
+        assertTrue("the menu offers the in-place no-cache reload",
+                activity.contains("R.string.webapp_menu_reload_no_cache"));
+        assertTrue("the menu offers the cache clear",
+                activity.contains("R.string.webapp_menu_clear_cache"));
+        assertTrue("the no-cache reload lives on the surface",
+                surface.contains("public void reloadWithoutCache()"));
+        assertTrue("it drops the WebView cache and reloads the current page",
+                surface.contains("selected.clearCache(true)")
+                        && surface.contains("selected.reload()"));
+        assertTrue("the cache clear lives on the surface",
+                surface.contains("public void clearWebCache()"));
+        assertTrue("the clear reports its outcome",
+                surface.contains("R.string.webapp_cache_cleared_toast"));
+    }
+
     private static int countOf(String source, String token) {
         int count = 0;
         int index = source.indexOf(token);

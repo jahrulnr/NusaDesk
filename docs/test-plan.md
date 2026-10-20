@@ -139,6 +139,9 @@ and persistence.
 | WA-042 | Cancel any chooser or picker (the source chooser, the system picker, and the built-in picker's Cancel/Back/outside-tap) | The page's `cancel` event fires for each of them, no answer is duplicated, and the same input opens a chooser again afterwards |
 | WA-047 | A page opens a dead link in a popup (`target="_blank"` / `window.open()` to a loopback address this app does not own) | The popup closes, the surface states in words that the link is outside the app, the page the user was on stays, and the process survives (ADR-0061) |
 | WA-048 | A page navigated somewhere with no way back (no history entry to return from) | The task bar's refresh action reloads the registered app on a fresh renderer, so the user recovers without editing the app definition (ADR-0061) |
+| WA-049 | Web-app options menu → `Reload without cache` on an open app | The selected tab reloads its current page with the app's WebView cache dropped first — in place, keeping the URL and in-page history (ADR-0064) |
+| WA-050 | Web-app options menu → `Clear cache` | The app's WebView HTTP cache is dropped (process-wide) and the outcome is stated in a toast; the open page, cookies, and DOM storage are untouched (ADR-0064) |
+| WA-051 | Register the `scripts/webapp-lab/serve.py` scenario ports as web apps (`adb reverse` maps them onto device loopback) | Each tile matches the expectation its page prints: `/favicon.ico` auto-fetch, multi-size PNG-in-ICO, DIB+mask ICO, the three-candidate declaration cap, JPG/PNG/WebP/GIF/BMP/ICO links, SVG-then-fallback, cross-port rejection, mislabeled content, `apple-touch-icon`, and the cache-lab badge resyncing only after `Reload without cache` |
 
 **Run 2026-09-27, Samsung S10e (SM-G970F, API 31, arm64).** A throwaway
 Basic-auth fixture was served from inside the live guest on `127.0.0.1:18099`
@@ -243,6 +246,24 @@ its whole viewport was one `<a href="http://127.0.0.1" target="_blank">`.
 | refresh affordance | PASS. `uiautomator` reported the button's content description as `Refresh this app` at the bar's trailing edge, next to `Back to all apps`; the action exists only while a web app is the open surface |
 | cleanup | The fixture files, the guest server process, the pushed helper scripts, the `adb forward`, the temporary `svc power stayon` and the screen timeout were removed after the run; the QA build stayed installed |
 
+**Run 2026-10-20, Samsung S10e (SM-G970F, Android 12/API 31, arm64).** QA build
+of the ADR-0015-amendment/ADR-0064 work (`-PqaDebuggable=true`, release
+signing key, installed in place over the published build). The fixture was
+`scripts/webapp-lab/serve.py` on the host with `adb reverse` on all fifteen
+ports (8401–8415); each port was registered as a web app named for its
+scenario. Screenshots and the server's request log were kept outside the
+repository; the request order below is that log verbatim.
+
+| Case | Result |
+| --- | --- |
+| WA-017 (ICO, API 31) | PASS — the missing piece this slice adds. `fallback-ico` (multi-size PNG-in-ICO) and `fallback-ico-dib` (DIB frame + AND mask) both render, and the DIB tile visibly shows its masked top half — the platform decoder on this OEM never saw the container |
+| WA-017 (declared links) | PASS. `multi-size` fetched `/` → `/icons/px16.png` (404) → `/icons/red32.png` (200) and stopped — the first decodable within the 3-candidate cap wins, and the tile is red |
+| WA-017 (formats) | PASS for PNG/JPEG/WebP/BMP/ICO/`apple-touch-icon`/`mislabeled` (ICO bytes under a `.png` name). **GIF is a documented miss:** `/icon.gif` answered 200, the platform decoder returned null, and the tile kept its monogram — the SVG-declared `svg-fallback` page proved the fallback still ran |
+| WA-019 (cross-port) | PASS. The `cross-port` page's declaration named `127.0.0.1:8405`; the server log shows it was never requested — the fetch went straight to `/favicon.ico` |
+| WA-049 | PASS. On `cache-lab` (a `no-store` page + a `max-age` badge that draws its own fetch version): three plain reloads advanced the page to `Render #7` while the badge stayed `4`, then `Reload without cache` re-fetched the badge (`badge_fetches` 1→2) and the badge caught up in place — same URL, same tab |
+| WA-050 | PASS. `Clear cache` toasted `Cache cleared.` with the page untouched; the next plain reload re-fetched the badge (`badge_fetches` 2→3) because the store was empty |
+| cleanup | The lab registrations stayed in the launcher (they are the standing fixture); `svc power stayon` and the screen timeout were restored after the run |
+
 ### Regression checks tied to shipped defects
 
 | ID | Defect | Pass condition |
@@ -258,6 +279,9 @@ its whole viewport was one `<a href="http://127.0.0.1" target="_blank">`.
 | X-09 | Web-app tile announced a raw format string | A user web app tile announces its own name and the gestures it supports, never `%1$s` |
 | X-10 | Filtered grid still announced the full count | The header count follows the visible grid |
 | X-11 | Soft keyboard covered the opened surface | Opening a surface from the launcher dismisses the launcher's keyboard and focus |
+| X-12 | Soft keyboard stayed up when returning to the launcher | Back (or the task-bar Home action) from the form, a web app, a terminal app, or a fixed surface lands on the launcher with the keyboard closed (ADR-0065) |
+| X-13 | Soft keyboard stayed up across surfaces | With the keyboard open on a field, moving between system, logs, terminal, a web app, and the form leaves it closed on every landing; a surface that hosts text input re-establishes its own field focus, the keyboard itself starts closed (ADR-0065) |
+| X-14 | Keyboard owned by a hidden web-app tab | Switching or closing web-app tabs leaves no IME held by the tab that went GONE (ADR-0065) |
 
 
 | ID | Case | Expected result |
@@ -1579,6 +1603,23 @@ Run findings:
 4. **`su` is absent** on this (non-rooted) device and the CLI answers that as
    a typed result; the root tier stays the user's own door on a rooted
    device, one Magisk prompt per grant.
+
+## Keyboard settlement (ADR-0065), device run 2026-10-20
+
+**Samsung S10e (SM-G970F, Android 12/API 31, arm64), signed QA build.**
+`dumpsys input_method`/`mInputShown` is the oracle — it reads the real IME
+window state, not an app-side flag. Driven over `adb shell input`; the lab's
+`kbd-lab` scenario (port 8416) supplies the WebView text field.
+
+| ID | Device action | Observed result |
+| --- | --- | --- |
+| X-11 | Search field focused, keyboard up → tap the `Add` tile | `mInputShown` went `true` → `false`; the form opened with its first field focused but the keyboard closed — a field owns focus without the IME up (the ordering contract) |
+| X-12 (Home) | Name field focused, keyboard up → task-bar Home | `false`; launcher rendered with no keyboard |
+| X-12 (Back) | Name field focused, keyboard up → Back | `false`; back on the launcher |
+| X-12 (WebView) | `kbd-lab` page input focused, keyboard up → task-bar Home | `false` — the keyboard raised for a WebView field closed on the launcher; this is the `getCurrentFocus()==null` case the old helper dropped |
+| X-12 (WebView Back) | same state → Back | The IME consumed the first Back to close itself (platform behaviour, `mInputShown` went `false` while still on the surface); a second Back landed on the launcher clean |
+| X-13 | Terminal surface tapped to raise the keyboard → task-bar Home | `false`; launcher clean. Logs/System take no text input and have no field to leave the keyboard on |
+| X-14 | A hidden web-app tab holding the IME | NOT EXERCISED — no lab scenario opens a second tab; the `clearFocus` on outgoing tab WebViews is code-covered only |
 
 ## License and distribution note
 

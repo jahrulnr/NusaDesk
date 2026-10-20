@@ -27,6 +27,8 @@ import gh.nusashell.nusadesk.application.webapp.WebAppRegistry;
 import gh.nusashell.nusadesk.application.webapp.WebAppRegistryException;
 import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
+import gh.nusashell.nusadesk.infrastructure.webapp.IconBitmapDecoder;
+import gh.nusashell.nusadesk.presentation.SoftKeyboardAware;
 
 /**
  * The add / edit launcher app form, covering both kinds of user-defined
@@ -62,7 +64,7 @@ import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
  * constructor to offer.</p>
  */
 @SuppressLint("ViewConstructor")
-public final class AppFormView extends ScrollView {
+public final class AppFormView extends ScrollView implements SoftKeyboardAware {
 
     /** Request code the host forwards from {@code onActivityResult}. */
     public static final int REQUEST_OPEN_IMAGE = 0x5701;
@@ -515,6 +517,15 @@ public final class AppFormView extends ScrollView {
             try {
                 imagePreview.setImageURI(Uri.parse(iconUri));
             } catch (RuntimeException unresolved) {
+                // falls through to the tile decoder below
+            }
+            if (imagePreview.getDrawable() == null) {
+                // A picked .ico resolves but the platform decoder draws nothing
+                // on some API levels; the tile's own decoder covers it.
+                imagePreview.setImageBitmap(IconBitmapDecoder.decodePicked(
+                        getContext().getContentResolver(), Uri.parse(iconUri)));
+            }
+            if (imagePreview.getDrawable() == null) {
                 imagePreview.setImageResource(R.drawable.ic_image_placeholder);
             }
         }
@@ -575,5 +586,11 @@ public final class AppFormView extends ScrollView {
         target.setVisibility(VISIBLE);
         focus.requestFocus();
         focus.announceForAccessibility(message);
+    }
+
+    /** The form is the shell's main text-input surface. */
+    @Override
+    public boolean ownsTextInput() {
+        return true;
     }
 }

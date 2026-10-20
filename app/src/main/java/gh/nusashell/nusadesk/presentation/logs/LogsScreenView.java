@@ -12,6 +12,7 @@ import android.widget.TextView;
 
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLog;
+import gh.nusashell.nusadesk.presentation.SoftKeyboardAware;
 import gh.nusashell.nusadesk.presentation.widget.TerminalBridgeView;
 
 import java.util.List;
@@ -34,7 +35,8 @@ import java.util.List;
  * tail. The bridge keeps its WebView across a launcher trip like the
  * terminal surface does; only the tail is dropped.</p>
  */
-public final class LogsScreenView extends FrameLayout {
+public final class LogsScreenView extends FrameLayout
+        implements SoftKeyboardAware {
 
     /** Reports selection/close so the host owns the tail lifecycle. */
     public interface Listener {
@@ -297,5 +299,11 @@ public final class LogsScreenView extends FrameLayout {
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** The log list and its read-only bridge never take text input. */
+    @Override
+    public boolean ownsTextInput() {
+        return false;
     }
 }

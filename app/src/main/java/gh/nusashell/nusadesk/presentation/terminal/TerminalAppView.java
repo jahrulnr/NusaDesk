@@ -25,6 +25,7 @@ import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
 import gh.nusashell.nusadesk.infrastructure.service.TerminalTabsBus;
 import gh.nusashell.nusadesk.infrastructure.service.TerminalTabsRegistry;
 import gh.nusashell.nusadesk.presentation.SessionStatusAware;
+import gh.nusashell.nusadesk.presentation.SoftKeyboardAware;
 import gh.nusashell.nusadesk.presentation.widget.TerminalBridgeView;
 
 import java.nio.charset.StandardCharsets;
@@ -73,7 +74,8 @@ import java.util.Objects;
  * {@code addJavascriptInterface}.</p>
  */
 public final class TerminalAppView extends FrameLayout
-        implements TerminalTabsBus.Listener, SessionStatusAware {
+        implements TerminalTabsBus.Listener, SessionStatusAware,
+        SoftKeyboardAware {
 
     /**
      * Snapshot observer for the host (the options menu rebuilds its tab list
@@ -717,5 +719,11 @@ public final class TerminalAppView extends FrameLayout
                 }
             });
         }
+    }
+
+    /** The terminal's WebView input is what the keyboard is for. */
+    @Override
+    public boolean ownsTextInput() {
+        return true;
     }
 }

@@ -30,6 +30,7 @@ import gh.nusashell.nusadesk.presentation.GuestSshStatusAware;
 import gh.nusashell.nusadesk.presentation.GuestSshUiState;
 import gh.nusashell.nusadesk.presentation.ScreenView;
 import gh.nusashell.nusadesk.presentation.SessionStatusAware;
+import gh.nusashell.nusadesk.presentation.SoftKeyboardAware;
 import gh.nusashell.nusadesk.presentation.widget.InstallPhaseSnapshot;
 import gh.nusashell.nusadesk.presentation.widget.InstallerWizardView;
 import gh.nusashell.nusadesk.presentation.widget.LinePatternDrawable;
@@ -74,7 +75,8 @@ import java.util.Map;
  * the host and renders whatever the host publishes.</p>
  */
 public final class DesktopHomeView extends FrameLayout
-        implements ScreenView, SessionStatusAware, GuestSshStatusAware {
+        implements ScreenView, SessionStatusAware, GuestSshStatusAware,
+        SoftKeyboardAware {
 
     private ScrollView scroller;
     private LinearLayout content;
@@ -545,5 +547,11 @@ public final class DesktopHomeView extends FrameLayout
         return getContext().getString(R.string.launcher_status_failed_detail,
                 reason == null ? getContext().getString(R.string.session_failed_no_reason)
                         : reason);
+    }
+
+    /** The launcher keeps its search field, so focus stays legitimate here. */
+    @Override
+    public boolean ownsTextInput() {
+        return true;
     }
 }
