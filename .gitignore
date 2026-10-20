@@ -25,3 +25,7 @@ tasks/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Python bytecode caches (scripts/)
+__pycache__/
+*.pyc
