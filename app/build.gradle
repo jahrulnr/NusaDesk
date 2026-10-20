@@ -2,16 +2,57 @@ plugins {
     id 'com.android.application'
 }
 
+// The VERSION marker is the single source of truth for the app version
+// (ADR-0067): versionName and versionCode are both derived here, so a release
+// bump never hand-edits this file. The code mapping reserves three digits per
+// field (major*1_000_000 + minor*1_000 + patch); the release flow keeps the
+// marker a strict M.m.p, and anything else fails the build rather than
+// producing a colliding or non-monotonic versionCode.
+def releaseVersion = rootProject.file('VERSION').text.trim()
+// Strict semver: numeric fields without leading zeros, each bounded to the
+// three digits the versionCode mapping reserves.
+def versionMatcher = (releaseVersion =~ /^(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2})$/)
+if (!versionMatcher.matches()) {
+    throw new GradleException(
+            "VERSION must be a plain major.minor.patch release, not: " + releaseVersion)
+}
+def vMajor = versionMatcher.group(1).toInteger()
+def vMinor = versionMatcher.group(2).toInteger()
+def vPatch = versionMatcher.group(3).toInteger()
+if (vMajor >= 1000 || vMinor >= 1000 || vPatch >= 1000) {
+    throw new GradleException(
+            "VERSION fields must stay under 1000 for the versionCode mapping: " + releaseVersion)
+}
+def derivedVersionCode = vMajor * 1000000 + vMinor * 1000 + vPatch
+
+// The About page reads the bundled changelog (ADR-0066). The asset is the
+// repository CHANGELOG.md staged into a generated directory at build time —
+// the file itself is never copied into src/ or committed twice. The task
+// name deliberately does not end with 'Assets' so the consumer fan-out below
+// cannot self-depend; AGP 9's strict input validation requires every
+// consumer of the generated directory (asset merges, lint) to declare the
+// producer.
+def changelogAssetsDir = new File(layout.buildDirectory.get().asFile, 'generated/changelog-assets')
+
+tasks.register('generateChangelogAsset', Copy) {
+    from rootProject.file('CHANGELOG.md')
+    into changelogAssetsDir
+}
+
 android {
     namespace 'gh.nusashell.nusadesk'
     compileSdk 37
+
+    sourceSets {
+        main.assets.srcDir changelogAssetsDir
+    }
 
     defaultConfig {
         applicationId 'gh.nusashell.nusadesk'
         minSdk 29
         targetSdk 37
-        versionCode 25
-        versionName '0.14.3'
+        versionCode derivedVersionCode
+        versionName releaseVersion
     }
 
     // Release signing (ADR-0040). The published GitHub/F-Droid APK must be
@@ -194,4 +235,15 @@ dependencies {
     // Robolectric runs the real framework classes of a chosen API level on the
     // JVM, so one test can guard several Android releases at once.
     testImplementation 'org.robolectric:robolectric:4.15.1'
+}
+
+// Every consumer of the generated changelog assets directory must declare its
+// producer under AGP 9's strict input validation: the *Assets merges, the
+// lint-model generation tasks, and lint tasks themselves (lowercase
+// 'lint*' names). 'preBuild' backstops anything resolved only by name.
+tasks.matching {
+    it.name == 'preBuild' || it.name.endsWith('Assets')
+            || it.name.contains('Lint') || it.name.startsWith('lint')
+}.configureEach {
+    dependsOn 'generateChangelogAsset'
 }

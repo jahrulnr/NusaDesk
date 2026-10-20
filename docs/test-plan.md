@@ -1621,6 +1621,20 @@ window state, not an app-side flag. Driven over `adb shell input`; the lab's
 | X-13 | Terminal surface tapped to raise the keyboard → task-bar Home | `false`; launcher clean. Logs/System take no text input and have no field to leave the keyboard on |
 | X-14 | A hidden web-app tab holding the IME | NOT EXERCISED — no lab scenario opens a second tab; the `clearFocus` on outgoing tab WebViews is code-covered only |
 
+## About-page update check and changelog card (ADR-0066/0067), device run 2026-10-21
+
+**Samsung S10e (SM-G970F, Android 12/API 31, arm64), signed QA build
+(`versionCode=14003`).** Driven over `adb shell input` + uiautomator.
+
+| ID | Device action | Observed result |
+| --- | --- | --- |
+| UPD-004 | Manual tap while a scheduled check is in flight | NOT EXERCISED directly — the in-flight guard (`updateCheckInFlight`) is code-covered; externally indistinguishable since the shared completion lands on the same row |
+| UPD-005 | Tap `Check for updates`, installed == latest tag | Status went `Checking for updates…` → `Installed: 0.14.3 — this is the latest release.` (the foreground check had already rendered the same line, proving the shared completion path) |
+| UPD-006 | Tap `Check for updates` with WiFi off and no SIM | `Checking for updates…` for ~10 s, then `Update check failed — try again later.` — the honest failed state, no crash |
+| CHG-001 | About page after launch | Card rendered `0.14.3 — 2026-10-21` as the title and the full newest released section flattened (`Added` group, `•` bullets, no markup) — the generated `assets/CHANGELOG.md` parsed in-app |
+| CHG-002 | Tap `Read more` | Chrome opened `github.com/jahrulnr/NusaDesk/blob/master/CHANGELOG.md` |
+| VER-001 | `adb install -r` the signed QA build over the installed 0.14.2 (`versionCode 25`) | Update accepted: `dumpsys package` reports `versionCode=14003`, `versionName=0.14.3` — the derived code stays monotonic above the last hand-edited one |
+
 ## License and distribution note
 
 - PRoot is GPL-2.0-or-later. Packaging/distributing it requires GPLv2+

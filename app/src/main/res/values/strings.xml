@@ -297,7 +297,7 @@
     <string name="system_hub_install_title">One-click install</string>
     <string name="system_hub_install_desc">Curated components for the Linux session.</string>
     <string name="system_hub_about_title">About NusaDesk</string>
-    <string name="system_hub_about_desc">System state, technical details, and links.</string>
+    <string name="system_hub_about_desc">System state, technical details, update check, and changelog.</string>
     <string name="system_back_desc">Back</string>
     <string name="system_settings_title">Settings</string>
     <string name="system_install_title">One-click install</string>
@@ -324,6 +324,18 @@
     <string name="system_github_title">GitHub page</string>
     <string name="system_github_desc">Source code, releases, and issue tracker.</string>
     <string name="system_github_unavailable">No browser can open the GitHub page right now.</string>
+    <string name="system_update_title">Check for updates</string>
+    <string name="system_update_installed">Installed: %1$s</string>
+    <string name="system_update_installed_unknown">Update checks ask the GitHub release page.</string>
+    <string name="system_update_checking">Checking for updates…</string>
+    <string name="system_update_up_to_date">Installed: %1$s — this is the latest release.</string>
+    <string name="system_update_available">Update available: %1$s — details on the GitHub releases page.</string>
+    <string name="system_update_failed">Update check failed — try again later.</string>
+    <string name="system_changelog_eyebrow">Changelog</string>
+    <string name="system_changelog_loading">Loading…</string>
+    <string name="system_changelog_unavailable">The bundled changelog is unavailable in this build.</string>
+    <string name="system_changelog_more">Read more</string>
+    <string name="system_changelog_unavailable_link">No browser can open the changelog right now.</string>
     <string name="system_state_label">System state</string>
     <string name="system_session_label">Session</string>
     <string name="system_service_label">Terminal component</string>

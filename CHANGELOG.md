@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-10-21
+
+### Added
+
+- **The About page can check for updates and shows the latest changelog.** A
+  `Check for updates` row under the GitHub link runs a real check on demand —
+  bypassing the cadence floor — and reports the outcome inline while the
+  launcher banner, notification, and assisted install still receive it
+  (ADR-0066). A Changelog card under `How it works` renders the newest
+  released section of the bundled `CHANGELOG.md` with a `Read more` link to
+  the repository file.
+
+### Changed
+
+- **The app version is derived from `VERSION`, and the changelog asset is
+  generated.** `versionName`/`versionCode` are no longer hand-edited in
+  `app/build.gradle` — the build reads the `VERSION` marker and maps
+  `major.minor.patch` to a monotonic code (ADR-0067), and `CHANGELOG.md` is
+  staged into generated assets at build time so the About card can never lag
+  a checked-in copy.
+
 ## [0.14.3] - 2026-10-21
 
 ### Fixed

@@ -13,7 +13,9 @@ import android.widget.Toast;
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
+import gh.nusashell.nusadesk.domain.update.ChangelogSection;
 import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
+import gh.nusashell.nusadesk.infrastructure.update.GitHubReleaseChecker;
 import gh.nusashell.nusadesk.presentation.GuestSshUiState;
 import gh.nusashell.nusadesk.presentation.RuntimeStateDescriptor;
 import gh.nusashell.nusadesk.presentation.SessionUiState;
@@ -32,6 +34,8 @@ import gh.nusashell.nusadesk.presentation.widget.StateBadgeView;
 public final class SystemAboutPageView extends ScrollView {
 
     private static final String GITHUB_URL = "https://github.com/jahrulnr/NusaDesk";
+    private static final String CHANGELOG_URL =
+            "https://github.com/jahrulnr/NusaDesk/blob/master/CHANGELOG.md";
 
     private StateBadgeView stateBadge;
     private TextView stateSummary;
@@ -42,6 +46,9 @@ public final class SystemAboutPageView extends ScrollView {
     private TextView endpointValue;
     private TextView profileValue;
     private TextView versionValue;
+    private TextView updateStatus;
+    private TextView changelogTitle;
+    private TextView changelogText;
 
     public SystemAboutPageView(Context context) {
         super(context);
@@ -67,11 +74,18 @@ public final class SystemAboutPageView extends ScrollView {
         endpointValue = findViewById(R.id.system_endpoint_value);
         profileValue = findViewById(R.id.system_profile_value);
         versionValue = findViewById(R.id.system_version_value);
+        updateStatus = findViewById(R.id.system_update_status);
+        changelogTitle = findViewById(R.id.system_changelog_title);
+        changelogText = findViewById(R.id.system_changelog_text);
         endpointValue.setText(R.string.system_detail_endpoint_none);
         sessionValue.setText(SessionUiState.unknown().getBadgeRes());
         serviceValue.setText(R.string.system_service_missing);
         setWebAppCount(0);
-        findViewById(R.id.system_github_row).setOnClickListener(view -> openGitHub());
+        findViewById(R.id.system_github_row).setOnClickListener(
+                view -> openExternal(GITHUB_URL, R.string.system_github_unavailable));
+        findViewById(R.id.system_changelog_more).setOnClickListener(
+                view -> openExternal(CHANGELOG_URL,
+                        R.string.system_changelog_unavailable_link));
     }
 
     /** Wires the back row that returns to the System hub. */
@@ -84,19 +98,85 @@ public final class SystemAboutPageView extends ScrollView {
         findViewById(R.id.system_how_button).setOnClickListener(listener);
     }
 
+    /** Wires the update row's explicit re-check tap (ADR-0066). */
+    public void setOnCheckUpdateListener(OnClickListener listener) {
+        findViewById(R.id.system_update_row).setOnClickListener(listener);
+    }
+
     /**
-     * Opens the project's GitHub page in the system browser — a plain VIEW
-     * intent, the same pattern the update banner's release page uses. A
-     * device with no browser gets the honest unavailable toast instead of a
-     * dead row.
+     * States the installed app version under the update row, so the check has
+     * something to compare against at a glance. A {@code null} version leaves
+     * the descriptive default.
      */
-    private void openGitHub() {
+    public void renderInstalledVersion(String installedVersion) {
+        if (installedVersion != null && !installedVersion.trim().isEmpty()) {
+            updateStatus.setText(getContext().getString(
+                    R.string.system_update_installed, installedVersion));
+        }
+    }
+
+    /** Marks a manual check as in flight. */
+    public void renderUpdateChecking() {
+        updateStatus.setText(R.string.system_update_checking);
+    }
+
+    /**
+     * Renders one completed check under the row. The status always reports
+     * the truth of the check — including an update the user dismissed on the
+     * launcher banner — while the banner/notification hand-off itself stays
+     * with the host's shared completion path (ADR-0066).
+     */
+    public void renderUpdateCheck(GitHubReleaseChecker.UpdateCheckResult result,
+            String installedVersion) {
+        if (result == null || installedVersion == null) {
+            updateStatus.setText(R.string.system_update_failed);
+            return;
+        }
+        switch (result.getKind()) {
+            case UP_TO_DATE:
+                updateStatus.setText(getContext().getString(
+                        R.string.system_update_up_to_date, installedVersion));
+                break;
+            case UPDATE_AVAILABLE:
+                updateStatus.setText(getContext().getString(
+                        R.string.system_update_available, result.getTag()));
+                break;
+            default:
+                updateStatus.setText(R.string.system_update_failed);
+                break;
+        }
+    }
+
+    /**
+     * Renders the newest released changelog section on the card; a
+     * {@code null} section — a build whose bundled asset could not be read
+     * or parsed — gets the honest unavailable text (ADR-0066).
+     */
+    public void renderChangelog(ChangelogSection section) {
+        if (section == null) {
+            changelogTitle.setVisibility(GONE);
+            changelogText.setText(R.string.system_changelog_unavailable);
+            return;
+        }
+        changelogTitle.setVisibility(VISIBLE);
+        String title = section.getDate().isEmpty()
+                ? section.getVersion()
+                : section.getVersion() + " — " + section.getDate();
+        changelogTitle.setText(title);
+        changelogText.setText(section.getBody());
+    }
+
+    /**
+     * Opens an external page in the system browser — a plain VIEW intent, the
+     * same pattern the update banner's release page uses. A device with no
+     * browser gets the honest unavailable toast instead of a dead row.
+     */
+    private void openExternal(String url, int failureRes) {
         try {
-            getContext().startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_URL))
+            getContext().startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         } catch (ActivityNotFoundException noBrowser) {
-            Toast.makeText(getContext(), R.string.system_github_unavailable,
-                    Toast.LENGTH_LONG).show();
+            Toast.makeText(getContext(), failureRes, Toast.LENGTH_LONG).show();
         }
     }
 

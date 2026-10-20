@@ -13,7 +13,9 @@ import gh.nusashell.nusadesk.application.backup.BackupResult;
 import gh.nusashell.nusadesk.domain.backup.LastBackupRecord;
 import gh.nusashell.nusadesk.domain.backup.LastBackupRun;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
+import gh.nusashell.nusadesk.domain.update.ChangelogSection;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestOptionalTools;
+import gh.nusashell.nusadesk.infrastructure.update.GitHubReleaseChecker;
 import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
 import gh.nusashell.nusadesk.presentation.GuestSshStatusAware;
@@ -169,6 +171,32 @@ public final class SystemScreenView extends FrameLayout
     /** Wires the "How it works" contract disclosure on the About page. */
     public void setOnHowItWorksListener(OnClickListener listener) {
         aboutPage.setOnHowItWorksListener(listener);
+    }
+
+    /** Wires the About page's explicit update-check tap (ADR-0066). */
+    public void setOnCheckUpdateListener(OnClickListener listener) {
+        aboutPage.setOnCheckUpdateListener(listener);
+    }
+
+    /** States the installed app version under the About update row. */
+    public void renderInstalledVersion(String installedVersion) {
+        aboutPage.renderInstalledVersion(installedVersion);
+    }
+
+    /** Marks the About update row's manual check as in flight. */
+    public void renderUpdateChecking() {
+        aboutPage.renderUpdateChecking();
+    }
+
+    /** Renders one completed check under the About update row. */
+    public void renderUpdateCheck(GitHubReleaseChecker.UpdateCheckResult result,
+            String installedVersion) {
+        aboutPage.renderUpdateCheck(result, installedVersion);
+    }
+
+    /** Renders the newest released changelog section on the About card. */
+    public void renderChangelog(ChangelogSection section) {
+        aboutPage.renderChangelog(section);
     }
 
     /** Wires the workspace row's single action on the Settings page. */

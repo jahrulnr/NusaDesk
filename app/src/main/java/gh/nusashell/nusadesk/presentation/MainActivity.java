@@ -58,6 +58,7 @@ import gh.nusashell.nusadesk.domain.terminal.TerminalTabKind;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabSnapshot;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabsSnapshot;
 import gh.nusashell.nusadesk.domain.update.ApkDigest;
+import gh.nusashell.nusadesk.domain.update.ChangelogSection;
 import gh.nusashell.nusadesk.domain.update.ReleaseVersion;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.webapp.WebAppId;
@@ -119,10 +120,12 @@ import gh.nusashell.nusadesk.presentation.widget.InstallPhaseSnapshot;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceFolderBrowserDialog;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -247,6 +250,8 @@ public final class MainActivity extends Activity {
     private BootAutostartPreferences bootPreferences;
     private UpdateCheckPrefs updatePrefs;
     private UpdateNotifier updateNotifier;
+    /** Collapses overlapping update checks (scheduled + manual) onto one flight. */
+    private final AtomicBoolean updateCheckInFlight = new AtomicBoolean(false);
     /** Release page of the tag currently known; null falls back to /releases/latest. */
     private String pendingReleaseUrl;
     /** The tag currently rendered in the launcher banner, or null. */
@@ -359,6 +364,7 @@ public final class MainActivity extends Activity {
         wireSystemScreen();
         systemScreen.renderLastBackup(lastBackupStore.load());
         systemScreen.renderLastRun(lastBackupStore.loadRun());
+        loadBundledChangelog();
 
         loadPersistedState();
         restoreShellState(savedInstanceState);
@@ -666,6 +672,8 @@ public final class MainActivity extends Activity {
         systemScreen.setOnDbusFaceInstallListener(
                 view -> startInstall(false, false, true));
         systemScreen.setOnHowItWorksListener(view -> contractDialog.show());
+        systemScreen.setOnCheckUpdateListener(view -> manualUpdateCheck());
+        systemScreen.renderInstalledVersion(installedVersionName());
         systemScreen.setOnWorkspaceActionListener(view -> onWorkspaceAction());
         systemScreen.setOnOpenAppSettingsListener(view -> openAppSettings());
         systemScreen.setOnBatteryActionListener(view -> onBatteryAction());
@@ -1778,11 +1786,90 @@ public final class MainActivity extends Activity {
         if (!updatePrefs.isDue(System.currentTimeMillis(), installedVersion, freshProcess)) {
             return;
         }
+        runUpdateCheck(installedVersion);
+    }
+
+    /**
+     * Runs one network check on the update executor, shared by the cadence
+     * path and the About page's manual ask (ADR-0066). The guard collapses
+     * overlapping asks — a double tap, or a manual tap while a scheduled
+     * check is already out — onto the one in flight, whose completion still
+     * updates every surface. {@code recordCheck} always runs: a real attempt
+     * honestly resets the cadence floor.
+     */
+    private void runUpdateCheck(String installedVersion) {
+        if (!updateCheckInFlight.compareAndSet(false, true)) {
+            return;
+        }
         updateExecutor.execute(() -> {
-            GitHubReleaseChecker.UpdateCheckResult result =
-                    new GitHubReleaseChecker().check(installedVersion);
-            updatePrefs.recordCheck(System.currentTimeMillis(), result.getTag(), installedVersion);
-            mainHandler.post(() -> applyUpdateResult(result));
+            try {
+                GitHubReleaseChecker.UpdateCheckResult result =
+                        new GitHubReleaseChecker().check(installedVersion);
+                updatePrefs.recordCheck(System.currentTimeMillis(), result.getTag(),
+                        installedVersion);
+                mainHandler.post(() -> onUpdateCheckFinished(result, installedVersion));
+            } catch (RuntimeException unexpected) {
+                // The flag must never wedge the row on "Checking…".
+                updateCheckInFlight.set(false);
+                mainHandler.post(() -> systemScreen.renderUpdateCheck(
+                        GitHubReleaseChecker.UpdateCheckResult.unavailable(),
+                        installedVersion));
+            }
+        });
+    }
+
+    /**
+     * The About page's "Check for updates" row: a manual ask is due by
+     * definition, so it bypasses {@link UpdateCheckPrefs#isDue} and goes
+     * straight to the shared check path — the row shows Checking either way,
+     * and a check already in flight still lands on the shared completion
+     * (ADR-0066).
+     */
+    private void manualUpdateCheck() {
+        systemScreen.renderUpdateChecking();
+        runUpdateCheck(installedVersionName());
+    }
+
+    /**
+     * One completion for every check: the banner/notification/assisted-
+     * install hand-off (which may keep a dismissed tag quiet) plus the About
+     * row, which always reports what the check proved (ADR-0066).
+     */
+    private void onUpdateCheckFinished(GitHubReleaseChecker.UpdateCheckResult result,
+            String installedVersion) {
+        updateCheckInFlight.set(false);
+        applyUpdateResult(result);
+        systemScreen.renderUpdateCheck(result, installedVersion);
+    }
+
+    /**
+     * Reads the bundled changelog asset — {@code CHANGELOG.md} staged into
+     * generated assets at build time (ADR-0067) — parses the newest released
+     * section, and renders it on the About card. A missing or unreadable
+     * asset maps to the card's honest unavailable text, never a crash.
+     */
+    private void loadBundledChangelog() {
+        probeExecutor.execute(() -> {
+            ChangelogSection section = null;
+            try (InputStream in = getAssets().open("CHANGELOG.md")) {
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                byte[] chunk = new byte[8192];
+                int total = 0;
+                int read;
+                while ((read = in.read(chunk)) != -1) {
+                    total += read;
+                    if (total > 512 * 1024) {
+                        break;
+                    }
+                    buffer.write(chunk, 0, read);
+                }
+                section = ChangelogSection.parseLatest(
+                        buffer.toString(StandardCharsets.UTF_8.name()));
+            } catch (IOException unreadable) {
+                // The fallback text below names the state; no retry surface.
+            }
+            ChangelogSection parsed = section;
+            mainHandler.post(() -> systemScreen.renderChangelog(parsed));
         });
     }
 

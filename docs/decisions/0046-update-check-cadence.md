@@ -6,7 +6,9 @@ Accepted and implemented in `infrastructure/update/UpdateCheckPrefs` plus the
 coordinator wiring (`MainActivity.checkForUpdate`). It amends decision 1 of
 ADR-0038 (the 24 hour minimum interval); every other decision there stands.
 Unit evidence covers the floor, the version-change rule and the upgrade path;
-device verification is recorded in `docs/test-plan.md`.
+device verification is recorded in `docs/test-plan.md`. Amended by ADR-0066,
+which adds the manual "Check for updates" action this file anticipated — the
+cadence rules here still govern every *scheduled* check.
 
 **Amended 2026-09-21: the floor is 15 minutes, and a fresh launch always
 asks.** Two device reports shaped this. On the ROG Phone 2 an official 0.6.1
