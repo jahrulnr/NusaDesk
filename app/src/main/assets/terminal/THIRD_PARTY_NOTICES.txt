@@ -33,6 +33,24 @@ re-fetch from the official source and update the versions below.
    Version:     6.0.0
    License:     MIT
 
+4. xterm.js UnicodeGraphemesAddon
+   File:        addon-unicode-graphemes.js
+   Package:     @xterm/addon-unicode-graphemes
+   Version:     0.4.0
+   License:     MIT
+   Source:      https://registry.npmjs.org/@xterm/addon-unicode-graphemes/-/addon-unicode-graphemes-0.4.0.tgz
+   Local copy:  addon-unicode-graphemes-LICENSE.txt
+   Commit:      f447274f430fd22513f6adbf9862d19524471c04 (same release as core 6.0.0)
+   JS SHA-256:  8e7f926f4def5733a190b80cff5cbaa550404e143b0750962f7d756138203cb8
+   npm integrity (verified before extracting the vendored files):
+   sha512-9+/CqwbKcnlkJU4d3wIgO+wjsL8f6vyz+UwUWLu6nADQz8Gr8ONqGCJfdDjIdI+yYZLABQqQy47FzEM6AWELjw==
+   Vetting: upstream-maintained addon from the same pinned release; replaces
+   Unicode 6 single-column emoji with grapheme-aware widths, including VS16,
+   ZWJ and skin-tone sequences. No remote runtime code or font download.
+   Upstream labels the addon experimental. Real packaged-core grid regressions
+   and physical WebView evidence cover this adoption; glyph artwork remains
+   dependent on the device's installed fonts (ADR-0075).
+
 The xterm.js bundle is treated as part of the terminal trust boundary: it is
 loaded locally from assets, never from a remote CDN. The thin host page
 (terminal.html) loads only these local files.

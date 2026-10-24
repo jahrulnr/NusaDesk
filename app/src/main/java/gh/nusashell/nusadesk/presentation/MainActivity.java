@@ -30,6 +30,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import gh.nusashell.nusadesk.BuildConfig;
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.application.backup.BackupFailure;
 import gh.nusashell.nusadesk.application.backup.BackupResult;
@@ -41,6 +42,7 @@ import gh.nusashell.nusadesk.application.runtime.RuntimeStateStore;
 import gh.nusashell.nusadesk.application.terminal.TerminalCommandRegistry;
 import gh.nusashell.nusadesk.application.terminal.TerminalTabException;
 import gh.nusashell.nusadesk.application.terminal.TerminalTabsPort;
+import gh.nusashell.nusadesk.application.webapp.WebAppCommandSession;
 import gh.nusashell.nusadesk.application.webapp.WebAppCredentialStore;
 import gh.nusashell.nusadesk.application.webapp.WebAppRegistry;
 import gh.nusashell.nusadesk.application.workspace.WorkspaceStore;
@@ -54,7 +56,6 @@ import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
 import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
-import gh.nusashell.nusadesk.domain.terminal.TerminalTabKind;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabSnapshot;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabsSnapshot;
 import gh.nusashell.nusadesk.domain.update.ApkDigest;
@@ -96,6 +97,7 @@ import gh.nusashell.nusadesk.infrastructure.update.UpdateNotifier;
 import gh.nusashell.nusadesk.infrastructure.webapp.KeystoreWebAppCredentialStore;
 import gh.nusashell.nusadesk.infrastructure.webapp.SharedPreferencesWebAppStore;
 import gh.nusashell.nusadesk.infrastructure.webapp.WebAppFaviconFetcher;
+import gh.nusashell.nusadesk.infrastructure.webapp.WebAppRestartSessions;
 import gh.nusashell.nusadesk.infrastructure.workspace.SharedPreferencesWorkspaceStore;
 import gh.nusashell.nusadesk.infrastructure.workspace.WorkspaceFolderAccess;
 import gh.nusashell.nusadesk.presentation.desktop.AppFormView;
@@ -103,6 +105,7 @@ import gh.nusashell.nusadesk.presentation.desktop.AppSurfaceHostView;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopApp;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopHomeView;
 import gh.nusashell.nusadesk.presentation.desktop.LauncherEntry;
+import gh.nusashell.nusadesk.presentation.display.NativeDesktopHostController;
 import gh.nusashell.nusadesk.presentation.logs.LogsScreenView;
 import gh.nusashell.nusadesk.presentation.system.ServicesExtraState;
 import gh.nusashell.nusadesk.presentation.system.SystemBackupPageView;
@@ -110,9 +113,10 @@ import gh.nusashell.nusadesk.presentation.system.SystemScreenView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalAppView;
 import gh.nusashell.nusadesk.presentation.terminal.TerminalSurfaceScope;
 import gh.nusashell.nusadesk.presentation.update.UpdateInstallDialog;
+import gh.nusashell.nusadesk.presentation.webapp.WebAppFileChooser;
+import gh.nusashell.nusadesk.presentation.webapp.WebAppServerCoordinator;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSignInCard;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSignInCoordinator;
-import gh.nusashell.nusadesk.presentation.webapp.WebAppFileChooser;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppSurfaceView;
 import gh.nusashell.nusadesk.presentation.webapp.WebAppTabStack;
 import gh.nusashell.nusadesk.presentation.widget.FoundationContractDialog;
@@ -135,6 +139,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -217,6 +222,8 @@ public final class MainActivity extends Activity {
 
     private DesktopHomeView desktopHome;
     private AppSurfaceHostView appSurfaceHost;
+    private NativeDesktopHostController nativeDesktop;
+    private WebAppServerCoordinator webAppServers;
     private SystemScreenView systemScreen;
     /** Created lazily on first open: the view owns a WebView, so it costs. */
     private LogsScreenView logsScreen;
@@ -359,6 +366,77 @@ public final class MainActivity extends Activity {
         mainHandler = new Handler(Looper.getMainLooper());
         contractDialog = new FoundationContractDialog(this);
 
+        // The two collaborator controllers own their domains' lifecycles;
+        // navigation itself (which surface is showing, where Back goes) stays
+        // here — the Host interfaces are exactly that seam.
+        nativeDesktop = new NativeDesktopHostController(this, desktopHome,
+                appSurfaceHost, new NativeDesktopHostController.Host() {
+            @Override
+            public void showSurface(DesktopDestination destination) {
+                MainActivity.this.showSurface(destination);
+            }
+
+            @Override
+            public void showShell() {
+                MainActivity.this.showShell();
+            }
+
+            @Override
+            public boolean isShowing(DesktopDestination destination) {
+                return activeDestination == destination;
+            }
+        });
+        webAppServers = new WebAppServerCoordinator(this, desktopHome,
+                appSurfaceHost, fixedSurfaces, webAppSurfaces, terminalAppSurfaces,
+                new WebAppServerCoordinator.Host() {
+            @Override
+            public WebAppDefinition definitionFor(String webAppId) {
+                return MainActivity.this.definitionFor(webAppId);
+            }
+
+            @Override
+            public void showWebApp(WebAppDefinition definition) {
+                MainActivity.this.showWebApp(definition);
+            }
+
+            @Override
+            public void showShell() {
+                MainActivity.this.showShell();
+            }
+
+            @Override
+            public void settleKeyboardFor(View surface) {
+                MainActivity.this.settleKeyboardFor(surface);
+            }
+
+            @Override
+            public void renderTerminalAppMenu(String appId, TerminalTabsSnapshot snapshot) {
+                MainActivity.this.renderTerminalAppMenu(appId, snapshot);
+            }
+
+            @Override
+            public void commandSurfaceShown(String id) {
+                activeDestination = DesktopDestination.HOME;
+                activeWebAppId = null;
+                activeTerminalAppId = id;
+            }
+
+            @Override
+            public boolean isCommandSurfaceActive(String id) {
+                return id.equals(activeTerminalAppId);
+            }
+
+            @Override
+            public boolean isShowingWebApp(String webAppId) {
+                return webAppId.equals(activeWebAppId);
+            }
+
+            @Override
+            public boolean isDestroyed() {
+                return MainActivity.this.isDestroyed();
+            }
+        });
+
         wireLauncher();
         wireAppSurfaceHost();
         wireSystemScreen();
@@ -416,6 +494,9 @@ public final class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         activityStarted = true;
+        if (BuildConfig.NATIVE_DESKTOP_ENABLED) {
+            nativeDesktop.start();
+        }
         continuePendingSetup();
         ensureRuntimeRunning();
         // Returning from the all-files access or battery settings pages is a
@@ -443,6 +524,9 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         activityStarted = false;
+        if (BuildConfig.NATIVE_DESKTOP_ENABLED) {
+            nativeDesktop.stop();
+        }
         mainHandler.removeCallbacks(updatePoll);
         super.onStop();
     }
@@ -775,6 +859,7 @@ public final class MainActivity extends Activity {
 
     /** Shows the launcher. */
     private void showShell() {
+        nativeDesktop.refreshLinuxApps();
         settleKeyboardFor(desktopHome);
         activeDestination = DesktopDestination.HOME;
         activeWebAppId = null;
@@ -807,6 +892,11 @@ public final class MainActivity extends Activity {
         // Only a web app loads from a known entry point, so only a web app
         // offers the reload action (ADR-0061).
         appSurfaceHost.setRefreshAction(null);
+        appSurfaceHost.setMinimizeAction(null);
+        appSurfaceHost.setCloseAction(null);
+        if (destination == DesktopDestination.NATIVE_GUI) {
+            nativeDesktop.wireSurfaceActions();
+        }
         if (destination == DesktopDestination.TERMINAL) {
             // Isolation (ADR-0054 amendment): the terminal owns the shell tabs
             // only, and showing it brings one of them back to the front — a
@@ -833,7 +923,16 @@ public final class MainActivity extends Activity {
         activeDestination = DesktopDestination.HOME;
         activeWebAppId = definition.getId().value();
         activeTerminalAppId = null;
+        TerminalTabException startupFailure = null;
+        CompletableFuture<Void> restarting =
+                WebAppRestartSessions.get(this).pending(definition.getId().value());
+        if (definition.hasStartupCommand() && restarting == null) {
+            try { WebAppCommandSession.start(definition, TerminalTabsRegistry.getInstance().port()); }
+            catch (TerminalTabException failure) { startupFailure = failure; }
+        }
         WebAppSurfaceView surface = webAppSurfaceFor(definition);
+        if (startupFailure != null) surface.showStartupFailure(startupFailure.getMessage());
+        if (restarting != null) { surface.showServerStarting(); webAppServers.watchServerRestart(definition, restarting); }
         settleKeyboardFor(surface);
         desktopHome.setVisibility(View.GONE);
         appSurfaceHost.setVisibility(View.VISIBLE);
@@ -852,6 +951,8 @@ public final class MainActivity extends Activity {
         // address on a fresh renderer: the recovery for a page that navigated
         // somewhere with no way back (ADR-0061).
         appSurfaceHost.setRefreshAction(surface::reload);
+        appSurfaceHost.setMinimizeAction(null);
+        appSurfaceHost.setCloseAction(null);
     }
 
     /**
@@ -862,6 +963,10 @@ public final class MainActivity extends Activity {
         List<AppSurfaceHostView.MenuAction> actions = new ArrayList<>();
         actions.add(new AppSurfaceHostView.MenuAction(
                 R.string.webapp_menu_edit, () -> openAppForm(definition, null)));
+        if (definition.hasStartupCommand()) {
+            actions.add(new AppSurfaceHostView.MenuAction(R.string.web_command_terminal, () -> webAppServers.showWebAppTerminal(definition)));
+            actions.add(new AppSurfaceHostView.MenuAction(R.string.web_command_restart, () -> webAppServers.restartWebAppServer(definition)));
+        }
         // Cache actions answer "is the app stale or is the cache stale": the
         // reload drops the WebView cache and reloads the page in place, while
         // the clear leaves the open page untouched (ADR-0064).
@@ -935,6 +1040,9 @@ public final class MainActivity extends Activity {
             case ADD_APP:
                 openAppForm(null, null);
                 return;
+            case LINUX_APP:
+                nativeDesktop.openLinuxApp(entry.getLinuxApp());
+                return;
             case TERMINAL_APP:
                 showTerminalApp(entry.getTerminalApp());
                 return;
@@ -979,26 +1087,8 @@ public final class MainActivity extends Activity {
             refreshUserApps();
             return;
         }
-        TerminalAppView surface = terminalAppSurfaceFor(app);
-        settleKeyboardFor(surface);
-        activeDestination = DesktopDestination.HOME;
-        activeWebAppId = null;
-        activeTerminalAppId = app.getId().value();
-        desktopHome.setVisibility(View.GONE);
-        appSurfaceHost.setVisibility(View.VISIBLE);
-        for (View other : fixedSurfaces.values()) {
-            other.setVisibility(View.GONE);
-        }
-        for (WebAppSurfaceView other : webAppSurfaces.values()) {
-            other.setVisibility(View.GONE);
-        }
-        for (TerminalAppView other : terminalAppSurfaces.values()) {
-            other.setVisibility(other == surface ? View.VISIBLE : View.GONE);
-        }
-        appSurfaceHost.setAppTitle(app.getDisplayName());
-        renderTerminalAppMenu(app.getId().value(), TerminalTabsBus.getInstance().current());
-        // A terminal session is not reloadable content; no refresh action.
-        appSurfaceHost.setRefreshAction(null);
+        TerminalAppView surface = webAppServers.commandSurfaceFor(app.getId().value());
+        webAppServers.showCommandSurface(app.getId().value(), app.getDisplayName(), surface);
 
         TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
         if (port == null) {
@@ -1011,30 +1101,6 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** Creates or reuses the retained surface for one terminal-command app. */
-    private TerminalAppView terminalAppSurfaceFor(TerminalCommandApp app) {
-        String id = app.getId().value();
-        TerminalAppView surface = terminalAppSurfaces.get(id);
-        if (surface == null) {
-            surface = new TerminalAppView(this);
-            surface.setTabScope(TerminalSurfaceScope.commandApp(id));
-            surface.setOnGoToDesktopListener(view -> showShell());
-            surface.setOnRestartLinuxListener(view -> RuntimeHostService.requestRestart(this));
-            surface.setOnTabsChangedListener(snapshot -> {
-                if (id.equals(activeTerminalAppId)) {
-                    renderTerminalAppMenu(id, snapshot);
-                }
-            });
-            surface.setTerminalDependencies(
-                    TerminalTabsRegistry.getInstance(), TerminalTabsBus.getInstance());
-            terminalAppSurfaces.put(id, surface);
-            appSurfaceHost.getSurfaceContainer().addView(surface, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT));
-        }
-        return surface;
-    }
-
     /**
      * The options menu of one terminal-command app's surface. The surface owns
      * exactly one tab, so the whole choice is whether to close it; there is no
@@ -1044,6 +1110,13 @@ public final class MainActivity extends Activity {
     private void renderTerminalAppMenu(String appId, TerminalTabsSnapshot snapshot) {
         TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
         List<AppSurfaceHostView.MenuAction> actions = new ArrayList<>();
+        if (WebAppCommandSession.isOwner(appId)) {
+            WebAppDefinition app = webAppForOwnerId(appId);
+            if (app != null) {
+                actions.add(new AppSurfaceHostView.MenuAction(R.string.web_command_back, () -> showWebApp(app)));
+                actions.add(new AppSurfaceHostView.MenuAction(R.string.web_command_restart, () -> webAppServers.restartWebAppServer(app)));
+            }
+        }
         if (port != null) {
             for (TerminalTabSnapshot tab : TerminalSurfaceScope.commandApp(appId)
                     .inScope(snapshot)) {
@@ -1208,6 +1281,9 @@ public final class MainActivity extends Activity {
     }
 
     private View createSurface(DesktopDestination destination) {
+        if (destination == DesktopDestination.NATIVE_GUI && BuildConfig.NATIVE_DESKTOP_ENABLED) {
+            return nativeDesktop.createSurface();
+        }
         if (destination == DesktopDestination.TERMINAL) {
             return createTerminalSurface();
         }
@@ -1326,6 +1402,9 @@ public final class MainActivity extends Activity {
             public void onWebAppSaved(WebAppDefinition definition) {
                 // The app may now point at a different endpoint, so an image
                 // fetched from the old one must not stay on the tile.
+                WebAppRestartSessions.get(MainActivity.this).cancel(definition.getId().value());
+                WebAppCommandSession.invalidateChangedCommand(definition, TerminalTabsRegistry.getInstance().port());
+                discardWebAppSurface(definition.getId().value());
                 forgetFavicon(definition.getId().value());
                 refreshUserApps();
                 showShell();
@@ -1339,6 +1418,9 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onWebAppDeleted(String webAppId) {
+                WebAppRestartSessions.get(MainActivity.this).cancel(webAppId);
+                WebAppCommandSession.stop(WebAppId.of(webAppId), TerminalTabsRegistry.getInstance().port());
+                discardTerminalAppSurface(WebAppCommandSession.ownerId(WebAppId.of(webAppId)));
                 discardWebAppSurface(webAppId);
                 // Removing the app must not leave its saved sign-in behind on
                 // the device; the vault entry is keyed by the app's stable id.
@@ -1386,6 +1468,13 @@ public final class MainActivity extends Activity {
                     renderWebAppMenu(current, activeSurface);
                 }
             }
+        });
+        activeSurface.setBeforeReload(() -> {
+            if (WebAppRestartSessions.get(this).pending(id) != null) {
+                activeSurface.showServerStarting(); return false;
+            }
+            try { WebAppCommandSession.start(definition, TerminalTabsRegistry.getInstance().port()); return true; }
+            catch (TerminalTabException failure) { activeSurface.showStartupFailure(failure.getMessage()); return false; }
         });
         activeSurface.bind(definition, probeExecutor,
                 webAppSignInFor(id, definition, activeSurface));
@@ -1498,6 +1587,20 @@ public final class MainActivity extends Activity {
         }
         for (WebAppDefinition definition : webAppRegistry.list()) {
             if (definition.getId().value().equals(webAppId)) {
+                return definition;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The registered web app whose command session owns {@code ownerId}, or
+     * {@code null}. The owner prefix belongs to {@link WebAppCommandSession},
+     * so the lookup compares against its own ids instead of slicing it off.
+     */
+    private WebAppDefinition webAppForOwnerId(String ownerId) {
+        for (WebAppDefinition definition : webAppRegistry.list()) {
+            if (ownerId.equals(WebAppCommandSession.ownerId(definition.getId()))) {
                 return definition;
             }
         }

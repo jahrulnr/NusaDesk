@@ -273,16 +273,23 @@ public final class SshClientBridge {
         }
         io.shutdown();
         lifecycle.shutdownNow();
-        try {
-            lifecycle.awaitTermination(2, TimeUnit.SECONDS);
-        } catch (InterruptedException ignored) {
-            Thread.currentThread().interrupt();
-        }
         SshSessionListener l = listener;
         if (l != null) {
             l.onState(SshSessionState.CLOSED, "closed by caller");
             l.onClosed("closed by caller");
         }
+    }
+
+    /**
+     * Worker-only completion fence for guest/display teardown; close() itself
+     * never blocks the UI. Only completes after {@link #close()} has initiated
+     * shutdown — awaiting a still-open session costs the whole timeout and
+     * returns {@code false}.
+     */
+    public boolean awaitClosed(long timeoutMillis) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        if (!io.awaitTermination(timeoutMillis, TimeUnit.MILLISECONDS)) return false;
+        return lifecycle.awaitTermination(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
     }
 
     private void runSession() {

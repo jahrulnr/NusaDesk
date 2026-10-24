@@ -81,8 +81,7 @@ pinned by `BridgePermissionsManifestTest`.
 - Unit coverage: `BluetoothModuleTest` (31), `BluetoothLeModuleTest` (25),
   `BluetoothGattModuleTest` (30), `BluetoothRfcommModuleTest` (26),
   `GuestBtCliWriterTest` (3). Device verification on the S10e (and the S7
-  Edge as the peer) is the acceptance gate and is recorded in
-  `docs/evidence/` when it lands.
+  Edge as the peer) is the acceptance gate.
 
 ## Device evidence
 
@@ -101,5 +100,4 @@ confirmed. Two device findings were fixed afterwards: the `bt.pair` timeout
 report (the module now re-reads `getBondState()` before answering) and the BLE
 advertise payload (the device name is omitted from the advertisement when a
 128-bit service UUID is present, and platform error codes map to specific
-typed errors). Full observed output in
-`docs/evidence/capability-closure-matrix.md`.
+typed errors).

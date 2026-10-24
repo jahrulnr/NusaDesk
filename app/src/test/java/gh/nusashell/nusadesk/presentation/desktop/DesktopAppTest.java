@@ -50,6 +50,8 @@ public class DesktopAppTest {
     public void theCatalogueOnlyHoldsSurfacesTheProductCanOpen() {
         List<DesktopApp> curated = DesktopApp.curated();
         assertEquals(3, curated.size());
+        assertNull("GUI apps come from actual desktop entries, not a placeholder",
+                DesktopApp.fromId("native_gui"));
         assertSame(DesktopApp.TERMINAL, curated.get(0));
         assertSame(DesktopApp.SYSTEM, curated.get(1));
         assertSame(DesktopApp.LOGS, curated.get(2));
@@ -81,7 +83,7 @@ public class DesktopAppTest {
     @Test
     public void curatedListIsReadOnlySoATileCannotMutateTheCatalogue() {
         List<DesktopApp> curated = DesktopApp.curated();
-        assertEquals(DesktopApp.values().length, curated.size());
+        assertEquals(3, curated.size());
         try {
             curated.add(DesktopApp.TERMINAL);
             assertTrue("catalogue must be immutable", false);

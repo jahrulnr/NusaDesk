@@ -1,12 +1,16 @@
 package gh.nusashell.nusadesk.presentation.desktop;
 
+import gh.nusashell.nusadesk.domain.display.DesktopTask;
+import gh.nusashell.nusadesk.domain.display.LinuxDesktopApp;
 import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.Function;
 
 /**
@@ -41,10 +45,36 @@ public final class LauncherModel {
      */
     public static List<LauncherEntry> entries(
             List<WebAppDefinition> webApps, List<TerminalCommandApp> commandApps) {
+        return entries(webApps, commandApps, Collections.emptyList());
+    }
+
+    /** Installed GUI applications join the same searchable Home grid. */
+    public static List<LauncherEntry> entries(List<WebAppDefinition> webApps,
+            List<TerminalCommandApp> commandApps, List<LinuxDesktopApp> linuxApps) {
+        return entries(webApps, commandApps, linuxApps, Collections.emptyList());
+    }
+
+    /** Merge live task metadata into existing icons, retaining an icon until its task exits. */
+    public static List<LauncherEntry> entries(List<WebAppDefinition> webApps,
+            List<TerminalCommandApp> commandApps, List<LinuxDesktopApp> linuxApps,
+            List<DesktopTask> tasks) {
+        Map<String, LinuxDesktopApp> installed = new LinkedHashMap<>();
+        Map<String, DesktopTask.State> states = new LinkedHashMap<>();
+        if (linuxApps != null) for (LinuxDesktopApp app : linuxApps) {
+            if (app != null) installed.put(app.getId(), app);
+        }
+        if (tasks != null) for (DesktopTask task : tasks) {
+            if (task.getState() == DesktopTask.State.FAILED && !installed.containsKey(task.getApp().getId())) continue;
+            installed.putIfAbsent(task.getApp().getId(), task.getApp());
+            states.put(task.getApp().getId(), task.getState());
+        }
         List<LauncherEntry> entries = new ArrayList<>();
         entries.add(LauncherEntry.addApp());
         for (DesktopApp app : DesktopApp.curated()) {
             entries.add(LauncherEntry.curated(app));
+        }
+        for (LinuxDesktopApp app : installed.values()) {
+            entries.add(LauncherEntry.linuxApp(app, states.get(app.getId())));
         }
         if (webApps != null) {
             for (WebAppDefinition definition : webApps) {

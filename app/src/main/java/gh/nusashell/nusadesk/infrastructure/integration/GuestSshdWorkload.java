@@ -18,6 +18,8 @@ import gh.nusashell.nusadesk.domain.session.ReadinessFrame;
 import gh.nusashell.nusadesk.domain.session.ReadinessHealth;
 import gh.nusashell.nusadesk.domain.session.SessionSnapshot;
 import gh.nusashell.nusadesk.infrastructure.androidbridge.AndroidCapabilityBridge;
+import gh.nusashell.nusadesk.infrastructure.display.NativeDesktopSession;
+import gh.nusashell.nusadesk.infrastructure.display.NativeDisplayShutdownException;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTrim;
 import gh.nusashell.nusadesk.infrastructure.logs.SessionLogWriter;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestAwarenessReadmeWriter;
@@ -370,8 +372,14 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             // session-temporary by contract. Clear stale files after any
             // previous tracer/tracee has been reclaimed, before a new guest
             // process can create or depend on temporary state.
+            NativeDesktopSession.stopBeforeTmpCleanup();
             GuestEphemeralStateCleaner.clearGuestTmp(rootfs);
-        } catch (IOException e) {
+        } catch (NativeDisplayShutdownException e) {
+            fail(listener, "could not stop Linux display before starting the guest: " + e.getMessage());
+            return;
+        } catch (IOException | RuntimeException e) {
+            // An unchecked failure from the display teardown must still reach
+            // the listener; otherwise the session wedges STARTING with no verdict.
             fail(listener, "could not reset guest temporary storage: " + e.getMessage());
             return;
         }
@@ -1054,8 +1062,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             return;
         }
         try {
+            NativeDesktopSession.stopBeforeTmpCleanup();
             GuestEphemeralStateCleaner.clearGuestTmp(rootfs);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             // Stop remains honest even when cleanup is blocked; the next start
             // retries before launching any guest process.
             Log.w(TAG, "could not clear guest temporary storage after stop", e);

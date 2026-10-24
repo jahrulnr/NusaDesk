@@ -1,0 +1,181 @@
+diff --git a/lorie/src/main/cpp/lorie/activity.cpp b/lorie/src/main/cpp/lorie/activity.cpp
+index c2175ba..39bd7d6 100644
+--- a/lorie/src/main/cpp/lorie/activity.cpp
++++ b/lorie/src/main/cpp/lorie/activity.cpp
+@@ -100,7 +100,7 @@ static jmethodID FindMethodOrDie(JNIEnv *env, jclass clazz, const char* name, co
+ }
+ 
+ // @CriticalNative: no implicit JNIEnv*/jclass, unlike the @FastNative entries below.
+-static jboolean requestConnection(__unused jlong ptr) {
++static jboolean requestConnection(__unused JNIEnv* env, __unused jclass clazz, __unused jlong ptr) {
+ #define check(cond, fmt, ...) if ((cond)) do { __android_log_print(ANDROID_LOG_ERROR, "requestConnection", fmt, ## __VA_ARGS__); goto end; } while (0)
+     bool sent = JNI_FALSE;
+     // We do not want to block GUI thread for a long time so we will set timeout to 20 msec.
+@@ -146,7 +146,7 @@ static jlong nativeInit(JNIEnv *env, jobject thiz) {
+         CharBuffer.self = FindClassOrDie(env,  "java/nio/CharBuffer");
+         CharBuffer.toString = FindMethodOrDie(env, CharBuffer.self, "toString", "()Ljava/lang/String;", JNI_FALSE);
+ 
+-        MainActivity.self = FindClassOrDie(env,  "com/termux/x11/MainActivity");
++        MainActivity.self = FindClassOrDie(env,  "gh/nusashell/nusadesk/infrastructure/display/X11Callbacks");
+         MainActivity.clientConnectedStateChanged = FindMethodOrDie(env, MainActivity.self, "clientConnectedStateChanged", "()V", JNI_FALSE);
+         MainActivity.lastServerHeartbeat = env->GetFieldID(MainActivity.self, "lastServerHeartbeat", "J");
+         MainActivity.resetIme = FindMethodOrDie(env, env->GetObjectClass(thiz), "resetIme", "()V", JNI_FALSE);
+@@ -165,7 +165,7 @@ LorieViewResources::LorieViewResources(JNIEnv *callerEnv, jobject view) {
+     vm->AttachCurrentThread(&env, nullptr);
+     thiz = env->NewGlobalRef(view);
+ 
+-    jfieldID activityField = env->GetFieldID(env->GetObjectClass(view), "activity", "Lcom/termux/x11/MainActivity;");
++    jfieldID activityField = env->GetFieldID(env->GetObjectClass(view), "activity", "Lgh/nusashell/nusadesk/infrastructure/display/X11Callbacks;");
+     jobject a = env->GetObjectField(view, activityField);
+     if (a)
+         activity = env->NewGlobalRef(a);
+@@ -467,7 +467,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, __unused void *reserved) {
+                 r->connect(fd);
+             }},
+             // @CriticalNative: no implicit JNIEnv*/jclass, unlike the @FastNative entries below.
+-            {"connected", "(J)Z", (void *) +[](jlong ptr) -> jboolean {
++            {"connected", "(J)Z", (void *) +[](__unused JNIEnv* env, __unused jclass clazz, jlong ptr) -> jboolean {
+                 auto* r = (LorieViewResources*) ptr;
+                 return r && r->connFd != -1;
+             }},
+@@ -551,34 +551,9 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, __unused void *reserved) {
+             }},
+     };
+     vm->AttachCurrentThread(&env, nullptr);
+-    jclass cls = env->FindClass("com/termux/x11/LorieView");
++    jclass cls = env->FindClass("gh/nusashell/nusadesk/infrastructure/display/X11Surface");
+     env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0]));
+ 
+-    pthread_t freeformLookupThread;
+-    pthread_create(&freeformLookupThread, nullptr, +[](void* arg) -> void* {
+-        auto* vm = (JavaVM*) arg;
+-        JNIEnv* threadEnv;
+-        vm->AttachCurrentThread(&threadEnv, nullptr);
+-        jclass activityOptionsClass = threadEnv->FindClass("android/app/ActivityOptions");
+-        jmethodID method = activityOptionsClass ? threadEnv->GetMethodID(activityOptionsClass, "setLaunchWindowingMode", "(I)V") : nullptr;
+-        threadEnv->ExceptionClear();
+-        vm->DetachCurrentThread();
+-        return (void*) method;
+-    }, vm);
+-    void* freeformMethod;
+-    pthread_join(freeformLookupThread, &freeformMethod);
+-    ActivityOptions.setLaunchWindowingMode = (jmethodID) freeformMethod;
+-    if (!ActivityOptions.setLaunchWindowingMode)
+-        log(ERROR, "ActivityOptions.setLaunchWindowingMode(int) not found");
+-
+-    static JNINativeMethod mainActivityMethods[] = {
+-            {"nativeSetLaunchWindowingModeFreeform", "(Ljava/lang/Object;)V", (void *) +[](JNIEnv *env, __unused jclass clazz, jobject options) {
+-                if (ActivityOptions.setLaunchWindowingMode)
+-                    env->CallVoidMethod(options, ActivityOptions.setLaunchWindowingMode, 5); // WINDOWING_MODE_FREEFORM
+-            }},
+-    };
+-    env->RegisterNatives(env->FindClass("com/termux/x11/MainActivity"), mainActivityMethods, sizeof(mainActivityMethods)/sizeof(mainActivityMethods[0]));
+-
+     registerCmdEntryPointNatives(env);
+ 
+     return JNI_VERSION_1_6;
+diff --git a/lorie/src/main/cpp/lorie/cmdentrypoint.cpp b/lorie/src/main/cpp/lorie/cmdentrypoint.cpp
+index 7b67e91..1fdc7f2 100644
+--- a/lorie/src/main/cpp/lorie/cmdentrypoint.cpp
++++ b/lorie/src/main/cpp/lorie/cmdentrypoint.cpp
+@@ -100,6 +100,7 @@ static jboolean start(JNIEnv *env, jobject self, jobjectArray args) {
+ 
+     {
+         cpu_set_t mask;
++        CPU_ZERO(&mask);
+         long num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+ 
+         for (int i = num_cpus/2; i < num_cpus; i++)
+@@ -616,65 +617,9 @@ static void reportFatalError(JNIEnv *env, __unused jobject cls, jstring message)
+ 
+ // Called from OsVendorInit() once the display number and "-tag" argument (if any) are resolved,
+ // so the port to knock on and the tag to report back to Java are already known.
+-void lorieListenForKnocks(int port, const char *tag) {
+-    struct sockaddr_in address = { .sin_family = AF_INET, .sin_port = htons(port), .sin_addr = { .s_addr = INADDR_ANY } };
+-    int fd, reuse = 1;
+-
++// NusaDesk uses its private Binder connection; no TCP knock listener is needed.
++void lorieListenForKnocks(__unused int port, const char *tag) {
+     serverEnv->CallVoidMethod(thiz, setDocumentTag, tag ? serverEnv->NewStringUTF(tag) : nullptr);
+-
+-    // Even in the case if it will fail for some reason everything will work fine
+-    // But connection will be delayed a bit
+-
+-    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+-        log(ERROR, "Failed to create the knock-listening socket: %s", strerror(errno));
+-        serverEnv->CallVoidMethod(thiz, sendBroadcastDelayed);
+-        return;
+-    }
+-
+-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+-    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+-
+-    if (bind(fd, (struct sockaddr *) &address, sizeof(address)) < 0) {
+-        log(ERROR, "Failed to bind the knock-listening socket to port %d: %s", port, strerror(errno));
+-        close(fd);
+-        serverEnv->CallVoidMethod(thiz, sendBroadcastDelayed);
+-        return;
+-    }
+-
+-    if (listen(fd, 5) < 0) {
+-        log(ERROR, "Failed to listen on the knock-listening socket: %s", strerror(errno));
+-        close(fd);
+-        serverEnv->CallVoidMethod(thiz, sendBroadcastDelayed);
+-        return;
+-    }
+-
+-    SetNotifyFd(fd, +[](int fd, int ready, __unused void *data) {
+-        struct sockaddr_in address;
+-        socklen_t addrlen = sizeof(address);
+-        uint8_t buffer[512] = {0};
+-        int client, count;
+-
+-        if (ready & X_NOTIFY_ERROR) {
+-            RemoveNotifyFd(fd);
+-            close(fd);
+-            return;
+-        }
+-
+-        if ((client = accept(fd, (struct sockaddr *) &address, &addrlen)) < 0) {
+-            log(ERROR, "Failed to accept a connection on the knock-listening socket: %s", strerror(errno));
+-            return;
+-        }
+-
+-        if (poll((struct pollfd[]) {{ .fd = client, .events = POLLIN }}, 1, 200) > 0 &&
+-            (count = recv(client, buffer, sizeof(buffer), MSG_DONTWAIT)) > 0 &&
+-            !memcmp(buffer, MAGIC, min(count, sizeof(MAGIC)))) {
+-            log(DEBUG, "New client connection!\n");
+-            serverEnv->CallVoidMethod(thiz, sendBroadcast);
+-        }
+-        close(client);
+-    }, X_NOTIFY_READ, NULL);
+-
+-    serverEnv->CallVoidMethod(thiz, sendBroadcastDelayed);
+ }
+ 
+ void registerCmdEntryPointNatives(JNIEnv *env) {
+@@ -683,9 +628,9 @@ void registerCmdEntryPointNatives(JNIEnv *env) {
+             {"getXConnection", "()Landroid/os/ParcelFileDescriptor;", (void *) &getXConnection},
+             {"getLogcatOutput", "()Landroid/os/ParcelFileDescriptor;", (void *) &getLogcatOutput},
+             {"reportFatalError", "(Ljava/lang/String;)V", (void *) &reportFatalError},
+-            {"connected", "()Z", (void *) +[]() -> jboolean { return conn_fd != -1; }}, // @CriticalNative
++            {"connected", "()Z", (void *) +[](__unused JNIEnv* env, __unused jclass clazz) -> jboolean { return conn_fd != -1; }}, // @CriticalNative
+     };
+-    jclass cls = env->FindClass("com/termux/x11/CmdEntryPoint");
++    jclass cls = env->FindClass("gh/nusashell/nusadesk/infrastructure/display/X11Server");
+     env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0]));
+ }
+ 
+diff --git a/lorie/src/main/cpp/lorie/renderer.cpp b/lorie/src/main/cpp/lorie/renderer.cpp
+index 7b5b5ff..3164418 100644
+--- a/lorie/src/main/cpp/lorie/renderer.cpp
++++ b/lorie/src/main/cpp/lorie/renderer.cpp
+@@ -312,7 +312,7 @@ void Renderer::init(JNIEnv* env, jobject view) {
+ 
+     env->GetJavaVM(&jvm);
+     thiz = env->NewGlobalRef(view);
+-    jclass clazz = env->FindClass("com/termux/x11/LorieView");
++    jclass clazz = env->FindClass("gh/nusashell/nusadesk/infrastructure/display/X11Surface");
+     lorieViewClass = (jclass) env->NewGlobalRef(clazz);
+     setRendererViewportMethod = env->GetMethodID(lorieViewClass, "setRendererViewport", "(IIIIFFFF)V");
+ 

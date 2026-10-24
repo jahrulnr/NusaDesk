@@ -41,11 +41,14 @@ import gh.nusashell.nusadesk.presentation.SoftKeyboardAware;
  * and image plus one guest command line; the host never executes it, so there
  * is deliberately no shell, cwd, or environment field.</p>
  *
- * <p>The kind is chosen once, while adding: a saved app's kind never changes,
- * so {@code bindExisting} hides the Type dropdown and shows only the matching
- * field group. Switching kinds while adding keeps the typed name and the
- * chosen image — both kinds share them — and clears the field errors, which no
- * longer describe the field the user is looking at.</p>
+ * <p>A saved terminal-command app's kind never changes, so {@code
+ * bindExisting} hides the Type dropdown for it. A saved web app's kind is
+ * narrower instead of fixed: the dropdown then offers only web and
+ * web+command, so the app can gain or drop its startup command (ADR-0072)
+ * but can never become a terminal-command app. Switching kinds keeps the
+ * typed name and the chosen image — all kinds share them — and clears the
+ * field errors, which no longer describe the field the user is looking
+ * at.</p>
  *
  * <p>Validation is not re-implemented here. The form hands the raw values to
  * the matching registry ({@link WebAppRegistry} or {@link
@@ -93,7 +96,7 @@ public final class AppFormView extends ScrollView implements SoftKeyboardAware {
     }
 
     /** Which registry and which kind-specific field group the form submits to. */
-    private enum Kind { WEB, COMMAND }
+    private enum Kind { WEB, COMMAND, WEB_COMMAND }
 
     private final WebAppRegistry webApps;
     private final TerminalCommandRegistry commands;
@@ -178,14 +181,16 @@ public final class AppFormView extends ScrollView implements SoftKeyboardAware {
                 R.layout.nusadesk_dialog_spinner_item,
                 new String[]{
                         getContext().getString(R.string.app_form_type_web),
-                        getContext().getString(R.string.app_form_type_command)});
+                        getContext().getString(R.string.app_form_type_command),
+                        getContext().getString(R.string.app_form_type_web_command)});
         kindAdapter.setDropDownViewResource(R.layout.nusadesk_dialog_spinner_dropdown_item);
         kindSpinner.setAdapter(kindAdapter);
         kindSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (!bindingKind) {
-                    selectKind(position == 1 ? Kind.COMMAND : Kind.WEB);
+                    selectKind(isEditing() && kind != Kind.COMMAND
+                            ? (position == 0 ? Kind.WEB : Kind.WEB_COMMAND) : Kind.values()[position]);
                 }
             }
 
@@ -230,13 +235,13 @@ public final class AppFormView extends ScrollView implements SoftKeyboardAware {
     /** Prepares the form for an existing web app. */
     public void bindExisting(WebAppDefinition definition) {
         editingId = definition.getId().value();
-        kind = Kind.WEB;
+        kind = definition.hasStartupCommand() ? Kind.WEB_COMMAND : Kind.WEB;
         iconUri = definition.getIconUri();
         nameInput.setText(definition.getDisplayName());
         portInput.setText(String.valueOf(definition.getGuestPort()));
-        commandInput.setText("");
-        selectKindInSpinner(Kind.WEB);
-        setTypeFieldVisible(false);
+        commandInput.setText(definition.hasStartupCommand() ? definition.getStartupCommand().value() : "");
+        selectKindInSpinner(kind);
+        setTypeFieldVisible(true);
         renderKind();
         clearErrors();
         heading.setText(R.string.webapp_edit_title);
@@ -309,7 +314,7 @@ public final class AppFormView extends ScrollView implements SoftKeyboardAware {
         portInput.setText(state.getString(STATE_PORT, ""));
         commandInput.setText(state.getString(STATE_COMMAND, ""));
         selectKindInSpinner(kind);
-        setTypeFieldVisible(!isEditing());
+        setTypeFieldVisible(!isEditing() || kind != Kind.COMMAND);
         renderKind();
         clearErrors();
         heading.setText(isEditing() ? R.string.webapp_edit_title : R.string.webapp_add_title);
@@ -339,7 +344,16 @@ public final class AppFormView extends ScrollView implements SoftKeyboardAware {
      */
     private void selectKindInSpinner(Kind selected) {
         bindingKind = true;
-        kindSpinner.setSelection(selected == Kind.COMMAND ? 1 : 0, false);
+        boolean webEdit = isEditing() && selected != Kind.COMMAND;
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(getContext(), R.layout.nusadesk_dialog_spinner_item,
+                webEdit ? new String[]{getContext().getString(R.string.app_form_type_web),
+                        getContext().getString(R.string.app_form_type_web_command)}
+                        : new String[]{getContext().getString(R.string.app_form_type_web),
+                        getContext().getString(R.string.app_form_type_command),
+                        getContext().getString(R.string.app_form_type_web_command)});
+        adapter.setDropDownViewResource(R.layout.nusadesk_dialog_spinner_dropdown_item);
+        kindSpinner.setAdapter(adapter);
+        kindSpinner.setSelection(webEdit ? (selected == Kind.WEB_COMMAND ? 1 : 0) : selected.ordinal(), false);
         kindSpinner.post(() -> bindingKind = false);
     }
 
@@ -350,10 +364,10 @@ public final class AppFormView extends ScrollView implements SoftKeyboardAware {
     }
 
     private void renderKind() {
-        boolean web = kind == Kind.WEB;
-        portGroup.setVisibility(web ? VISIBLE : GONE);
-        commandGroup.setVisibility(web ? GONE : VISIBLE);
-        body.setText(web ? R.string.webapp_form_body : R.string.terminal_form_body);
+        portGroup.setVisibility(kind == Kind.COMMAND ? GONE : VISIBLE);
+        commandGroup.setVisibility(kind == Kind.WEB ? GONE : VISIBLE);
+        body.setText(kind == Kind.WEB_COMMAND ? R.string.web_command_form_body
+                : kind == Kind.WEB ? R.string.webapp_form_body : R.string.terminal_form_body);
     }
 
     /** Opens the system image picker. Called by the form itself. */
@@ -429,9 +443,11 @@ public final class AppFormView extends ScrollView implements SoftKeyboardAware {
         try {
             WebAppDefinition saved = isEditing()
                     ? webApps.update(editingId,
-                            nameInput.getText().toString(), iconUri, typedPort)
+                            nameInput.getText().toString(), iconUri, typedPort,
+                            kind == Kind.WEB_COMMAND ? commandInput.getText().toString() : null)
                     : webApps.add(
-                            nameInput.getText().toString(), iconUri, typedPort);
+                            nameInput.getText().toString(), iconUri, typedPort,
+                            kind == Kind.WEB_COMMAND ? commandInput.getText().toString() : null);
             if (listener != null) {
                 listener.onWebAppSaved(saved);
             }

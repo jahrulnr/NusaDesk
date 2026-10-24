@@ -2,6 +2,10 @@ plugins {
     id 'com.android.application'
 }
 
+// Experimental native GUI slice (ADR-0068). The default build excludes this
+// optional display binary; enabling it links GPL Xlorie.
+def nativeDesktopEnabled = providers.gradleProperty('nativeDesktop').orElse('false').get().toBoolean()
+
 // The VERSION marker is the single source of truth for the app version
 // (ADR-0067): versionName and versionCode are both derived here, so a release
 // bump never hand-edits this file. The code mapping reserves three digits per
@@ -45,6 +49,15 @@ android {
 
     sourceSets {
         main.assets.srcDir changelogAssetsDir
+        if (nativeDesktopEnabled) {
+            main.jniLibs.srcDir layout.buildDirectory.dir('generated/native-display').get().asFile
+            main.assets.srcDir layout.buildDirectory.dir('generated/native-display-assets').get().asFile
+        }
+    }
+
+    buildFeatures {
+        aidl true
+        buildConfig true
     }
 
     defaultConfig {
@@ -53,6 +66,7 @@ android {
         targetSdk 37
         versionCode derivedVersionCode
         versionName releaseVersion
+        buildConfigField 'boolean', 'NATIVE_DESKTOP_ENABLED', nativeDesktopEnabled.toString()
     }
 
     // Release signing (ADR-0040). The published GitHub/F-Droid APK must be
@@ -181,8 +195,29 @@ android {
     }
 }
 
+if (nativeDesktopEnabled) {
+    tasks.register('buildNativeDesktop', Exec) {
+        workingDir rootProject.projectDir
+        commandLine 'bash', rootProject.file('scripts/build-x11-arm64.sh').absolutePath
+        inputs.file rootProject.file('scripts/build-x11-arm64.sh')
+        inputs.file rootProject.file('third_party/termux-x11/nusadesk.patch')
+        inputs.file rootProject.file('scripts/verify-x11-submodules.sh')
+        inputs.file rootProject.file('third_party/termux-x11/README.md')
+        inputs.file rootProject.file('third_party/termux-x11/submodules.lock')
+        outputs.file layout.buildDirectory.file('generated/native-display/arm64-v8a/libXlorie.so')
+        outputs.dir layout.buildDirectory.dir('generated/native-display-assets')
+    }
+    tasks.named('preBuild').configure { dependsOn 'buildNativeDesktop' }
+}
+
 dependencies {
     implementation 'org.apache.commons:commons-compress:1.28.0'
+
+    // Static SVG favicon rasterization. AndroidSVG 1.4 (Apache-2.0), pinned to
+    // the upstream stable Maven Central release. Mature Android Canvas renderer;
+    // avoids a handwritten SVG parser and a WebView for launcher icons. No
+    // external resource resolver is registered. See ADR-0071 and bundled notice.
+    implementation 'com.caverock:androidsvg-aar:1.4'
 
     // SSH client bridge core. Apache MINA SSHD is a real Java SSH client/server
     // library (Apache License 2.0). Only the client side is used at runtime; the

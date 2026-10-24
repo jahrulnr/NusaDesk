@@ -39,6 +39,10 @@ public final class LinuxWrapperApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        // Xorg owns a private process: it must not wire a second runtime host.
+        if (getProcessName().endsWith(":native_display")) {
+            return;
+        }
         SshSecurityInitializer.initialize(this);
 
         Handler mainHandler = new Handler(Looper.getMainLooper());

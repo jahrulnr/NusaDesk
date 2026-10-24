@@ -1,5 +1,6 @@
 package gh.nusashell.nusadesk.presentation.desktop;
 
+import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.GradientDrawable;
@@ -14,6 +15,9 @@ import android.widget.TextView;
 
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.infrastructure.webapp.IconBitmapDecoder;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * One launcher tile: a single focusable accessibility node with an icon plate, a
@@ -53,8 +57,13 @@ public final class LauncherTileView extends LinearLayout {
     private TextView monogramView;
     private TextView labelView;
     private TextView statusView;
+    private TextView taskBadge;
 
     private LauncherEntry entry;
+    private String pendingIconUri;
+    private static final ExecutorService PICKED_ICONS = Executors.newSingleThreadExecutor(action -> {
+        Thread thread = new Thread(action, "launcher-picked-icons"); thread.setDaemon(true); return thread;
+    });
 
     public LauncherTileView(Context context) {
         super(context);
@@ -69,6 +78,9 @@ public final class LauncherTileView extends LinearLayout {
     private void init() {
         setOrientation(VERTICAL);
         setGravity(Gravity.CENTER_HORIZONTAL);
+        // The task badge extends beyond the icon wrapper's corner.
+        setClipChildren(false);
+        setClipToPadding(false);
         LayoutInflater.from(getContext()).inflate(R.layout.widget_launcher_tile, this, true);
         iconPlate = findViewById(R.id.tile_icon);
         vectorView = findViewById(R.id.tile_vector);
@@ -76,6 +88,7 @@ public final class LauncherTileView extends LinearLayout {
         monogramView = findViewById(R.id.tile_monogram);
         labelView = findViewById(R.id.tile_label);
         statusView = findViewById(R.id.tile_status);
+        taskBadge = findViewById(R.id.tile_task_badge);
 
         setFocusable(true);
         setClickable(true);
@@ -119,8 +132,25 @@ public final class LauncherTileView extends LinearLayout {
         } else {
             statusView.setVisibility(GONE);
         }
-        setContentDescription(descriptionFor(entry, label, openable));
-        setTooltipText(label);
+        String description = descriptionFor(entry, label, openable);
+        if (entry.getTaskState() == null) {
+            taskBadge.setVisibility(GONE);
+        } else {
+            int stateLabel;
+            String glyph;
+            switch (entry.getTaskState()) {
+                case MINIMIZED: stateLabel = R.string.native_task_minimized; glyph = "−"; break;
+                case STARTING: stateLabel = R.string.native_task_starting; glyph = "…"; break;
+                case FAILED: stateLabel = R.string.native_task_failed; glyph = "!"; break;
+                default: stateLabel = R.string.native_task_running; glyph = "•";
+            }
+            taskBadge.setText(glyph);
+            taskBadge.setVisibility(VISIBLE);
+            description = getContext().getString(R.string.native_task_description,
+                    description, getContext().getString(stateLabel));
+        }
+        setContentDescription(description);
+        setTooltipText(entry.getTaskState() == null ? label : description);
     }
 
     /**
@@ -233,9 +263,19 @@ public final class LauncherTileView extends LinearLayout {
         // The platform's image decoder lacks an ICO codec on some API levels:
         // a picked .ico resolves but draws nothing, so the tile's own decoder
         // gets a turn before the pick is declared unusable.
-        imageView.setImageBitmap(IconBitmapDecoder.decodePicked(
-                getContext().getContentResolver(), uri));
-        return imageView.getDrawable() != null;
+        if (!iconUri.equals(pendingIconUri)) {
+            pendingIconUri = iconUri;
+            ContentResolver resolver = getContext().getContentResolver();
+            PICKED_ICONS.execute(() -> {
+                Bitmap bitmap = IconBitmapDecoder.decodePicked(resolver, uri);
+                post(() -> {
+                    if (iconUri.equals(pendingIconUri)) pendingIconUri = null;
+                    if (bitmap == null || entry == null || !iconUri.equals(entry.getIconUri())) return;
+                    applyPlate(); showPlateChild(imageView); imageView.setImageBitmap(bitmap);
+                });
+            });
+        }
+        return false;
     }
 
     /**

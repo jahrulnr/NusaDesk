@@ -80,7 +80,7 @@ process, and the third is only required for `VISIBILITY_HIDDEN`, which
 - Unit coverage: `UsageModuleTest` (16), `PackagesModuleTest` (21),
   `OverlayModuleTest` (17), `LocationBackgroundModuleTest` (14, including a
   service dispatch + simulate + drain round trip). Device verification on the
-  S10e is the acceptance gate and lands in `docs/evidence/`.
+  S10e is the acceptance gate.
 
 ## Device evidence
 
@@ -93,5 +93,4 @@ returned real labels and versions and `packages.launch` brought
 pixels still need one unlocked-screen capture — the plate does not render over
 the secure keyguard); and `location.background.start|poll|stop` produced a real
 network fix with the visible `nusadesk-location-background` notification before
-stopping. Full observed output in
-`docs/evidence/capability-closure-matrix.md`.
+stopping.

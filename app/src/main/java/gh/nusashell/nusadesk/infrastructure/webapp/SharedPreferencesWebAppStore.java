@@ -64,6 +64,7 @@ public final class SharedPreferencesWebAppStore implements WebAppStore {
         String prefix = WebAppRecordCodec.keyPrefix(definition.getId());
         Map<String, String> fields = codec.toFields(definition);
         SharedPreferences.Editor editor = preferences.edit();
+        editor.remove(prefix + WebAppRecordCodec.FIELD_STARTUP_COMMAND);
         for (Map.Entry<String, String> field : fields.entrySet()) {
             // A null icon value removes the key, which reads back as "no icon".
             editor.putString(prefix + field.getKey(), field.getValue());

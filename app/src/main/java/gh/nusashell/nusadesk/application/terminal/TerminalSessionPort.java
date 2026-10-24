@@ -35,7 +35,8 @@ public interface TerminalSessionPort {
      * Register the streaming output sink for the current session. A single
      * listener at a time: registering replaces the previous one, and
      * {@code null} detaches. Output is delivered only while the listener is
-     * registered.
+     * registered. Implementations may invoke the listener under a lock on a
+     * transport pump thread, so it must not block or call back into the port.
      */
     void setOutputListener(TerminalOutputListener listener);
 }

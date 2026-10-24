@@ -6,6 +6,12 @@
      from the accessibility tree and the tile root carries the full description. -->
 <merge xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <FrameLayout
+        android:layout_width="@dimen/tile_icon_size"
+        android:layout_height="@dimen/tile_icon_size"
+        android:layout_gravity="center_horizontal"
+        android:clipChildren="false"
+        android:clipToPadding="false">
     <LinearLayout
         android:id="@+id/tile_icon"
         style="@style/Widget.LinuxWrapper.AppTileIcon">
@@ -30,6 +36,22 @@
             android:id="@+id/tile_monogram"
             style="@style/Widget.LinuxWrapper.AppTileMonogram" />
     </LinearLayout>
+        <TextView
+            android:id="@+id/tile_task_badge"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_gravity="top|end"
+            android:translationX="10dp"
+            android:translationY="-10dp"
+            android:background="@drawable/native_task_badge"
+            android:textColor="@color/button_primary_text"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:importantForAccessibility="no"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/tile_label"

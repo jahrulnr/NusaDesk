@@ -1,6 +1,7 @@
 package gh.nusashell.nusadesk.application.webapp;
 
 import gh.nusashell.nusadesk.domain.webapp.GuestPortPolicy;
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommand;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.webapp.WebAppId;
 
@@ -77,6 +78,13 @@ public final class WebAppRegistry {
      */
     public WebAppDefinition add(String displayName, String iconUri, int guestPort)
             throws WebAppRegistryException {
+        return add(displayName, iconUri, guestPort, null);
+    }
+
+    public WebAppDefinition add(String displayName, String iconUri, int guestPort, String startupCommand)
+            throws WebAppRegistryException {
+        // Fields validate in form order so the first reported error is the
+        // first field the user has to fix; the port field includes its conflict.
         String name = normalizedName(displayName);
         String icon = normalizedIconUri(iconUri);
         int port = validatedPort(guestPort);
@@ -84,10 +92,12 @@ public final class WebAppRegistry {
         List<WebAppDefinition> existing = store.loadAll();
         requirePortFree(existing, port, null);
 
+        String command = normalizedCommand(startupCommand);
+
         long now = epochMillis.getAsLong();
         WebAppDefinition definition = new WebAppDefinition(
                 WebAppId.of(UUID.randomUUID().toString()),
-                name, icon, port, now, now, nextSortOrder(existing));
+                name, icon, port, now, now, nextSortOrder(existing), command);
         persist(definition);
         return definition;
     }
@@ -107,18 +117,36 @@ public final class WebAppRegistry {
         WebAppId id = parseId(webAppId);
         List<WebAppDefinition> existing = store.loadAll();
         WebAppDefinition current = findById(existing, id);
+        return update(id, displayName, iconUri, guestPort,
+                current == null || !current.hasStartupCommand() ? null : current.getStartupCommand().value(),
+                existing);
+    }
+
+    public WebAppDefinition update(String webAppId, String displayName, String iconUri,
+            int guestPort, String startupCommand) throws WebAppRegistryException {
+        WebAppId id = parseId(webAppId);
+        return update(id, displayName, iconUri, guestPort, startupCommand, store.loadAll());
+    }
+
+    private WebAppDefinition update(WebAppId id, String displayName, String iconUri,
+            int guestPort, String startupCommand, List<WebAppDefinition> existing)
+            throws WebAppRegistryException {
+        WebAppDefinition current = findById(existing, id);
         if (current == null) {
             throw new WebAppRegistryException(
                     WebAppRegistryException.Reason.UNKNOWN_APP,
                     "no web app is registered for id " + id);
         }
 
+        // Same field order as add: name, icon, port (including its conflict),
+        // then the command.
         String name = normalizedName(displayName);
         String icon = normalizedIconUri(iconUri);
         int port = validatedPort(guestPort);
         requirePortFree(existing, port, id);
+        String command = normalizedCommand(startupCommand);
 
-        WebAppDefinition updated = current.withDetails(name, icon, port, epochMillis.getAsLong());
+        WebAppDefinition updated = current.withDetails(name, icon, port, epochMillis.getAsLong(), command);
         persist(updated);
         return updated;
     }
@@ -135,6 +163,14 @@ public final class WebAppRegistry {
             return;
         }
         store.delete(WebAppId.of(webAppId));
+    }
+
+    private static String normalizedCommand(String raw) throws WebAppRegistryException {
+        if (raw == null) return null;
+        try { return TerminalCommand.of(raw).value(); }
+        catch (IllegalArgumentException invalid) {
+            throw new WebAppRegistryException(WebAppRegistryException.Reason.INVALID_COMMAND, invalid.getMessage());
+        }
     }
 
     private void persist(WebAppDefinition definition) throws WebAppRegistryException {

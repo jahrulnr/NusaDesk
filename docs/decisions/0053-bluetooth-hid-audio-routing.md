@@ -72,13 +72,12 @@ APIs or expose arbitrary HID report bytes.
 - Unit coverage is owned by `BluetoothHidModuleTest` (31),
   `BluetoothAudioModuleTest` (15), and `MediaPlaybackRoutingTest` (21), plus
   generated guest CLI contract tests. The final Gradle suite completed 1,866
-  tests with no failures; `lintDebug` and `assembleDebug` passed. Physical-device
-  observations and their limits are recorded in
-  `docs/evidence/bluetooth-hid-audio-matrix.md`.
+  tests with no failures; `lintDebug` and `assembleDebug` passed.
 
 ## Device evidence
 
-The acceptance matrix is maintained in
-[`docs/evidence/bluetooth-hid-audio-matrix.md`](../evidence/bluetooth-hid-audio-matrix.md).
-It distinguishes unit coverage from observed device behavior and records the
-actual Android/API/model, connected peer, result, and cleanup for each probe.
+Verified on the S10e against the S7 Edge peer: the S10e presented as a bounded
+HID keyboard/mouse (BTX-001..005 in `docs/test-plan.md`), and reported WH-CH520
+A2DP/HFP status, voice start/stop, and an app-local MediaPlayer route
+(BTX-006..008). The mouse pointer was not visible on the peer, and a sustained
+built-in-speaker route remains unverified (BTX-004, BTX-009).

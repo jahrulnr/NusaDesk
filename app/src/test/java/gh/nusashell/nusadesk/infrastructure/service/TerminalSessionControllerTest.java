@@ -369,4 +369,19 @@ public class TerminalSessionControllerTest {
             closeCount++;
         }
     }
+    @Test public void lazyCombinedTerminalReplaysStartupStdoutAndStderrOnce() {
+        TerminalSessionController server = new TerminalSessionController(factory, "bad-server", published::add, Runnable::run, true);
+        server.onRuntimeStatus(running(SESSION));
+        created.get(0).listener.onStdout("early".getBytes(StandardCharsets.UTF_8), 5);
+        created.get(0).listener.onStderr("error".getBytes(StandardCharsets.UTF_8), 5);
+        List<String> received = new ArrayList<>();
+        TerminalOutputListener sink = new TerminalOutputListener() {
+            public void onStdout(byte[] data, int length) { received.add(new String(data, 0, length, StandardCharsets.UTF_8)); }
+            public void onStderr(byte[] data, int length) { received.add("err:" + new String(data, 0, length, StandardCharsets.UTF_8)); }
+        };
+        server.setOutputListener(sink);
+        assertEquals(java.util.Arrays.asList("early", "err:error"), received);
+        server.setOutputListener(null); server.setOutputListener(sink);
+        assertEquals(2, received.size());
+    }
 }

@@ -77,7 +77,7 @@ public enum DesktopApp {
 
     /** The curated surfaces in launcher order. */
     public static List<DesktopApp> curated() {
-        return Collections.unmodifiableList(Arrays.asList(values()));
+        return Collections.unmodifiableList(Arrays.asList(TERMINAL, SYSTEM, LOGS));
     }
 
     /** Resolves a stable id, or {@code null} when it is not a curated surface. */

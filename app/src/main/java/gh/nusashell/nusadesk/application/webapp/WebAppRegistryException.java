@@ -12,6 +12,8 @@ public class WebAppRegistryException extends Exception {
     public enum Reason {
         /** The display name is missing or longer than the accepted maximum. */
         INVALID_NAME,
+        /** The startup command is blank or outside the accepted command rules. */
+        INVALID_COMMAND,
         /** The icon token is present but is not a usable {@code content://} URI. */
         INVALID_ICON_URI,
         /** The port is not a TCP port number. */

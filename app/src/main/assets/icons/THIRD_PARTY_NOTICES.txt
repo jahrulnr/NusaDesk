@@ -1,0 +1,6 @@
+AndroidSVG 1.4 — com.caverock:androidsvg-aar:1.4
+Copyright 2013 Paul LeBeau, Cave Rock Software Ltd.
+License: Apache License 2.0 (LICENSE-AndroidSVG.txt)
+Upstream: https://github.com/BigBadaboom/androidsvg
+Documentation: https://bigbadaboom.github.io/androidsvg/
+Used to rasterize static SVG launcher icons through Android Canvas.

@@ -34,6 +34,10 @@ public final class SshClientBridgeTransport implements TerminalTransport {
         bridge.resize(cols, rows);
     }
 
+    @Override public boolean awaitClosed(long timeoutMillis) throws InterruptedException {
+        return bridge.awaitClosed(timeoutMillis);
+    }
+
     @Override
     public void close() {
         bridge.close();

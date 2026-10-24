@@ -21,12 +21,14 @@ import java.util.List;
  *
  * <p>The bar is deliberately small and contextual: a way back to the launcher,
  * the surface title, a reload action only for a surface that can be re-loaded
- * from a known entry point (a user web app), and — only for a surface that
- * really has app-level actions — one options button. A user web app uses that
- * menu for edit and its internal tabs; the terminal uses it for the compact
- * terminal list and per-tab actions. It carries no session chrome, because
- * Linux is background infrastructure: an app surface says nothing about the
- * session, and the launcher owns the single readiness statement (ADR-0013).</p>
+ * from a known entry point (a user web app), window-style minimize/close
+ * actions only for the surface that owns a live native task, and — only for a
+ * surface that really has app-level actions — one options button. A user web
+ * app uses that menu for edit and its internal tabs; the terminal uses it for
+ * the compact terminal list and per-tab actions. It carries no session
+ * chrome, because Linux is background infrastructure: an app surface says
+ * nothing about the session, and the launcher owns the single readiness
+ * statement (ADR-0013).</p>
  *
  * <p>Surfaces stay attached and are switched by visibility, which is what keeps
  * a live terminal's WebView and scrollback alive across a trip back to the
@@ -61,6 +63,8 @@ public final class AppSurfaceHostView extends LinearLayout {
     private TextView titleView;
     private ImageButton moreButton;
     private ImageButton refreshButton;
+    private ImageButton minimizeButton;
+    private ImageButton closeButton;
     private Runnable refreshAction;
     private FrameLayout surfaceContainer;
     private final List<MenuAction> menuActions = new ArrayList<>();
@@ -79,6 +83,8 @@ public final class AppSurfaceHostView extends LinearLayout {
         setOrientation(VERTICAL);
         LayoutInflater.from(getContext()).inflate(R.layout.widget_app_surface_host, this, true);
         titleView = findViewById(R.id.taskbar_title);
+        minimizeButton = findViewById(R.id.taskbar_minimize);
+        closeButton = findViewById(R.id.taskbar_close);
         surfaceContainer = findViewById(R.id.app_surface_container);
         findViewById(R.id.taskbar_home).setContentDescription(
                 getContext().getString(R.string.taskbar_home_desc));
@@ -137,6 +143,18 @@ public final class AppSurfaceHostView extends LinearLayout {
         refreshAction = action;
         refreshButton.setOnClickListener(action == null ? null : view -> action.run());
         renderRefreshButton();
+    }
+
+    /** Requests application-owned close, including any unsaved-document prompt. */
+    public void setCloseAction(Runnable action) {
+        closeButton.setVisibility(action == null ? GONE : VISIBLE);
+        closeButton.setOnClickListener(action == null ? null : view -> action.run());
+    }
+
+    /** Minimizes a retained native task; other surfaces do not expose this action. */
+    public void setMinimizeAction(Runnable action) {
+        minimizeButton.setVisibility(action == null ? GONE : VISIBLE);
+        minimizeButton.setOnClickListener(action == null ? null : view -> action.run());
     }
 
     private void renderRefreshButton() {

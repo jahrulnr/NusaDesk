@@ -40,7 +40,10 @@ import java.util.function.Consumer;
  * calls in on the main thread; bridge callbacks are marshalled there too), so
  * the controller is not thread-safe by design. {@link #write} and
  * {@link #resize} are forwarded to the transport directly, which is
- * thread-safe.</p>
+ * thread-safe. The one exception is the output path: the detached-output
+ * buffer and the listener hand-off are confined to {@code outputLock},
+ * because transport pump threads stream output while surfaces attach and
+ * detach from other threads.</p>
  */
 public final class TerminalSessionController implements TerminalSessionPort {
 
@@ -60,6 +63,17 @@ public final class TerminalSessionController implements TerminalSessionPort {
     // Reported from any thread, read on the main executor when a shell opens.
     private volatile int lastCols = DEFAULT_COLS;
     private volatile int lastRows = DEFAULT_ROWS;
+    private final boolean retainDetachedOutput;
+    // Bounded startup-output buffer and the listener hand-off, confined to
+    // outputLock: pump threads deliver while surfaces attach/detach elsewhere.
+    private final Object outputLock = new Object();
+    private final java.util.ArrayDeque<OutputChunk> detachedOutput = new java.util.ArrayDeque<>();
+    private int detachedBytes;
+    private static final int MAX_DETACHED_BYTES = 64 * 1024;
+    private static final class OutputChunk {
+        final byte[] bytes; final boolean error;
+        OutputChunk(byte[] bytes, boolean error) { this.bytes = bytes; this.error = error; }
+    }
     // Read on transport pump threads; written when surfaces attach/detach.
     private volatile TerminalOutputListener outputListener;
 
@@ -80,6 +94,13 @@ public final class TerminalSessionController implements TerminalSessionPort {
             String command,
             Consumer<TerminalSessionStatus> publisher,
             Executor mainExecutor) {
+        this(transportFactory, command, publisher, mainExecutor, false);
+    }
+
+    /** Combined apps keep bounded startup output until their terminal is first shown. */
+    public TerminalSessionController(TerminalTransportFactory transportFactory, String command,
+            Consumer<TerminalSessionStatus> publisher, Executor mainExecutor, boolean retainDetachedOutput) {
+        this.retainDetachedOutput = retainDetachedOutput;
         if (transportFactory == null) {
             throw new IllegalArgumentException("transportFactory must not be null");
         }
@@ -165,7 +186,28 @@ public final class TerminalSessionController implements TerminalSessionPort {
 
     @Override
     public void setOutputListener(TerminalOutputListener listener) {
-        outputListener = listener;
+        synchronized (outputLock) {
+            outputListener = listener;
+            if (listener != null) {
+                for (OutputChunk chunk : detachedOutput) deliver(listener, chunk.bytes, chunk.bytes.length, chunk.error);
+                detachedOutput.clear(); detachedBytes = 0;
+            }
+        }
+    }
+
+    private static void deliver(TerminalOutputListener listener, byte[] data, int length, boolean error) {
+        if (error) listener.onStderr(data, length); else listener.onStdout(data, length);
+    }
+    private void output(byte[] data, int length, boolean error) {
+        synchronized (outputLock) {
+            if (outputListener != null) { deliver(outputListener, data, length, error); return; }
+            if (!retainDetachedOutput) return;
+            byte[] copy = java.util.Arrays.copyOfRange(data, Math.max(0, length - MAX_DETACHED_BYTES), length);
+            while (!detachedOutput.isEmpty() && detachedBytes + copy.length > MAX_DETACHED_BYTES) {
+                detachedBytes -= detachedOutput.removeFirst().bytes.length;
+            }
+            detachedOutput.add(new OutputChunk(copy, error)); detachedBytes += copy.length;
+        }
     }
 
     /**
@@ -178,6 +220,25 @@ public final class TerminalSessionController implements TerminalSessionPort {
             runtimeSessionId = null;
             setState(TerminalSessionState.NOT_STARTED, "");
         });
+    }
+
+    /** Close on main, then await transport cleanup on the supplied worker. */
+    public java.util.concurrent.CompletableFuture<Void> closeAndAwait(java.util.concurrent.Executor worker) {
+        java.util.concurrent.CompletableFuture<Void> result = new java.util.concurrent.CompletableFuture<>();
+        mainExecutor.execute(() -> {
+            TerminalTransport old = transport;
+            closeCurrent(); runtimeSessionId = null;
+            setState(TerminalSessionState.NOT_STARTED, "");
+            worker.execute(() -> {
+                try {
+                    if (old != null && !old.awaitClosed(10000)) throw new java.io.IOException("Server command channel did not finish stopping");
+                    result.complete(null);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt(); result.completeExceptionally(error);
+                } catch (Exception error) { result.completeExceptionally(error); }
+            });
+        });
+        return result;
     }
 
     private void openTransport() {
@@ -193,18 +254,12 @@ public final class TerminalSessionController implements TerminalSessionPort {
 
             @Override
             public void onStdout(byte[] data, int len) {
-                TerminalOutputListener sink = outputListener;
-                if (sink != null) {
-                    sink.onStdout(data, len);
-                }
+                if (transport == created) output(data, len, false);
             }
 
             @Override
             public void onStderr(byte[] data, int len) {
-                TerminalOutputListener sink = outputListener;
-                if (sink != null) {
-                    sink.onStderr(data, len);
-                }
+                if (transport == created) output(data, len, true);
             }
 
             @Override

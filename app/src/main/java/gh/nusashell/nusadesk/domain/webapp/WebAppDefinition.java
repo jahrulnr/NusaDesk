@@ -1,12 +1,14 @@
 package gh.nusashell.nusadesk.domain.webapp;
 
+import gh.nusashell.nusadesk.domain.terminal.TerminalCommand;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Objects;
 
 /**
  * One user-defined local web app in the launcher: a display name, an optional
- * icon token, and the fixed guest port its server listens on.
+ * icon token, the fixed guest port its server listens on, and an optional
+ * guest command the app runs before its endpoint is loaded.
  *
  * <p>The endpoint is never user input. It is generated from the validated port
  * as exactly {@code http://127.0.0.1:<port>/}, so no stored record can point the
@@ -32,6 +34,7 @@ public final class WebAppDefinition {
     private static final String ICON_SCHEME = "content";
     private static final String ENDPOINT_SCHEME = "http";
 
+    private final TerminalCommand startupCommand;
     private final WebAppId id;
     private final String displayName;
     private final String iconUri;
@@ -57,6 +60,13 @@ public final class WebAppDefinition {
             long createdAtEpochMillis,
             long updatedAtEpochMillis,
             int sortOrder) {
+        this(id, displayName, iconUri, guestPort, createdAtEpochMillis, updatedAtEpochMillis, sortOrder, null);
+    }
+
+    /** A web app optionally starts this guest command before loading its endpoint. */
+    public WebAppDefinition(WebAppId id, String displayName, String iconUri, int guestPort,
+            long createdAtEpochMillis, long updatedAtEpochMillis, int sortOrder, String startupCommand) {
+        this.startupCommand = startupCommand == null ? null : TerminalCommand.of(startupCommand);
         if (id == null) {
             throw new IllegalArgumentException("id must not be null");
         }
@@ -134,6 +144,10 @@ public final class WebAppDefinition {
         return trimmed;
     }
 
+    public TerminalCommand getStartupCommand() { return startupCommand; }
+
+    public boolean hasStartupCommand() { return startupCommand != null; }
+
     public WebAppId getId() {
         return id;
     }
@@ -184,11 +198,17 @@ public final class WebAppDefinition {
      */
     public WebAppDefinition withDetails(
             String displayName, String iconUri, int guestPort, long updatedAtEpochMillis) {
-        return new WebAppDefinition(
-                id, displayName, iconUri, guestPort,
-                createdAtEpochMillis, updatedAtEpochMillis, sortOrder);
+        return withDetails(displayName, iconUri, guestPort, updatedAtEpochMillis,
+                startupCommand == null ? null : startupCommand.value());
     }
 
+    public WebAppDefinition withDetails(String displayName, String iconUri, int guestPort,
+            long updatedAtEpochMillis, String startupCommand) {
+        return new WebAppDefinition(id, displayName, iconUri, guestPort,
+                createdAtEpochMillis, updatedAtEpochMillis, sortOrder, startupCommand);
+    }
+
+    /** Covers every field: a restart's edit-staleness check relies on it. */
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -204,13 +224,14 @@ public final class WebAppDefinition {
                 && sortOrder == that.sortOrder
                 && id.equals(that.id)
                 && displayName.equals(that.displayName)
-                && Objects.equals(iconUri, that.iconUri);
+                && Objects.equals(iconUri, that.iconUri)
+                && Objects.equals(startupCommand, that.startupCommand);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(id, displayName, iconUri, guestPort,
-                createdAtEpochMillis, updatedAtEpochMillis, sortOrder);
+                createdAtEpochMillis, updatedAtEpochMillis, sortOrder, startupCommand);
     }
 
     @Override

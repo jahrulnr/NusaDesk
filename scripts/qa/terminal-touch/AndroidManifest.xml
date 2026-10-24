@@ -1,0 +1,1 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="qa.nusadesk.gestures"><uses-sdk android:minSdkVersion="29" android:targetSdkVersion="29"/><application android:label="NusaDesk gesture QA" android:debuggable="true"/><instrumentation android:name=".GestureDriver" android:targetPackage="qa.nusadesk.gestures"/></manifest>

@@ -261,4 +261,16 @@ public class WebAppRecordCodecTest {
         assertTrue(fields.containsKey(WebAppRecordCodec.FIELD_SORT_ORDER));
         assertFalse(fields.containsKey("id"));
     }
+
+    @Test public void optionalStartupCommandRoundTripsAndLegacyRecordsRemainWebOnly() {
+        WebAppDefinition app = definition();
+        WebAppDefinition combined = app.withDetails(app.getDisplayName(), app.getIconUri(), 4050,
+                app.getUpdatedAtEpochMillis(), "someprogram serve");
+        assertEquals(combined, codec.fromFields(combined.getId().value(), codec.toFields(combined)));
+        assertFalse(codec.fromFields(app.getId().value(), codec.toFields(app)).hasStartupCommand());
+        Map<String, String> corrupt = codec.toFields(combined);
+        corrupt.put(WebAppRecordCodec.FIELD_STARTUP_COMMAND, "\n");
+        assertNull(codec.fromFields(app.getId().value(), corrupt));
+    }
+
 }

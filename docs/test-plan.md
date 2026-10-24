@@ -850,8 +850,7 @@ product-wide OEM/API claim.
 Device pass on the Samsung S10e (SM-G970F, Android 12/API 31, arm64) on
 2026-09-22 (rows carrying an earlier date say so), run from the live guest
 over SSH. Every upstream `termux-*` client command was installed and
-exercised; the per-command output lives in the ledger
-`docs/evidence/termux-parity-matrix.md`. Commands whose ledger row is not DONE are
+exercised. Commands that did not reach `DONE` are
 listed at the end with their honest state.
 
 ### Device state
@@ -945,8 +944,6 @@ listed at the end with their honest state.
 | BTX-007 | `nusadesk-android media outputs|route` with WH-CH520 | Fresh A2DP output ID 421; route accepted and Android playback config reported active `MediaPlayer` on device 421 |
 | BTX-008 | `mediaplayer.route.clear`, cleanup | Playback stopped, route cleared, headset disconnected in Settings (not unpaired), no HID registration or ADB forward remained |
 | BTX-009 | Built-in speaker route / audible result | Route was accepted as pending but playback drained too quickly to observe on this S10e ROM; audibility and sustained built-in route remain unverified |
-
-Full device details and limits: [`evidence/bluetooth-hid-audio-matrix.md`](evidence/bluetooth-hid-audio-matrix.md).
 
 ### Implemented, not yet device-verified
 

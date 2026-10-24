@@ -80,7 +80,7 @@ job, no dependency.
   same LAN address — the capability boundary is the network, not the tool.
 - Unit coverage: `WifiExtrasModuleTest` (26), `GuestServeCliWriterTest` (6,
   including a real fork + HTTP round trip). Device verification on the S10e is
-  the acceptance gate and lands in `docs/evidence/` when it runs.
+  the acceptance gate.
 
 ## Device evidence
 
@@ -93,5 +93,4 @@ nothing, so the method now submits the object stored in
 `getNetworkSuggestions()` and the add→list→remove round trip is clean —
 `wifi.lock.acquire|release`, and the `nusadesk-serve` end-to-end path (a
 `GET` from the host over the LAN returned 200, a `PUT` returned 201 with the
-exact bytes landing in the guest, `status`/`stop` clean). Full observed output
-in `docs/evidence/capability-closure-matrix.md`.
+exact bytes landing in the guest, `status`/`stop` clean).

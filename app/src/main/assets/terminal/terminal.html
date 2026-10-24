@@ -120,6 +120,7 @@
   <div id="terminal" aria-label="Terminal"></div>
   <script src="xterm.js"></script>
   <script src="addon-fit.js"></script>
+  <script src="addon-unicode-graphemes.js"></script>
   <script src="touch-scroll.js"></script>
   <script src="dom-selection.js"></script>
   <script src="ime-guard.js"></script>
@@ -161,13 +162,18 @@
         allowProposedApi: true
       });
       var container = document.getElementById("terminal");
+      if (window.UnicodeGraphemesAddon) {
+        // Optional: without the addon the terminal still renders, only wide
+        // grapheme clusters (emoji, ZWJ sequences) measure narrower cells.
+        term.loadAddon(new window.UnicodeGraphemesAddon.UnicodeGraphemesAddon());
+      }
       term.open(container);
 
       var fitAddon = null;
       if (FitAddon) {
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
-        try { fitAddon.fit(); } catch (e) { /* container may not be sized yet */ }
+        fitWithoutBreakingSelection();
       }
 
       var domSelection = window.LinuxWrapperDomSelection
@@ -175,6 +181,9 @@
           : null;
       function fitWithoutBreakingSelection() {
         if (!fitAddon) { return; }
+        // A retained/just-created hidden tab has no geometry. Fitting it
+        // collapses xterm to two columns and loses short startup diagnostics.
+        if (container.clientWidth <= 0 || container.clientHeight <= 0) { return; }
         var run = function () {
           try { fitAddon.fit(); } catch (e) { /* container may not be sized yet */ }
         };
@@ -218,8 +227,8 @@
       // Mobile touch-to-scrollback adapter (see touch-scroll.js). xterm.js 6.0.0
       // does not scroll the viewport on a one-finger drag on Android WebView;
       // this follows the finger through xterm's fractional pixel controller
-      // and adds bounded release momentum without stealing taps, keyboard
-      // input, native long-press selection, or xterm mouse-tracking gestures.
+      // and adds bounded release momentum. TUI drags route through xterm's
+      // wheel handler; taps, keyboard and native long-press selection remain.
       var touchScroll = null;
       if (window.LinuxWrapperTouchScroll) {
         touchScroll = window.LinuxWrapperTouchScroll.install(container, term);

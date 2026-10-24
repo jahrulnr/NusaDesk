@@ -3,6 +3,7 @@ SHELL := /bin/sh
 GRADLEW ?= ./gradlew
 ADB ?= adb
 NODE ?= node
+PYTHON ?= python3
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 GRADLE_FLAGS ?= --no-daemon
 
@@ -22,6 +23,7 @@ APKSIGNER ?= $(shell find "$(SDK_DIR)/build-tools" -name apksigner 2>/dev/null |
 # deliberate: a new policy test must not be able to sit outside the gate.
 test:
 	$(GRADLEW) $(GRADLE_FLAGS) test
+	$(PYTHON) -B -m unittest discover -s app/src/test/python
 	@for policy_test in app/src/test/js/*.test.js; do \
 		echo "$(NODE) $$policy_test"; \
 		$(NODE) "$$policy_test" || exit 1; \

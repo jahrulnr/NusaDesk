@@ -1,6 +1,8 @@
 package gh.nusashell.nusadesk.presentation.desktop;
 
 import gh.nusashell.nusadesk.R;
+import gh.nusashell.nusadesk.domain.display.LinuxDesktopApp;
+import gh.nusashell.nusadesk.domain.display.DesktopTask;
 import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 
@@ -9,9 +11,9 @@ import java.util.Objects;
 /**
  * One item in the launcher grid.
  *
- * <p>The launcher shows four kinds of item in one grid: the {@code Add app}
+ * <p>The launcher shows five kinds of item in one grid: the {@code Add app}
  * action, the curated Linux surfaces, and the web apps and terminal commands
- * the user registered. They are modelled as one immutable type so the grid,
+ * the user registered, plus installed Linux GUI apps. They are modelled as one immutable type so the grid,
  * the search filter, and the tile renderer each have exactly one input shape
  * instead of parallel code paths that could disagree.</p>
  *
@@ -32,7 +34,8 @@ public final class LauncherEntry {
         /** A user-registered local web app. */
         WEB_APP,
         /** A user-registered guest terminal command. */
-        TERMINAL_APP
+        TERMINAL_APP,
+        LINUX_APP
     }
 
     /** Stable id of the "Add app" action. */
@@ -40,8 +43,10 @@ public final class LauncherEntry {
 
     private static final LauncherEntry ADD_APP = new LauncherEntry(
             Kind.ADD_APP, ADD_APP_ID, R.string.launcher_add_label, null,
-            R.drawable.ic_launcher_add, R.string.webapp_add_desc, null, null, null);
+            R.drawable.ic_launcher_add, R.string.webapp_add_desc, null, null, null, null, null);
 
+    private final LinuxDesktopApp linuxApp;
+    private final DesktopTask.State taskState;
     private final Kind kind;
     private final String id;
     private final int labelRes;
@@ -55,7 +60,7 @@ public final class LauncherEntry {
     private LauncherEntry(
             Kind kind, String id, int labelRes, String label,
             int iconRes, int descriptionRes,
-            String iconUri, WebAppDefinition webApp, TerminalCommandApp terminalApp) {
+            String iconUri, WebAppDefinition webApp, TerminalCommandApp terminalApp, LinuxDesktopApp linuxApp, DesktopTask.State taskState) {
         this.kind = kind;
         this.id = id;
         this.labelRes = labelRes;
@@ -65,6 +70,8 @@ public final class LauncherEntry {
         this.iconUri = iconUri;
         this.webApp = webApp;
         this.terminalApp = terminalApp;
+        this.linuxApp = linuxApp;
+        this.taskState = taskState;
     }
 
     /** The single "Add app" action tile. */
@@ -78,7 +85,7 @@ public final class LauncherEntry {
             throw new IllegalArgumentException("app must not be null");
         }
         return new LauncherEntry(Kind.CURATED, app.getId(), app.getLabelRes(), null,
-                app.getIconRes(), app.getDescriptionRes(), null, null, null);
+                app.getIconRes(), app.getDescriptionRes(), null, null, null, null, null);
     }
 
     /** A registered web app. */
@@ -90,7 +97,7 @@ public final class LauncherEntry {
         // the tile composes its accessible sentence from that name.
         return new LauncherEntry(Kind.WEB_APP, definition.getId().value(),
                 0, definition.getDisplayName(), 0,
-                0, definition.getIconUri(), definition, null);
+                0, definition.getIconUri(), definition, null, null, null);
     }
 
     /** A registered terminal-command app. */
@@ -103,8 +110,24 @@ public final class LauncherEntry {
         // wins over it and the monogram still backs it.
         return new LauncherEntry(Kind.TERMINAL_APP, app.getId().value(),
                 0, app.getDisplayName(), R.drawable.ic_launcher_terminal,
-                0, app.getIconUri(), null, app);
+                0, app.getIconUri(), null, app, null, null);
     }
+
+    /** An installed Linux GUI desktop entry discovered in the guest. */
+    public static LauncherEntry linuxApp(LinuxDesktopApp app) {
+        return linuxApp(app, null);
+    }
+
+    /** The same launcher identity with the retained task state shown on its icon. */
+    public static LauncherEntry linuxApp(LinuxDesktopApp app, DesktopTask.State state) {
+        Objects.requireNonNull(app, "app");
+        return new LauncherEntry(Kind.LINUX_APP, "linux:" + app.getId(),
+                0, app.getName(), 0, 0, app.getIconUri(), null, null, app, state);
+    }
+
+    public DesktopTask.State getTaskState() { return taskState; }
+
+    public LinuxDesktopApp getLinuxApp() { return linuxApp; }
 
     public Kind getKind() {
         return kind;
@@ -186,13 +209,14 @@ public final class LauncherEntry {
                 && descriptionRes == that.descriptionRes
                 && Objects.equals(iconUri, that.iconUri)
                 && Objects.equals(webApp, that.webApp)
-                && Objects.equals(terminalApp, that.terminalApp);
+                && Objects.equals(terminalApp, that.terminalApp)
+                && Objects.equals(linuxApp, that.linuxApp) && taskState == that.taskState;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(kind, id, labelRes, label, iconRes,
-                descriptionRes, iconUri, webApp, terminalApp);
+                descriptionRes, iconUri, webApp, terminalApp, linuxApp, taskState);
     }
 
     @Override

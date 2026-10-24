@@ -20,6 +20,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import gh.nusashell.nusadesk.R;
+import gh.nusashell.nusadesk.domain.display.DesktopTask;
+import gh.nusashell.nusadesk.domain.display.LinuxDesktopApp;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
 import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
@@ -37,6 +39,7 @@ import gh.nusashell.nusadesk.presentation.widget.LinePatternDrawable;
 import gh.nusashell.nusadesk.presentation.widget.SetupAction;
 import gh.nusashell.nusadesk.presentation.widget.SetupPhasePolicy;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -46,10 +49,11 @@ import java.util.Map;
  *
  * <p>It reads the way a home screen reads. A search field at the top, the app
  * header with its count, then one dense grid whose first tile is the dashed
- * {@code Add app} action, followed by the Linux surfaces this build ships and
- * the web apps the user registered. Setup appears above the grid only while a
- * component is actually missing, so an installed device shows a grid and
- * nothing else.</p>
+ * {@code Add app} action, followed by the Linux surfaces this build ships,
+ * the installed Linux desktop apps the guest reports, and the web apps and
+ * terminal commands the user registered. Setup appears above the grid only
+ * while a component is actually missing, so an installed device shows a grid
+ * and nothing else.</p>
  *
  * <p>Setup is one surface, not two. The curated rootfs and the guest-SSH
  * add-on install as one serialized pipeline (ADR-0017), so while either is
@@ -95,12 +99,14 @@ public final class DesktopHomeView extends FrameLayout
     private EditText searchInput;
     private View searchClear;
     private LauncherGridView grid;
+    private List<DesktopTask> runningTasks = Collections.emptyList();
 
     private View updateBanner;
     private TextView updateText;
     private Button updateOpen;
     private Button updateDismiss;
 
+    private List<LinuxDesktopApp> linuxApps = Collections.emptyList();
     private List<WebAppDefinition> webApps = Collections.emptyList();
     private List<TerminalCommandApp> terminalApps = Collections.emptyList();
     private Map<String, Bitmap> favicons = Collections.emptyMap();
@@ -219,6 +225,12 @@ public final class DesktopHomeView extends FrameLayout
         render();
     }
 
+    /** Update badges on existing launcher icons; tapping an icon resumes its retained task. */
+    public void setRunningLinuxApps(List<DesktopTask> tasks) {
+        runningTasks = new ArrayList<>(tasks);
+        render();
+    }
+
     /** Wires the single setup action to the host's combined install flow. */
     public void setOnInstallListener(OnClickListener listener) {
         wizard.setOnActionListener(listener);
@@ -320,6 +332,11 @@ public final class DesktopHomeView extends FrameLayout
      * Replaces the registered user apps the grid renders: the web apps and the
      * terminal commands, each in its own store's launcher order.
      */
+    public void setLinuxApps(List<LinuxDesktopApp> apps) {
+        linuxApps = apps == null ? Collections.emptyList() : apps;
+        render();
+    }
+
     public void setApps(
             List<WebAppDefinition> webApps, List<TerminalCommandApp> commandApps) {
         this.webApps = webApps == null ? Collections.emptyList() : webApps;
@@ -439,7 +456,7 @@ public final class DesktopHomeView extends FrameLayout
         boolean showApps = LauncherModel.shouldShowApps(systemReady, terminalReady);
         boolean filtering = showApps && LauncherModel.isFiltering(query());
 
-        List<LauncherEntry> entries = LauncherModel.entries(webApps, terminalApps);
+        List<LauncherEntry> entries = LauncherModel.entries(webApps, terminalApps, linuxApps, runningTasks);
         List<LauncherEntry> visible = LauncherModel.filter(entries, query(), this::labelOf);
 
         // One installer surface while any core component is missing, and

@@ -478,6 +478,7 @@ public class TerminalTabsControllerTest {
         SshSessionListener listener;
         int startCount;
         int closeCount;
+        boolean cleanupComplete = true;
         final List<byte[]> writes = new ArrayList<>();
         int[] lastResize;
 
@@ -504,5 +505,93 @@ public class TerminalTabsControllerTest {
         public void close() {
             closeCount++;
         }
+        @Override public boolean awaitClosed(long timeoutMillis) { return cleanupComplete; }
+    }
+
+    @Test public void combinedWebCommandReusesItsServiceSessionAndIsolatesEditsAndStop() throws Exception {
+        controller.onRuntimeStatus(running(SESSION));
+        gh.nusashell.nusadesk.domain.webapp.WebAppDefinition app = new gh.nusashell.nusadesk.domain.webapp.WebAppDefinition(
+                gh.nusashell.nusadesk.domain.webapp.WebAppId.of("web-app"), "Server", null, 4050, 1, 1, 0, "someprogram serve");
+        gh.nusashell.nusadesk.application.webapp.WebAppCommandSession.start(app, controller);
+        String first = controller.snapshot().selected().getId();
+        gh.nusashell.nusadesk.application.webapp.WebAppCommandSession.start(app, controller);
+        assertEquals(first, controller.snapshot().selected().getId()); assertEquals(2, created.size());
+        gh.nusashell.nusadesk.domain.webapp.WebAppDefinition renamed = app.withDetails("Renamed", null, 4050, 2);
+        gh.nusashell.nusadesk.application.webapp.WebAppCommandSession.invalidateChangedCommand(renamed, controller);
+        assertEquals(2, controller.snapshot().tabCount());
+        gh.nusashell.nusadesk.domain.webapp.WebAppDefinition changed = app.withDetails("Server", null, 4050, 2, "otherprogram serve");
+        gh.nusashell.nusadesk.application.webapp.WebAppCommandSession.start(changed, controller);
+        assertFalse(first.equals(controller.snapshot().selected().getId()));
+        assertEquals(1, created.get(1).closeCount); assertEquals(2, controller.snapshot().tabCount());
+        gh.nusashell.nusadesk.application.webapp.WebAppCommandSession.stop(app.getId(), controller);
+        assertEquals(1, controller.snapshot().tabCount());
+        assertEquals(TerminalTabKind.SHELL, controller.snapshot().selected().getKind());
+    }
+    @Test public void exitedWebServerTerminalRemainsInspectableAndRetryReplacesOnlyItsDeadTab() throws Exception {
+        controller.onRuntimeStatus(running(SESSION));
+        TerminalTabSnapshot server = controller.openOrSelectCommand("web:app-1", "bad-server-command");
+        created.get(1).listener.onState(SshSessionState.CLOSED, "command exited");
+        assertEquals(TerminalSessionState.EXITED, controller.snapshot().tab(server.getId()).getStatus().getState());
+        TerminalTabSnapshot retry = controller.openOrSelectCommand("web:app-1", "bad-server-command");
+        assertNull(controller.snapshot().tab(server.getId()));
+        assertEquals(TerminalSessionState.CONNECTING, retry.getStatus().getState());
+        assertEquals(2, controller.snapshot().tabCount());
+    }
+    @Test public void deadCombinedTerminalsDoNotConsumeLiveCapacity() throws Exception {
+        controller.onRuntimeStatus(running(SESSION));
+        for (int n = 0; n < TerminalTabsController.MAX_TABS + 1; n++) {
+            controller.openOrSelectCommand("web:failed-" + n, "false");
+            created.get(created.size() - 1).listener.onState(SshSessionState.CLOSED, "exited");
+        }
+        assertFalse(controller.isFull());
+        controller.openShell();
+        assertTrue(controller.snapshot().tabCount() > TerminalTabsController.MAX_TABS);
+    }
+    @Test public void restartWaitsForOldPortReleaseAndDeduplicatesAcrossObservers() throws Exception {
+        controller.onRuntimeStatus(running(SESSION));
+        gh.nusashell.nusadesk.domain.webapp.WebAppDefinition app = new gh.nusashell.nusadesk.domain.webapp.WebAppDefinition(
+                gh.nusashell.nusadesk.domain.webapp.WebAppId.of("restart"), "Server", null, 4050, 1, 1, 0, "server");
+        gh.nusashell.nusadesk.application.webapp.WebAppCommandSession.start(app, controller);
+        List<Runnable> worker = new ArrayList<>();
+        gh.nusashell.nusadesk.application.webapp.WebAppRestartCoordinator restarts = new gh.nusashell.nusadesk.application.webapp.WebAppRestartCoordinator(
+                worker::add, Runnable::run, (port, cancelled) -> {
+                    assertEquals(4050, port); assertEquals(1, created.get(1).closeCount);
+                    assertEquals("replacement must not start before the release fence", 2, created.size());
+                }, () -> controller, () -> java.util.Collections.singletonList(app));
+        java.util.concurrent.CompletableFuture<Void> first = restarts.restart(app);
+        assertEquals(first, restarts.restart(app)); assertFalse(first.isDone());
+        assertEquals(1, worker.size()); worker.remove(0).run();
+        assertFalse("port probing waits for channel cleanup", first.isDone());
+        assertEquals(2, created.size());
+        worker.remove(0).run();
+        assertTrue(first.isDone()); assertFalse(first.isCompletedExceptionally());
+        assertEquals(3, created.size()); assertNull(restarts.pending(app.getId().value()));
+    }
+
+    @Test public void editingOrDeletingDuringRestartCancelsTheReplacement() throws Exception {
+        controller.onRuntimeStatus(running(SESSION));
+        gh.nusashell.nusadesk.domain.webapp.WebAppDefinition app = new gh.nusashell.nusadesk.domain.webapp.WebAppDefinition(
+                gh.nusashell.nusadesk.domain.webapp.WebAppId.of("deleted"), "Server", null, 4050, 1, 1, 0, "server");
+        List<Runnable> worker = new ArrayList<>();
+        gh.nusashell.nusadesk.application.webapp.WebAppRestartCoordinator restarts = new gh.nusashell.nusadesk.application.webapp.WebAppRestartCoordinator(
+                worker::add, Runnable::run, (port, cancelled) -> { assertTrue(cancelled.getAsBoolean()); },
+                () -> controller, () -> java.util.Collections.singletonList(app));
+        java.util.concurrent.CompletableFuture<Void> future = restarts.restart(app);
+        restarts.cancel(app.getId().value()); worker.remove(0).run();
+        assertTrue(future.isCancelled()); assertEquals(1, created.size());
+    }
+    @Test public void failedChannelCleanupPreventsReplacementEvenWhenPortIsNotBound() throws Exception {
+        controller.onRuntimeStatus(running(SESSION));
+        gh.nusashell.nusadesk.domain.webapp.WebAppDefinition app = new gh.nusashell.nusadesk.domain.webapp.WebAppDefinition(
+                gh.nusashell.nusadesk.domain.webapp.WebAppId.of("cold"), "Server", null, 4050, 1, 1, 0, "sleep 3; server");
+        gh.nusashell.nusadesk.application.webapp.WebAppCommandSession.start(app, controller);
+        created.get(1).cleanupComplete = false;
+        List<Runnable> worker = new ArrayList<>();
+        gh.nusashell.nusadesk.application.webapp.WebAppRestartCoordinator restarts = new gh.nusashell.nusadesk.application.webapp.WebAppRestartCoordinator(
+                worker::add, Runnable::run, (port, cancelled) -> { throw new AssertionError("port probe cannot bypass failed channel cleanup"); },
+                () -> controller, () -> java.util.Collections.singletonList(app));
+        java.util.concurrent.CompletableFuture<Void> future = restarts.restart(app);
+        worker.remove(0).run(); worker.remove(0).run();
+        assertTrue(future.isCompletedExceptionally()); assertEquals(2, created.size());
     }
 }

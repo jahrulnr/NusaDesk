@@ -58,6 +58,50 @@ This file is the operational truth for what the current base project does **not*
 - No LAN exposure is supported.
 - No Google Play compatibility or approval claim is made.
 
+## Experimental native desktop display (ADR-0068)
+
+The optional `-PnativeDesktop=true` build adds an experimental selected-app
+native X11 surface, now with retained apps/minimize/resume (ADR-0070). The default build includes no native display binary or
+launcher tile. The enabled build requires explicitly installed guest Openbox,
+XKB data and X11 utilities, plus Python 3 and GLib/GIO for desktop discovery;
+the sample additionally requires Mousepad; no product-managed GUI add-on or arbitrary
+GUI app installer exists. It links GPL display code and is not an MIT-only
+APK or a public release. API 29 is the target; actual device results follow.
+Clipboard synchronization and global keyboard capture are outside this slice.
+The initial touch/IME/save/session slice was observed on API 31, but those
+observations are historical and were not independently re-verified. The
+subsequent orb, swipe scrolling, explicit Drag selection, one-shot modifiers,
+IME backspace, zoom and layout controls were exercised on physical API 29.
+Pinch and two-finger pan used injected multitouch on that device, not physical
+finger/hardware verification. Physical mouse/keyboard, broader IME correction,
+accessibility, sustained performance and OEM process reclamation remain open.
+Auto logical layout has a minimum width of 640 pixels; 960/1280 choices and
+presentation zoom are available, but toolkit/font DPI remains 144. Accordingly,
+zoom makes pixels larger while layout width changes application layout space;
+large fixed-size dialogs from other applications can still exceed the area.
+Whole-session stop terminates the display rather than negotiating GTK save/quit;
+unsaved Mousepad state can trigger its recovery dialog on next launch.
+API 29 frames/input/save/rotation/stop-restart now have S7 Edge FloydROM
+evidence; stock Android 10 and 16 KB runtime remain unverified. The S7 chooser
+can slightly clip its right decoration edge while Save/Cancel remain usable.
+Installed GUI `.desktop` entries now appear on Home (ADR-0069); Terminal=true
+entries are outside this GUI catalog. PNG icons are resolved from common theme
+locations; SVG-only/custom theme inheritance uses the monogram fallback. No
+session D-Bus is provided by the launcher; D-Bus-only/single-instance activation,
+self-daemonizing apps, full desktop sessions and non-X11 apps require further
+integration. The helper uses GIO Exec fallback to retain process ownership. The tested
+Mousepad logs a dconf bus warning; settings that require the session bus have
+not been validated as persistent.
+Switching/minimizing native tasks now retains their processes and windows in
+one guest/display. Home resumes them. Closing an app or the whole session still
+has no generic toolkit save/quit negotiation. Task ownership relies on guest
+`_NET_WM_PID`/transient metadata; applications that omit it are not validated.
+Live tasks are not restored after Android process death or guest restart.
+Catalog refresh occurs on runtime-ready/foreground/Home, without a continuous
+guest filesystem watch.
+No general guest GPU driver is provided. This remains experimental GUI support.
+GPU limits are recorded below, separately from native display availability.
+
 ## Product limitations to preserve
 
 ### Generic Linux compatibility
@@ -366,7 +410,7 @@ typed getters plus `rejectUnknown` make a misspelled key fail closed as
   signature/UID-locked to Termux), so this is the only Termux-compatible
   surface; commands the hardware or platform cannot serve answer a typed
   absence, never a fake success (documented in the guest's
-  `docs/termux-compat.md`, evidence in `docs/evidence/termux-parity-matrix.md`).
+  `docs/termux-compat.md`).
 - `battery.status` reads Android's permission-free `BatteryManager` state.
 - `location.get` performs a foreground-only one-shot `LocationManager`
   request with a 30 s bounded window: it honours a forced provider and a
@@ -582,7 +626,7 @@ the limits below are contract, not polish:
   active rootfs, and the guest script moves the result to the user's
   destination (the bind-mounted workspace is a guest-side concept).
 
-Still open in the ledger (per `docs/evidence/termux-parity-matrix.md`):
+Still open:
 
 - `termux-speech-to-text` (WIP): implemented, but neither project device has a
   usable recognizer backend; the command fails typed instead of pretending.
@@ -721,6 +765,52 @@ host-side only. CPU inference with small models through the capability bridge
 is feasible and was verified on the S10e — see
 `docs/research/guest-local-llm-spike.md`.
 
+For the native desktop display research (2026-10-23), **Android 10/API 29+
+remains the target**. GPU acceleration is not a prerequisite for the first
+selected 2D Linux GUI: the guest may draw with the CPU while an Android native
+renderer presents its buffers through EGL/GLES into a `SurfaceView`.
+Android presentation acceleration does not prove accelerated Linux OpenGL or
+Vulkan. The optional X11/Mousepad slice has displayed native guest frames
+on the API 29 S7 Edge (FloydROM); the earlier API 31 S10e observations are
+historical and were not independently re-verified. That is CPU-rendered 2D GUI
+evidence only.
+
+The attached Samsung S10e was re-inspected through ADB: Android 12/API 31,
+ARM64, Exynos 9820, Mali-G76, 4 KB pages; SurfaceFlinger reports OpenGL ES 3.2.
+That identifies the Android renderer only. It does not establish a working
+glibc guest GPU driver, DMA-BUF import, frame rate, input latency, battery
+cost, or zero-copy display. API 29 FloydROM has the bounded display evidence
+above; stock Android 10, other OEMs and 16 KB devices remain untested.
+
+The candidate-specific GPU limits are:
+
+- Termux:X11 has an Android EGL/GLES presentation path plus a documented
+  `-legacy-drawing` fallback and `-force-bgra` workaround. Their availability
+  is upstream evidence; neither has been exercised with NusaDesk. CPU guest
+  rendering is the proposed S10e baseline; software 3D performance is unknown.
+  See the [pinned renderer source](https://github.com/termux/termux-x11/blob/7e5f5c5c9226e2cdab392b2efba91bc4bd86463e/lorie/src/main/cpp/lorie/renderer.cpp).
+- Piperella implements both shared-memory texture upload and DMA-BUF import.
+  The latter needs matching client/compositor formats, modifiers, extensions,
+  and synchronization; a GLES-capable phone alone is insufficient. Its
+  [PR #31](https://github.com/Piperella/Piperella-Wayland-Compositor/pull/31)
+  explicitly calls for device validation after fixing a path that previously
+  fell back to shared memory. Its custom AHardwareBuffer demo does not prove
+  that an unmodified glibc PRoot application can use the same path.
+- wlroots-android-bridge's accelerated path assumes minigbm/GBM gralloc
+  handles and a suitable open graphics stack. The author confirms in
+  [issue #5](https://github.com/Xtr126/wlroots-android-bridge/issues/5) that
+  this path targets open-stack devices, and in
+  [issue #7](https://github.com/Xtr126/wlroots-android-bridge/issues/7)
+  that Adreno does not provide the assumed minigbm handle. Intel demo evidence
+  therefore does not establish acceleration on either Adreno or the S10e's
+  proprietary Mali stack. An alternative software presenter would be new work.
+
+No claim of universal GPU acceleration or zero-copy end-to-end is made.
+Resolution, sustained CPU/RAM use, thermal behavior, and latency require a
+real guest-to-surface measurement. Candidate API/ABI constraints and the
+bounded next experiment are recorded in
+[the native display feasibility report](research/native-desktop-display-feasibility.md).
+
 ### Resolver doctor is bounded and allowlisted
 
 The resolver guard runs inside the existing foreground runtime lifecycle; it
@@ -833,7 +923,7 @@ remains the fallback. The limitations are deliberate:
   that names another scheme, host, or port is refused, not followed, and at most
   three declared candidates are tried. There is no `<base>` handling, no CSS or
   script parsing, and no URL from any other source.
-- **Whatever the decoder accepts.** PNG, JPEG, WebP, and BMP go through the platform decoder; an ICO container is unwrapped first (`IcoImage`: a PNG frame decodes from its byte range, a DIB frame is rewritten as `.bmp` with the AND mask reapplied), so a real `favicon.ico` no longer depends on the device's Skia build. An undecodable "favicon" (for example an SVG, including a declared one) still falls back to the monogram — GIF included: the platform decoder returns null for it on at least API 31, where the fetch succeeded and the tile kept its monogram. The same decode backs a user-picked image the platform cannot render, so a picked `.ico` shows too.
+- **Whatever the decoder accepts.** PNG, JPEG, WebP, and BMP go through the platform decoder; an ICO container is unwrapped first (`IcoImage`: a PNG frame decodes from its byte range, a DIB frame is rewritten as `.bmp` with the AND mask reapplied), so a real `favicon.ico` no longer depends on the device's Skia build. Static self-contained SVG is rasterized through AndroidSVG at a maximum 256-pixel longest side (ADR-0071), including viewBox-only icons. SVG animation, filters and external resources are not supported. Other undecodable favicons still fall back to the monogram — GIF included: the platform decoder returns null for it on at least API 31, where the fetch succeeded and the tile kept its monogram. The same decode backs a user-picked image the platform cannot render, so a picked `.ico` shows too.
 - **Bounded reads, not a browser.** The document read stops at 256 KiB and an image at 2 MiB; the image must fit a 1024 px source cap and decodes downsampled to 256 px.
 - **Not persisted.** The decoded image lives in memory for the life of the app process; there is no disk cache, so it is fetched once per app per process.
 - **One retry, on a real event.** The launcher's first attempt usually happens before the app's server is running. A missing favicon is retried only when the app's own surface proves the endpoint answers, so an app that is never opened keeps its monogram.
@@ -1013,3 +1103,8 @@ Downloading and executing a Linux runtime from a non-Play source may trigger Dev
 - Silent self-update of payloads.
 - First-launch compilation of native modules or web frontends.
 - Claims of full desktop Linux compatibility.
+
+The Web + Terminal app type (ADR-0072) has an implementation and focused JVM
+tests and physical delayed-start/reuse/restart samples on API 29 ARM64.
+Commands must keep their server in the
+foreground; daemonized server ownership and automatic restart are not provided.

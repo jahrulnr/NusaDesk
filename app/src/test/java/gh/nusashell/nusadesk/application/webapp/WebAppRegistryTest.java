@@ -287,4 +287,33 @@ public class WebAppRegistryTest {
             records.remove(webAppId);
         }
     }
+
+    @Test public void combinedAppValidatesAndPersistsCommandWithTheExistingWebIdentity() throws Exception {
+        WebAppDefinition app = registry.add("Server", null, 4050, "  python3 -m http.server 4050  ");
+        assertEquals("python3 -m http.server 4050", app.getStartupCommand().value());
+        assertEquals("http://127.0.0.1:4050/", app.getEndpointUrl());
+        WebAppDefinition edited = registry.update(app.getId().value(), "Renamed", null, 4050, "someprogram serve");
+        assertEquals(app.getId(), edited.getId());
+        assertEquals("someprogram serve", registry.list().get(0).getStartupCommand().value());
+        WebAppDefinition legacyEdit = registry.update(app.getId().value(), "Name only", null, 4050);
+        assertEquals("someprogram serve", legacyEdit.getStartupCommand().value());
+        registry.delete(app.getId().value()); assertTrue(registry.list().isEmpty());
+    }
+
+    @Test public void combinedAppRejectsBlankCommandAtTheApplicationBoundary() throws Exception {
+        try { registry.add("Server", null, 4050, "  "); fail("blank command accepted"); }
+        catch (WebAppRegistryException invalid) {
+            assertEquals(WebAppRegistryException.Reason.INVALID_COMMAND, invalid.getReason());
+        }
+        assertTrue(registry.list().isEmpty());
+    }
+
+    @Test public void updateRejectsABlankCommandOnTheEditPath() throws Exception {
+        WebAppDefinition app = registry.add("Server", null, 4050, "python3 -m http.server 4050");
+        assertReason(WebAppRegistryException.Reason.INVALID_COMMAND,
+                () -> registry.update(app.getId().value(), "Server", null, 4050, "  "));
+        assertEquals("the stored record must be untouched",
+                "python3 -m http.server 4050", registry.list().get(0).getStartupCommand().value());
+    }
+
 }

@@ -407,17 +407,15 @@ public final class TerminalBridgeView extends FrameLayout {
         }
         if (decoded.getType() == TerminalMessage.Type.READY) {
             // The packaged page is live and painted: drop the loading cover,
-            // deliver every write queued before the port existed (in order),
-            // then hand the surface its real geometry. Flushing first keeps a
-            // freshly opened tab's first output ahead of the fit/focus that
-            // could itself trigger page-side repaint work.
+            // fit the visible viewport before replaying startup diagnostics.
+            // A hidden tab retains the page's default geometry until shown.
             pageReady = true;
             portReady = true;
             applyOverlay();
-            flushPendingWrites();
             if (getWidth() > 0 && getHeight() > 0) {
                 fit();
             }
+            flushPendingWrites();
             Listener ready = listener;
             if (ready != null) {
                 ready.onBridgeReady();

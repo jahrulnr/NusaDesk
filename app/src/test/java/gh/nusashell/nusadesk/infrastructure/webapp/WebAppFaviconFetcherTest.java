@@ -69,6 +69,20 @@ public class WebAppFaviconFetcherTest {
     }
 
     @Test
+    public void aDeclaredSvgReachesTheDecoderBeforeTheIcoFallback() throws Exception {
+        byte[] icon = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'/>".getBytes(StandardCharsets.UTF_8);
+        try (TestServer server = TestServer.start(TestServer.routes(
+                "/", TestServer.html("<link rel='icon' href='/favicon.svg' type='image/svg+xml'>"),
+                "/favicon.svg", TestServer.ok(icon)))) {
+            FakeDecoder decoder = new FakeDecoder(new WebAppFaviconFetcher.Size(256, 256));
+            fetcher(decoder).fetch(webApp(server.port()));
+            assertEquals("GET /favicon.svg HTTP/1.1", server.requestLineAt(1));
+            assertEquals(1, decoder.decodeCalls.get());
+            assertEquals(icon.length, decoder.decodedLength);
+        }
+    }
+
+    @Test
     public void withoutADeclarationTheConventionalPathIsStillTried() throws Exception {
         try (TestServer server = TestServer.start(TestServer.routes(
                 "/", TestServer.html("<html><head><title>no icon here</title></head></html>"),

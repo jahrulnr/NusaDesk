@@ -9,17 +9,14 @@
  *
  * It is deliberately narrow:
  *
- *   - It only acts when xterm has NOT enabled mouse tracking. xterm toggles
- *     the `enable-mouse-events` class on the root `.xterm` element when a
- *     guest program (vim/tmux/less) has requested mouse tracking. In that
- *     mode touch must pass through to xterm, which translates it to mouse
- *     events for the program; the adapter never steals that gesture.
+ *   - Normal-buffer drags move scrollback. Mouse-tracking and alternate-screen
+ *     applications receive row-sized wheel events through xterm's own mouse
+ *     encoder/fallback instead; their content is owned by the guest TUI.
  *   - It never acts while the platform's own text selection is active on the
  *     terminal rows: a drag then extends that selection (long-press + drag is
  *     Android's stock select gesture) and must not also move the viewport.
  *   - It only acts on a single touch. A second finger cancels the active
- *     scroll and defers to xterm, so multi-touch / pinch and mouse-tracking
- *     touch are preserved.
+ *     scroll, so multi-touch and pinch are preserved.
  *   - It applies a movement threshold before a drag becomes a scroll, so a
  *     tap (down + up with little movement) is never stolen: xterm still gets
  *     the full tap sequence for focus / cursor positioning.
@@ -94,8 +91,9 @@
     return { scroll: true, scrollTop: next, preventDefault: true, cancel: false };
   }
 
-  /** Pixel distance a drag must travel before it becomes a scroll. */
-  var SCROLL_THRESHOLD_PX = 10;
+  // Claim the first native slop-crossing move (observed at 9.5 CSS pixels).
+  // Waiting for 10 can miss the only cancelable move and leave a trailing click.
+  var SCROLL_THRESHOLD_PX = 8;
   /* Chosen so the fastest allowed fling decays below MIN_FLING_VELOCITY well
      inside MAX_FLING_DURATION_MS; a weaker value makes the duration cap cut a
      fast fling while it is still visibly moving. */
@@ -259,6 +257,38 @@
       canceled: false,
       primaryTouchId: null
     };
+    var touchTargets = new Set();
+    var handledEvents = new WeakSet();
+
+    // A DOM-rendered row can disappear after the first scroll/redraw. Touch
+    // events keep their original target, even when it is detached, and then
+    // stop bubbling through the container. Retain that target for this gesture.
+    function retainTouchTarget(node) {
+      if (!node || node === container || !node.addEventListener || touchTargets.has(node)) { return; }
+      touchTargets.add(node);
+      node.addEventListener("touchmove", handleTouchMove, { passive: false, capture: true });
+      node.addEventListener("touchend", finish, { passive: true, capture: true });
+      node.addEventListener("touchcancel", cancel, { passive: true, capture: true });
+    }
+    function releaseTouchTargets() {
+      touchTargets.forEach(function (node) {
+        node.removeEventListener("touchmove", handleTouchMove, { capture: true });
+        node.removeEventListener("touchend", finish, { capture: true });
+        node.removeEventListener("touchcancel", cancel, { capture: true });
+      });
+      touchTargets.clear();
+    }
+    function alreadyHandled(e) {
+      if (!e) { return false; }
+      if (handledEvents.has(e)) { return true; }
+      handledEvents.add(e);
+      return false;
+    }
+
+    function isApplicationScroll() {
+      var buffer = term && term.buffer && term.buffer.active;
+      return isMouseTracking() || !!buffer && buffer.type === "alternate";
+    }
 
     function viewport() {
       // The scrollable scrollback element xterm creates inside the container.
@@ -394,7 +424,7 @@
 
     function runFling() {
       state.flingFrame = 0;
-      if (isMouseTracking() || hasDomSelection()) {
+      if (isApplicationScroll() || hasDomSelection()) {
         cancelFling();
         return;
       }
@@ -481,7 +511,9 @@
       // Never preventDefault here: taps must reach xterm for focus/cursor and
       // the platform's long-press selection must see an untouched gesture.
       cancelFling();
-      if (isMouseTracking() || e.touches.length !== 1) {
+      if (e.touches.length === 1) { releaseTouchTargets(); }
+      retainTouchTarget(e.target);
+      if (e.touches.length !== 1) {
         state.active = false;
         state.canceled = true;
         state.primaryTouchId = null;
@@ -493,12 +525,16 @@
       state.primaryTouchId = e.touches[0].identifier;
       state.active = false; // a scroll starts only after the threshold is crossed
       state.startY = state.lastY = e.touches[0].clientY;
+      state.startX = e.touches[0].clientX;
+      state.applicationScroll = isApplicationScroll();
+      state.wheelPixels = 0;
       state.lastTime = Date.now();
       state.velocityY = 0;
       state.samples.length = 0;
     }
 
     function handleTouchMove(e) {
+      if (alreadyHandled(e)) { return; }
       var vp = viewport();
       if (!vp) {
         return;
@@ -516,6 +552,34 @@
       var timestamp = Date.now();
       var elapsed = Math.max(1, timestamp - state.lastTime);
       var deltaY = y - state.lastY;
+      if (state.applicationScroll !== isApplicationScroll()) { cancel(); return; }
+      if (state.applicationScroll) {
+        if (e.touches.length !== 1 || hasDomSelection()) { cancel(); return; }
+        if (state.active || Math.abs(y - state.startY) >= SCROLL_THRESHOLD_PX) {
+          var view = container.ownerDocument && container.ownerDocument.defaultView;
+          var screen = container.querySelector(".xterm-screen");
+          var cellHeight = term && term.rows > 0 ? vp.clientHeight / term.rows : 0;
+          if (!view || !view.WheelEvent || !screen || cellHeight <= 0) { cancel(); return; }
+          state.active = true;
+          if (e.cancelable !== false) { e.preventDefault(); }
+          e.stopPropagation();
+          state.wheelPixels -= deltaY;
+          var lines = Math.trunc(state.wheelPixels / cellHeight);
+          state.wheelPixels -= lines * cellHeight;
+          // Route through xterm, which owns SGR/legacy encoding and the
+          // alternate-screen cursor-key fallback. Keep the original panel's
+          // coordinates even when the finger crosses another TUI region.
+          for (var line = 0; line < Math.abs(lines); line++) {
+            screen.dispatchEvent(new view.WheelEvent("wheel", {
+              bubbles: true, cancelable: true, deltaMode: 1,
+              deltaY: lines > 0 ? 1 : -1, clientX: state.startX, clientY: state.startY
+            }));
+          }
+        }
+        state.lastY = y;
+        state.lastTime = timestamp;
+        return;
+      }
       var metrics = scrollMetrics();
       var decision = policy({
         isMouseTracking: isMouseTracking(),
@@ -546,7 +610,7 @@
             && timestamp - state.samples[0].t > FLING_SAMPLE_WINDOW_MS) {
           state.samples.shift();
         }
-        if (decision.preventDefault) {
+        if (decision.preventDefault && e.cancelable !== false) {
           e.preventDefault();
         }
       } else if (isMouseTracking() || hasDomSelection()) {
@@ -559,6 +623,7 @@
     }
 
     function finish(e) {
+      if (alreadyHandled(e)) { return; }
       var hasRemainingTouches = e && e.touches && e.touches.length > 0;
       if (hasRemainingTouches) {
         state.active = false;
@@ -569,10 +634,11 @@
         cancelFling();
         return;
       }
+      releaseTouchTargets();
       var timestamp = Date.now();
       state.lastTime = timestamp;
       var shouldFling = state.active && !state.canceled
-          && !isMouseTracking() && !hasDomSelection();
+          && !state.applicationScroll && !isApplicationScroll() && !hasDomSelection();
       state.active = false;
       state.primaryTouchId = null;
       state.canceled = false;
@@ -584,7 +650,9 @@
         state.samples.length = 0;
       }
     }
-    function cancel() {
+    function cancel(e) {
+      if (alreadyHandled(e)) { return; }
+      releaseTouchTargets();
       state.active = false;
       state.canceled = true;
       state.primaryTouchId = null;
@@ -606,6 +674,7 @@
     var resizeHook = boundTerminal && typeof boundTerminal.onResize === "function"
         ? boundTerminal.onResize(syncRowOffset) : null;
     return function dispose() {
+      releaseTouchTargets();
       cancelFling();
       var screen = container.querySelector(".xterm-screen");
       if (screen && screen.style && screen.style.transform) {

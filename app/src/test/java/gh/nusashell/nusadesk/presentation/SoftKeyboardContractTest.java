@@ -56,21 +56,23 @@ public class SoftKeyboardContractTest {
 
     @Test
     public void everySurfaceTransitionSettlesTheKeyboard() throws Exception {
-        String activity = source(
-                "app/src/main/java/gh/nusashell/nusadesk/presentation/MainActivity.java");
+        String base = "app/src/main/java/gh/nusashell/nusadesk/presentation/";
+        String activity = source(base + "MainActivity.java");
+        String webAppServers = source(base + "webapp/WebAppServerCoordinator.java");
 
         // One helper, hit by all four transitions: launcher, fixed surfaces,
-        // web apps, and terminal-command apps.
+        // web apps, and terminal-command apps (the last via the coordinator).
         assertTrue("the settle helper exists with the decor-token fallback",
                 activity.contains("private void settleKeyboardFor(View surface)")
                         && activity.contains("getWindow().getDecorView().getWindowToken()"));
-        assertTransition(activity, "showShell()", "desktopHome");
-        assertTransition(activity, "showSurface(DesktopDestination destination)",
+        assertTransition(activity, "private void showShell()", "desktopHome");
+        assertTransition(activity, "private void showSurface(DesktopDestination destination)",
                 "surface");
-        assertTransition(activity, "showWebApp(WebAppDefinition definition)",
+        assertTransition(activity, "private void showWebApp(WebAppDefinition definition)",
                 "surface");
-        assertTransition(activity, "showTerminalApp(TerminalCommandApp app)",
-                "surface");
+        assertTrue(activity.contains("showCommandSurface(app.getId().value(), app.getDisplayName(), surface)"));
+        assertTransition(webAppServers,
+                "void showCommandSurface(String id, String title, TerminalAppView surface)", "surface");
     }
 
     /**
@@ -91,12 +93,14 @@ public class SoftKeyboardContractTest {
                 body.contains("webView.clearFocus()"));
     }
 
-    private static void assertTransition(String activity, String method, String target) {
-        int signature = activity.indexOf("private void " + method + " {");
-        assertTrue(method + " exists", signature >= 0);
-        String body = activity.substring(signature,
-                Math.min(signature + 900, activity.length()));
-        assertTrue(method + " settles the keyboard for " + target,
+    private static void assertTransition(String source, String declaration, String target) {
+        int signature = source.indexOf(declaration + " {");
+        assertTrue(declaration + " exists", signature >= 0);
+        // The first brace at method indentation closes this method's body.
+        int methodEnd = source.indexOf("\n    }", signature + 1);
+        String body = source.substring(signature,
+                methodEnd < 0 ? source.length() : methodEnd);
+        assertTrue(declaration + " settles the keyboard for " + target,
                 body.contains("settleKeyboardFor(" + target + ")"));
     }
 }

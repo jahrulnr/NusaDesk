@@ -3,6 +3,7 @@ package gh.nusashell.nusadesk.infrastructure.service;
 import gh.nusashell.nusadesk.application.terminal.TerminalSessionPort;
 import gh.nusashell.nusadesk.application.terminal.TerminalTabException;
 import gh.nusashell.nusadesk.application.terminal.TerminalTabsPort;
+import gh.nusashell.nusadesk.application.webapp.WebAppCommandSession;
 import gh.nusashell.nusadesk.domain.terminal.TerminalCommand;
 import gh.nusashell.nusadesk.domain.terminal.TerminalSessionState;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabKind;
@@ -75,8 +76,11 @@ public final class TerminalTabsController implements TerminalTabsPort {
     public static final String SHELL_TAB_ID = "shell";
 
     /**
-     * Maximum live tabs. Every tab owns a WebView running xterm, so the cap
-     * exists to bound renderer memory rather than a protocol limit.
+     * Maximum <em>active</em> tabs. Every tab owns a WebView running xterm, so
+     * the cap exists to bound renderer memory rather than a protocol limit.
+     * The count excludes a dead web-app-owned tab that is retained for startup
+     * diagnostics (ADR-0072): such a tab persists beyond the cap until it is
+     * closed or replaced.
      */
     public static final int MAX_TABS = 5;
 
@@ -262,9 +266,23 @@ public final class TerminalTabsController implements TerminalTabsPort {
         publishSnapshot();
     }
 
+    @Override public java.util.concurrent.CompletableFuture<Void> closeAndAwait(String tabId, java.util.concurrent.Executor worker) {
+        Tab old = tabs.get(tabId);
+        if (old == null) return java.util.concurrent.CompletableFuture.completedFuture(null);
+        java.util.concurrent.CompletableFuture<Void> stopped = old.session.closeAndAwait(worker);
+        close(tabId);
+        return stopped;
+    }
+
+    /** The cap bounds active tabs only; a dead web-app-owned tab stays past it (ADR-0072). */
     @Override
     public boolean isFull() {
-        return tabs.size() >= MAX_TABS;
+        long active = tabs.values().stream().filter(tab -> !(
+                WebAppCommandSession.isOwner(tab.commandAppId)
+                && (tab.session.status().getState() == TerminalSessionState.EXITED
+                || tab.session.status().getState() == TerminalSessionState.DROPPED
+                || tab.session.status().getState() == TerminalSessionState.FAILED))).count();
+        return active >= MAX_TABS;
     }
 
     /**
@@ -306,7 +324,8 @@ public final class TerminalTabsController implements TerminalTabsPort {
             String command, int displayOrdinal, boolean closable) {
         TerminalSessionController session = new TerminalSessionController(
                 transportFactory, command,
-                status -> onTabSessionStatus(id), mainExecutor);
+                status -> onTabSessionStatus(id), mainExecutor,
+                WebAppCommandSession.isOwner(commandAppId));
         Tab tab = new Tab(id, kind, commandAppId, command, displayOrdinal, closable, session);
         tabs.put(id, tab);
         // Attach to the running runtime immediately; when none runs the
@@ -323,7 +342,10 @@ public final class TerminalTabsController implements TerminalTabsPort {
         if (tab == null) {
             return; // a removed tab's late session transition changes nothing
         }
-        if (tab.session.status().getState() == TerminalSessionState.EXITED) {
+        if (tab.session.status().getState() == TerminalSessionState.EXITED
+                && !WebAppCommandSession.isOwner(tab.commandAppId)) {
+            // Combined web apps retain an exited terminal for startup diagnostics;
+            // an explicit retry replaces that dead tab through openOrSelectCommand.
             // A clean remote channel end ({@code exit}, a finished command)
             // closes exactly this tab; DROPPED/FAILED stay because they need
             // an explicit reconnect, never an automatic close. removeTab

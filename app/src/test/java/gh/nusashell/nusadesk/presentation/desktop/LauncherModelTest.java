@@ -16,6 +16,7 @@ import java.util.function.Function;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -24,6 +25,19 @@ import static org.junit.Assert.assertTrue;
  * query leaves standing — so it is asserted without a device.
  */
 public class LauncherModelTest {
+
+    @Test public void discoveredLinuxAppsJoinSearchAndReplaceThePrototypeTile() {
+        gh.nusashell.nusadesk.domain.display.LinuxDesktopApp app = new gh.nusashell.nusadesk.domain.display.LinuxDesktopApp(
+                "mousepad.desktop", "Mousepad", "/usr/share/applications/mousepad.desktop", null);
+        List<LauncherEntry> entries = LauncherModel.entries(Collections.emptyList(), Collections.emptyList(), Collections.singletonList(app));
+        LauncherEntry found = LauncherModel.filter(entries, "mousePAD", LABELS).get(0);
+        assertEquals(LauncherEntry.Kind.LINUX_APP, found.getKind());
+        assertSame(app, found.getLinuxApp());
+        assertEquals("linux:mousepad.desktop", found.getId());
+        assertFalse(entries.stream().anyMatch(e -> e.getKind() == LauncherEntry.Kind.CURATED && e.getId().equals("native_gui")));
+    }
+
+    private static final int USER_APPS_START = 4;
 
     private static WebAppDefinition webApp(String name, int port, long createdAt) {
         return new WebAppDefinition(
@@ -78,12 +92,12 @@ public class LauncherModelTest {
         assertEquals("terminal", entries.get(1).getId());
         assertEquals("system", entries.get(2).getId());
         assertEquals("logs", entries.get(3).getId());
-        assertEquals("notebook", entries.get(4).getId());
-        assertEquals("wiki", entries.get(5).getId());
-        assertEquals(LauncherEntry.Kind.TERMINAL_APP, entries.get(6).getKind());
-        assertEquals("cmd-codex", entries.get(6).getId());
-        assertEquals("cmd-htop", entries.get(7).getId());
-        assertEquals(8, entries.size());
+        assertEquals("notebook", entries.get(USER_APPS_START).getId());
+        assertEquals("wiki", entries.get(USER_APPS_START + 1).getId());
+        assertEquals(LauncherEntry.Kind.TERMINAL_APP, entries.get(USER_APPS_START + 2).getKind());
+        assertEquals("cmd-codex", entries.get(USER_APPS_START + 2).getId());
+        assertEquals("cmd-htop", entries.get(USER_APPS_START + 3).getId());
+        assertEquals(USER_APPS_START + 4, entries.size());
     }
 
     @Test
@@ -114,7 +128,7 @@ public class LauncherModelTest {
 
     @Test
     public void aWebAppEntryCarriesItsOwnDefinitionSoTheTileCanOpenIt() {
-        LauncherEntry entry = LauncherModel.entries(WEB_APPS, null).get(4);
+        LauncherEntry entry = LauncherModel.entries(WEB_APPS, null).get(USER_APPS_START);
 
         assertTrue(entry.isWebApp());
         assertTrue(entry.isOpenable());
@@ -125,7 +139,7 @@ public class LauncherModelTest {
 
     @Test
     public void aTerminalCommandEntryCarriesItsOwnAppSoTheTileCanOpenIt() {
-        LauncherEntry entry = LauncherModel.entries(null, COMMAND_APPS).get(4);
+        LauncherEntry entry = LauncherModel.entries(null, COMMAND_APPS).get(USER_APPS_START);
 
         assertTrue(entry.isTerminalApp());
         assertFalse(entry.isWebApp());
@@ -142,19 +156,19 @@ public class LauncherModelTest {
     public void noRegisteredAppsIsAValidLauncher() {
         List<LauncherEntry> entries = LauncherModel.entries(null, null);
 
-        assertEquals(4, entries.size());
+        assertEquals(USER_APPS_START, entries.size());
         assertFalse(entries.get(1).isWebApp());
         assertFalse(entries.get(1).isTerminalApp());
     }
 
     @Test
     public void emptyOrNullCommandAppListsAreTolerated() {
-        assertEquals(6, LauncherModel.entries(WEB_APPS, null).size());
-        assertEquals(6,
+        assertEquals(USER_APPS_START + 2, LauncherModel.entries(WEB_APPS, null).size());
+        assertEquals(USER_APPS_START + 2,
                 LauncherModel.entries(WEB_APPS, Collections.emptyList()).size());
         List<TerminalCommandApp> withNull = new ArrayList<>(COMMAND_APPS);
         withNull.add(null);
-        assertEquals(8, LauncherModel.entries(WEB_APPS, withNull).size());
+        assertEquals(USER_APPS_START + 4, LauncherModel.entries(WEB_APPS, withNull).size());
     }
 
     @Test
@@ -211,5 +225,38 @@ public class LauncherModelTest {
         } catch (UnsupportedOperationException expected) {
             assertTrue(true);
         }
+    }
+    @Test public void liveTasksDecorateExistingIconsAndKeepRemovedCatalogEntriesResumable() {
+        gh.nusashell.nusadesk.domain.display.LinuxDesktopApp app =
+                new gh.nusashell.nusadesk.domain.display.LinuxDesktopApp("editor.desktop", "Editor", "/usr/share/applications/editor.desktop", null);
+        gh.nusashell.nusadesk.domain.display.DesktopTask task = new gh.nusashell.nusadesk.domain.display.DesktopTask(
+                app, gh.nusashell.nusadesk.domain.display.DesktopTask.State.MINIMIZED, "");
+        List<LauncherEntry> normal = LauncherModel.entries(null, null, Collections.singletonList(app));
+        List<LauncherEntry> live = LauncherModel.entries(null, null, Collections.singletonList(app), Collections.singletonList(task));
+        assertEquals(normal.size(), live.size());
+        List<LauncherEntry> matches = LauncherModel.filter(live, "Editor", LauncherEntry::getLabel);
+        assertEquals(1, matches.size());
+        assertEquals(task.getState(), matches.get(0).getTaskState());
+        assertEquals("linux:editor.desktop", matches.get(0).getId());
+        List<LauncherEntry> removed = LauncherModel.entries(null, null, Collections.emptyList(), Collections.singletonList(task));
+        assertEquals(live, removed);
+        assertTrue(LauncherModel.filter(LauncherModel.entries(null, null, Collections.emptyList(), Collections.emptyList()),
+                "Editor", LauncherEntry::getLabel).isEmpty());
+    }
+    @Test public void uninstallDropsFailedGhostIconsAndDoesNotInventAPlaceholderEditor() {
+        gh.nusashell.nusadesk.domain.display.LinuxDesktopApp app = new gh.nusashell.nusadesk.domain.display.LinuxDesktopApp(
+                "removed.desktop", "Removed", "/usr/share/applications/removed.desktop", null);
+        gh.nusashell.nusadesk.domain.display.DesktopTask failed = new gh.nusashell.nusadesk.domain.display.DesktopTask(
+                app, gh.nusashell.nusadesk.domain.display.DesktopTask.State.FAILED, "Uninstalled");
+        List<LauncherEntry> entries = LauncherModel.entries(null, null, Collections.emptyList(), Collections.singletonList(failed));
+        assertTrue(LauncherModel.filter(entries, "Removed", LauncherEntry::getLabel).isEmpty());
+        for (LauncherEntry entry : entries) assertFalse("native_gui".equals(entry.getId()));
+    }
+    @Test public void aNullTaskListMeansNoLiveTaskStateLikeTheOtherNullLists() {
+        gh.nusashell.nusadesk.domain.display.LinuxDesktopApp app =
+                new gh.nusashell.nusadesk.domain.display.LinuxDesktopApp("editor.desktop", "Editor", "/usr/share/applications/editor.desktop", null);
+        List<LauncherEntry> entries = LauncherModel.entries(null, null, Collections.singletonList(app), null);
+        assertEquals(LauncherModel.entries(null, null, Collections.singletonList(app)), entries);
+        assertNull(entries.get(entries.size() - 1).getTaskState());
     }
 }

@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.os.Message;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.webkit.HttpAuthHandler;
@@ -26,6 +27,7 @@ import android.widget.Toast;
 
 import gh.nusashell.nusadesk.R;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
+import gh.nusashell.nusadesk.domain.webapp.WebAppStartupPolicy;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.ExternalLinkHandler;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.HttpAuthResponder;
 import gh.nusashell.nusadesk.infrastructure.runtimehost.LoopbackWebViewClient;
@@ -40,6 +42,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.function.BooleanSupplier;
 
 /**
  * One user web app, opened as a maximized surface.
@@ -108,7 +111,8 @@ public final class WebAppSurfaceView extends FrameLayout
     private ProgressBar stateProgress;
     private Button stateAction;
 
-    private WebAppDefinition definition;
+    private volatile WebAppDefinition definition;
+    private volatile int probeGeneration;
     private WebAppWebViewBoundary boundary;
     private ExecutorService probeExecutor;
     private HttpAuthResponder signInResponder;
@@ -117,7 +121,8 @@ public final class WebAppSurfaceView extends FrameLayout
     private WebView webView;
     private State state = State.PROBING;
     private String failureDetail;
-    private boolean released;
+    private volatile boolean released;
+    private BooleanSupplier beforeReload;
     private ReachabilityListener reachabilityListener;
     private TabListener tabListener;
 
@@ -279,8 +284,34 @@ public final class WebAppSurfaceView extends FrameLayout
         startProbe();
     }
 
+    /** Ask the host to start/reuse a combined app command before a user retry. */
+    public void setBeforeReload(BooleanSupplier action) { beforeReload = action; }
+
+    /**
+     * Keeps the old page covered while the host waits for the previous server
+     * to release its port. UI thread only.
+     */
+    public void showServerStarting() {
+        probeGeneration++;
+        state = State.PROBING;
+        failureDetail = null;
+        render();
+    }
+
+    /**
+     * The guest command could not start; preserves Retry and terminal/menu
+     * access. UI thread only.
+     */
+    public void showStartupFailure(String message) {
+        probeGeneration++;
+        state = State.FAILED;
+        failureDetail = message;
+        render();
+    }
+
     /** Re-probes and reloads; the only action any state offers. */
     public void reload() {
+        if (beforeReload != null && !beforeReload.getAsBoolean()) return;
         if (definition == null) {
             return;
         }
@@ -384,18 +415,30 @@ public final class WebAppSurfaceView extends FrameLayout
         render();
         ExecutorService executor = probeExecutor;
         if (executor != null) {
-            executor.execute(this::probe);
+            int generation = ++probeGeneration;
+            queueProbe(generation, SystemClock.elapsedRealtime());
         }
     }
 
-    /** Observes the endpoint once, off the main thread. */
-    private void probe() {
+    private void queueProbe(int generation, long startedAt) {
+        if (released || generation != probeGeneration || probeExecutor == null || probeExecutor.isShutdown()) return;
+        probeExecutor.execute(() -> probe(generation, startedAt));
+    }
+
+    /** Each bounded HTTP attempt releases the shared worker before a delayed startup retry. */
+    private void probe(int generation, long startedAt) {
         WebAppDefinition target = definition;
-        if (target == null) {
-            return;
-        }
+        if (target == null || released || generation != probeGeneration) return;
         WebAppReadinessObserver.Result result = observer.observe(target.getGuestPort());
-        mainHandler.post(() -> onProbeResult(target, result));
+        mainHandler.post(() -> {
+            if (released || generation != probeGeneration || !target.equals(definition)) return;
+            if (WebAppStartupPolicy.shouldRetry(
+                    target.hasStartupCommand(), result.isReachable(),
+                    SystemClock.elapsedRealtime() - startedAt)) {
+                mainHandler.postDelayed(() -> queueProbe(generation, startedAt),
+                        WebAppStartupPolicy.RETRY_MILLIS);
+            } else onProbeResult(target, result);
+        });
     }
 
     private void onProbeResult(WebAppDefinition target, WebAppReadinessObserver.Result result) {

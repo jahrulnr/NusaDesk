@@ -2,7 +2,7 @@
 
 ## Project status
 
-NusaDesk is an Android/Linux workspace. The current version is `0.14.3`. Runtime evidence covers the core runtime (Ubuntu Base
+NusaDesk is an Android/Linux workspace. The current version is `0.14.4`. Runtime evidence covers the core runtime (Ubuntu Base
 install, PRoot bridge, OpenSSH endpoint, session supervision, terminal) on one
 Android 10 / API 29 ARM64 device, the bounded `udocker compose` adapter on one
 Android 12 / API 31 ARM64 device (Samsung S10e), and — on that same S10e — the
@@ -19,8 +19,8 @@ the guest adb driver, ADR-0041/0042) and the Termux:API parity surface
 command contract — device state, text/notifications, speech and dialog,
 capture, storage/SAF/share, comms (SMS send, telephony call, keystore, job
 scheduler), the sensor catalogue, wifi reads, infrared, media playback, NFC,
-USB, and fingerprint — each device-verified per
-`docs/evidence/termux-parity-matrix.md`. The web-app HTTP sign-in path
+USB, and fingerprint — each device-verified. The
+web-app HTTP sign-in path
 (ADR-0058) — a native card, per-app credentials in the Keystore vault, and the
 challenge policy that answers only the owned host — was device-verified on that
 same S10e (WA-028..033 in `docs/test-plan.md`); its one unresolved case, a
@@ -31,14 +31,14 @@ peer: the Bluetooth modules (BLE advertise/scan, GATT client against the other
 phone's GATT server, RFCOMM echo, discovery, pairing), the wifi extras (a real
 local-only hotspot, network suggestions, wifi lock), the guest file server
 reached from another machine over the LAN, usage stats, package enumeration and
-launch, the guest-driven overlay, and background location — recorded per row in
-`docs/evidence/capability-closure-matrix.md`. The ADR-0053 Bluetooth slice
+launch, the guest-driven overlay, and background location. The
+ADR-0053 Bluetooth slice
 was also exercised on a local same-key QA build at `versionCode 14`, before the
 0.9.0 bump: the S10e presented as a bounded HID keyboard/mouse to the S7 Edge,
 and the S10e reported WH-CH520 A2DP/HFP status, voice start/stop, and an
-app-local MediaPlayer route. Exact results and unverified mouse-pointer/
-built-in-speaker observations are in
-`docs/evidence/bluetooth-hid-audio-matrix.md`.
+app-local MediaPlayer route. Mouse-pointer
+visibility on the peer and a sustained built-in-speaker route remain
+unverified.
 
 Security behavior on other Android versions, OEMs, and 16 KB page-size devices
 is not yet covered by the same evidence.

@@ -188,6 +188,12 @@ Rules this layer enforces:
 - **Command apps run only in the guest.** A launcher terminal-command app
   opens an exec SSH channel with a PTY over the same pinned loopback endpoint;
   the Android host never passes its stored command to a local process API.
+- **Touch scroll routing.** Normal terminal output uses pixel scrollback and
+  release momentum. Mouse-tracking/alternate-screen TUIs receive row-sized
+  wheel events through xterm's own protocol handler (ADR-0074).
+- **Unicode layout.** The bundled UnicodeGraphemesAddon supplies grapheme-aware
+  widths before terminal output is parsed; color glyphs still come from the
+  device font stack (ADR-0075).
 - **Retained surfaces.** A destination stays attached and is switched by
   visibility, which is what keeps a live terminal's WebView and scrollback — and
   a web app's page — alive across a trip back to the launcher. Surfaces are
@@ -487,3 +493,52 @@ flowchart LR
 - no target-specific app integration;
 - no second concurrent Linux session;
 - no Play Store compliance claim.
+
+
+## Experimental native Linux GUI (ADR-0068)
+
+An opt-in build (`-PnativeDesktop=true`) adds a native SurfaceView app area
+for the foreground Linux GUI among retained apps in the existing guest. A
+private Android process hosts the pinned Xlorie server and hands its renderer FD through Binder; the
+main process hosts the Java/JNI renderer and focused-area input. The guest
+connects through the shared session `/tmp` X11 socket, with TCP disabled.
+This display path does not use WebView or VNC/RFB. The default build omits the
+native display binary and tile.
+
+The runtime host remains the lifecycle owner. Display teardown is awaited
+before ADR-0027 clears `/tmp`; hiding/recreating a surface does not create
+another Linux session. One guest-only SSH workload owns Openbox; separate
+supervised channels launch the selected desktop entries. Each app probes its
+own guest windows before publishing GUI readiness. An empty catalog inserts no fixed GUI placeholder.
+ADR-0069 adds guest GIO `.desktop` discovery and launch by ID. Home refreshes
+installed GUI metadata from XDG locations and `~/usr/share/applications`, with
+PNG icons and the existing search. The host never parses Exec into a shell
+command. ADR-0070 supersedes close-before-switch: the shared native display retains
+multiple app tasks, identifies their windows by PID/process-group and transients,
+and minimizes/restores the foreground task through EWMH. Home renders immutable
+live task snapshots as badges on the existing app icons; tapping an icon resumes
+that task, and the title bar offers Minimize and graceful Close. All app
+channels and the one WM close on a worker before temporary-storage cleanup.
+ADR-0073 adds unconditional binding cleanup, renderer reconnection, and a private
+D-Bus session for each GIO child. Successful helper CLOSED removes the task;
+nonzero exits remain failures. Catalog refreshes coalesce into a subsequent scan.
+
+`NativeDesktopInput` separates the orb from the Android/JNI input adapter.
+Touch/Drag/Pointer modes, composition-aware IME, one-shot modifiers and navigation
+keys are in-app controls. Renderer zoom/pinch and guest layout width are separate
+settings; toolkit/font DPI is unchanged.
+Prerequisites are explicit, manually provisioned experiment packages; there is
+no product GUI installer yet. Android 10/API 29 is the target; device results
+and remaining gates are recorded in `limitations.md`.
+The enabled APK links GPL code; see ADR-0068 and `third_party/termux-x11/`.
+
+ADR-0071 extends the existing launcher favicon decoder with AndroidSVG 1.4
+(Apache-2.0) for static same-origin SVG icons. Rasterization uses Android Canvas
+and the existing tile bitmap budget; request/auth/retry policies are unchanged.
+
+ADR-0072 adds an in-progress Web + Terminal registration: optional startup
+command, one service-owned command tab and HTTP readiness before loading its
+web surface. Restart fences SSH teardown and TCP port release before replacement. A terminal
+renderer is created only on demand; dead diagnostic tabs do not consume live tab
+capacity. Physical delayed-start, reuse and restart samples were exercised on
+the API 29 ARM64 device.

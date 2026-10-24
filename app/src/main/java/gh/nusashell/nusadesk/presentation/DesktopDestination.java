@@ -19,6 +19,7 @@ public enum DesktopDestination {
     TERMINAL(R.string.app_terminal),
     SYSTEM(R.string.app_system),
     LOGS(R.string.app_logs),
+    NATIVE_GUI(R.string.app_native_gui),
     ADD_APP(R.string.webapp_add_title);
 
     private final int titleRes;

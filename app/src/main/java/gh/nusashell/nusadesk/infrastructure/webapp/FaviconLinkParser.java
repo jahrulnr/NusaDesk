@@ -25,8 +25,8 @@ import java.util.regex.Pattern;
  * here degrades to "no declared icon", never to a wrong image), same-origin
  * resolution only — a declaration can never point the fetch at another host,
  * scheme, or port — and at most {@link #MAX_CANDIDATES} URLs, in the order the
- * document lists them. Scalable-vector candidates are skipped because the
- * platform decoder cannot rasterise them.</p>
+ * document lists them. Static SVG candidates are included; the icon decoder rasterises them
+ * to a tile-sized bitmap.</p>
  */
 public final class FaviconLinkParser {
 
@@ -70,7 +70,7 @@ public final class FaviconLinkParser {
                 continue;
             }
             String href = attribute(HREF_ATTRIBUTE, tag);
-            if (href == null || href.isEmpty() || isVector(href)) {
+            if (href == null || href.isEmpty()) {
                 continue;
             }
             String resolved = sameOriginUrl(origin, href);
@@ -100,11 +100,6 @@ public final class FaviconLinkParser {
             return null;
         }
         return rel.toLowerCase(Locale.US).trim().replaceAll("\\s+", " ");
-    }
-
-    private static boolean isVector(String href) {
-        String path = href.toLowerCase(Locale.US);
-        return path.endsWith(".svg") || path.startsWith("data:");
     }
 
     /**

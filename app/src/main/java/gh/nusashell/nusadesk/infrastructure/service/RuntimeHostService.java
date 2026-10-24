@@ -14,6 +14,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 
+import gh.nusashell.nusadesk.BuildConfig;
 import gh.nusashell.nusadesk.application.terminal.TerminalSessionPort;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeCatalogEntry;
@@ -22,6 +23,7 @@ import gh.nusashell.nusadesk.domain.session.SessionState;
 import gh.nusashell.nusadesk.domain.terminal.TerminalSessionStatus;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabSnapshot;
 import gh.nusashell.nusadesk.domain.terminal.TerminalTabsSnapshot;
+import gh.nusashell.nusadesk.infrastructure.display.NativeDesktopSession;
 import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesHostKeyTrustStore;
 import gh.nusashell.nusadesk.infrastructure.session.SharedPreferencesSessionStateStore;
 import gh.nusashell.nusadesk.infrastructure.ssh.GuestLivenessProbe;
@@ -120,6 +122,12 @@ public final class RuntimeHostService extends Service {
      */
     public static final String ACTION_RESTART =
             "gh.nusashell.nusadesk.action.RUNTIME_RESTART";
+    /**
+     * Debuggable QA only: close the native renderer FD without stopping the
+     * display process so Retry can be exercised on a live device.
+     */
+    public static final String ACTION_NATIVE_RENDERER_DISCONNECT =
+            "gh.nusashell.nusadesk.action.NATIVE_RENDERER_DISCONNECT";
 
     /** Intent extra: app id of the runtime to start. */
     public static final String EXTRA_APP_ID = "appId";
@@ -269,6 +277,15 @@ public final class RuntimeHostService extends Service {
             RuntimeCatalogEntry entry = CuratedRuntimeCatalog.ubuntuBaseArm64();
             controller.ensureRunning(entry.getAppId(), entry.getVersion(),
                     UUID.randomUUID().toString(), this::onStatus);
+        } else if (ACTION_NATIVE_RENDERER_DISCONNECT.equals(action)) {
+            // Same-UID QA path (run-as am start-service). Ignored unless the
+            // installed package is debuggable so release builds stay inert.
+            if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                    && BuildConfig.NATIVE_DESKTOP_ENABLED) {
+                // Already on the main thread; disconnectRenderer self-marshals anyway.
+                NativeDesktopSession.get(this).disconnectRenderer();
+            }
+            releaseIfIdle();
         } else {
             // Unknown or null action (including a redelivered start): nothing
             // to do — but never release a live workload or a pending restart.

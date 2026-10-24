@@ -28,6 +28,7 @@ import java.util.Set;
  * JVM without an Android runtime.</p>
  */
 final class WebAppRecordCodec {
+    static final String FIELD_STARTUP_COMMAND = "startupCommand";
     static final String FIELD_NAME = "name";
     static final String FIELD_ICON_URI = "iconUri";
     static final String FIELD_GUEST_PORT = "guestPort";
@@ -47,6 +48,7 @@ final class WebAppRecordCodec {
             throw new IllegalArgumentException("definition must not be null");
         }
         Map<String, String> fields = new HashMap<>();
+        if (definition.hasStartupCommand()) fields.put(FIELD_STARTUP_COMMAND, definition.getStartupCommand().value());
         fields.put(FIELD_NAME, definition.getDisplayName());
         fields.put(FIELD_ICON_URI, definition.getIconUri());
         fields.put(FIELD_GUEST_PORT, Integer.toString(definition.getGuestPort()));
@@ -85,7 +87,7 @@ final class WebAppRecordCodec {
                     Integer.parseInt(guestPort.trim()),
                     Long.parseLong(createdAt.trim()),
                     Long.parseLong(updatedAt.trim()),
-                    Integer.parseInt(sortOrder.trim()));
+                    Integer.parseInt(sortOrder.trim()), fields.get(FIELD_STARTUP_COMMAND));
         } catch (IllegalArgumentException corrupt) {
             return null;
         }

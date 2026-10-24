@@ -508,4 +508,41 @@
 
     <!-- Accessibility / content descriptions -->
     <string name="status_content_description">Status: %1$s. %2$s</string>
+    <string name="app_native_gui">Text editor</string>
+    <string name="native_gui_open">Try again</string>
+    <string name="native_gui_open_app">Open</string>
+    <string name="native_controls_title">Desktop controls</string>
+    <string name="native_controls_open">Open desktop controls. Drag to move.</string>
+    <string name="native_controls_close">Close desktop controls</string>
+    <string name="native_controls_gestures">Touch: tap to click, swipe to scroll, hold for right click. Drag: select or move. Pointer: move the mouse cursor.</string>
+    <string name="native_mode_touch">Touch</string>
+    <string name="native_mode_drag">Drag</string>
+    <string name="native_mode_pointer">Pointer</string>
+    <string name="native_key_armed">, next key</string>
+    <string name="native_mode_selected">, selected</string>
+    <string name="native_zoom_in">Zoom in</string>
+    <string name="native_zoom_out">Zoom out</string>
+    <string name="native_zoom_reset">Zoom: %1$d%%. Tap to fit.</string>
+    <string name="native_layout_fit">Auto layout</string>
+    <string name="native_layout_width">Desktop layout width: %1$d px</string>
+    <string name="native_display_starting">Opening Linux app</string>
+    <string name="native_display_missing">Linux GUI components needed</string>
+    <string name="native_display_failed">Could not open the display</string>
+    <string name="native_display_stopped">Linux app stopped</string>
+    <string name="native_keyboard_show">Show keyboard</string>
+    <string name="native_keyboard_hide">Hide keyboard</string>
+    <string name="native_zoom_fit_value">%1$d%% · Fit</string>
+    <string name="native_mode_active">✓ %1$s</string>
+    <string name="native_app_minimize">Minimize Linux app</string>
+    <string name="native_task_description">%1$s, %2$s</string>
+    <string name="native_task_minimized">Minimized</string>
+    <string name="native_task_starting">Starting…</string>
+    <string name="native_task_failed">Retry</string>
+    <string name="native_task_running">Running</string>
+    <string name="app_form_type_web_command">Web + Terminal</string>
+    <string name="web_command_form_body">Run a command inside Linux in the background, then open its web port. Keep the server in the foreground of that command; returning Home keeps it running.</string>
+    <string name="web_command_terminal">Show terminal</string>
+    <string name="web_command_restart">Restart server</string>
+    <string name="web_command_back">Back to web app</string>
+    <string name="native_app_close">Close Linux app</string>
 </resources>

@@ -47,6 +47,9 @@ public final class AppFormError {
                 return name();
             case INVALID_ICON_URI:
                 return image();
+            case INVALID_COMMAND:
+                return new AppFormError(Field.COMMAND, R.string.terminal_error_command,
+                        TerminalCommand.MAX_LENGTH, null);
             case INVALID_PORT:
                 return new AppFormError(Field.PORT, R.string.webapp_error_port, -1, null);
             case PORT_RESERVED:

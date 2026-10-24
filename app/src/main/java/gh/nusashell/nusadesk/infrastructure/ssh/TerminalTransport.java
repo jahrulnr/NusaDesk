@@ -36,4 +36,11 @@ public interface TerminalTransport {
 
     /** Gracefully stop the session and release resources. Idempotent. */
     void close();
+
+    /**
+     * Worker-only fence; synchronous transports finish in {@link #close()}.
+     * A transport whose close only schedules asynchronous teardown must
+     * override this to actually await it.
+     */
+    default boolean awaitClosed(long timeoutMillis) throws InterruptedException { return true; }
 }

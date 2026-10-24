@@ -67,6 +67,16 @@ public interface TerminalTabsPort {
      */
     void close(String tabId);
 
-    /** Whether the tab cap is reached, so surfaces can hide "New terminal". */
+    /** Completion fence for replacement commands; synchronous adapters may use the default. */
+    default java.util.concurrent.CompletableFuture<Void> closeAndAwait(String tabId, java.util.concurrent.Executor worker) {
+        close(tabId);
+        return java.util.concurrent.CompletableFuture.completedFuture(null);
+    }
+
+    /**
+     * Whether the cap on <em>active</em> tabs is reached, so surfaces can hide
+     * "New terminal". A dead web-app-owned tab kept for diagnostics persists
+     * beyond the cap and does not count against it (ADR-0072).
+     */
     boolean isFull();
 }

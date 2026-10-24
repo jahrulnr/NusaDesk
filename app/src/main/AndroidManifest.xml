@@ -333,6 +333,10 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false"
         android:requestLegacyExternalStorage="true">
+        <!-- Optional display process (ADR-0068); bound only by an enabled native GUI build. -->
+        <service android:name=".infrastructure.display.X11ServerService"
+            android:process=":native_display" android:exported="false" />
+
         <activity
             android:name=".presentation.MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"

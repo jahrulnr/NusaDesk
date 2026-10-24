@@ -38,7 +38,7 @@ function check(name, actual, expected) {
   }
 }
 
-const T = 10; // threshold, must match SCROLL_THRESHOLD_PX in touch-scroll.js
+const T = 8; // threshold, must match SCROLL_THRESHOLD_PX in touch-scroll.js
 
 // 1. Below the threshold and not yet active: a tap, never stolen.
 check(

@@ -66,7 +66,7 @@ public class FaviconLinkParserTest {
     }
 
     @Test
-    public void vectorAndInlineCandidatesAreSkippedBecauseTheDecoderCannotReadThem() {
+    public void svgCandidatesAreKeptWhileMaskAndInlineLinksAreExcluded() {
         List<String> urls = FaviconLinkParser.iconUrls(
                 "<link rel=\"icon\" href=\"/mark.svg\" type=\"image/svg+xml\">"
                         + "<link rel=\"mask-icon\" href=\"/mask.svg\">"
@@ -74,7 +74,7 @@ public class FaviconLinkParserTest {
                         + "<link rel=\"icon\" href=\"/real.png\">",
                 ORIGIN);
 
-        assertEquals("[http://127.0.0.1:10994/real.png]", urls.toString());
+        assertEquals("[http://127.0.0.1:10994/mark.svg, http://127.0.0.1:10994/real.png]", urls.toString());
     }
 
     @Test

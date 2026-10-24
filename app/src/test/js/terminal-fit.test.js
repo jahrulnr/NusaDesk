@@ -1,0 +1,24 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const source = fs.readFileSync(path.join(__dirname, '../../main/assets/terminal/terminal.html'), 'utf8');
+const start = source.indexOf('function fitWithoutBreakingSelection()');
+const end = source.indexOf('function setNativeTextSelectionEnabled', start);
+assert(start >= 0 && end > start);
+const createFit = new Function('fitAddon', 'container', 'domSelection',
+    source.slice(start, end) + '\nreturn fitWithoutBreakingSelection;');
+let calls = 0;
+const addon = {fit() { calls++; }};
+const container = {clientWidth: 0, clientHeight: 0};
+const fit = createFit(addon, container, null);
+fit(); assert.equal(calls, 0, 'hidden terminal must retain default columns');
+container.clientWidth = 360;
+fit(); assert.equal(calls, 0, 'a zero-height terminal still has no viewport');
+container.clientHeight = 480;
+fit(); assert.equal(calls, 1, 'visible terminal fits normally');
+let queued;
+const guarded = createFit(addon, container, {requestFit(run) { queued = run; }});
+guarded(); assert.equal(calls, 1, 'active selection still defers fitting');
+queued(); assert.equal(calls, 2);
+console.log('terminal viewport fit: passed');

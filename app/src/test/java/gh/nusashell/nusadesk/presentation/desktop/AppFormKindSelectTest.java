@@ -127,7 +127,7 @@ public class AppFormKindSelectTest {
     }
 
     @Test
-    public void bindingAnExistingWebAppHidesTheTypeFieldAndShowsPort() {
+    public void bindingAnExistingWebAppOffersOnlyWebAndCombinedTypesAndShowsPort() {
         AppFormView form = form();
         form.bindExisting(new WebAppDefinition(
                 WebAppId.of("notes"), "Notes", ICON, 8080, 1_000L, 1_000L, 0));
@@ -135,8 +135,9 @@ public class AppFormKindSelectTest {
 
         Spinner spinner = form.findViewById(R.id.app_kind_spinner);
         assertEquals(0, spinner.getSelectedItemPosition());
-        assertEquals(View.GONE, form.findViewById(R.id.app_form_type_label).getVisibility());
-        assertEquals(View.GONE, spinner.getVisibility());
+        assertEquals(View.VISIBLE, form.findViewById(R.id.app_form_type_label).getVisibility());
+        assertEquals(View.VISIBLE, spinner.getVisibility());
+        assertEquals(2, spinner.getCount());
         assertEquals(View.VISIBLE, form.findViewById(R.id.app_port_group).getVisibility());
         assertEquals(View.GONE, form.findViewById(R.id.app_command_group).getVisibility());
     }
@@ -225,4 +226,23 @@ public class AppFormKindSelectTest {
             records.remove(appId);
         }
     }
+
+    @Test public void combinedTypeShowsBothFieldsAndSurvivesDraftAndEditBinding() {
+        AppFormView form = form(); form.bindNew(); idle();
+        Spinner spinner = form.findViewById(R.id.app_kind_spinner);
+        assertEquals(3, spinner.getCount()); spinner.setSelection(2, false); idle();
+        assertEquals(View.VISIBLE, form.findViewById(R.id.app_port_group).getVisibility());
+        assertEquals(View.VISIBLE, form.findViewById(R.id.app_command_group).getVisibility());
+        ((android.widget.EditText) form.findViewById(R.id.app_port_input)).setText("4050");
+        ((android.widget.EditText) form.findViewById(R.id.app_command_input)).setText("someprogram serve");
+        Bundle draft = new Bundle(); form.saveDraft(draft);
+        AppFormView restored = form(); assertTrue(restored.restoreDraft(draft)); idle();
+        assertEquals(2, ((Spinner) restored.findViewById(R.id.app_kind_spinner)).getSelectedItemPosition());
+        assertEquals("4050", ((android.widget.EditText) restored.findViewById(R.id.app_port_input)).getText().toString());
+        restored.bindExisting(new WebAppDefinition(WebAppId.of("combined"), "Server", null, 4050, 1, 1, 0, "someprogram serve"));
+        idle();
+        assertEquals(View.VISIBLE, restored.findViewById(R.id.app_command_group).getVisibility());
+        assertEquals("someprogram serve", ((android.widget.EditText) restored.findViewById(R.id.app_command_input)).getText().toString());
+    }
+
 }

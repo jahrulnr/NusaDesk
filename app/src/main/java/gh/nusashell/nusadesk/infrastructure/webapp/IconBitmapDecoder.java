@@ -4,6 +4,10 @@ import android.content.ContentResolver;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import com.caverock.androidsvg.SVG;
+import com.caverock.androidsvg.SVGParseException;
+import java.io.ByteArrayInputStream;
 import android.net.Uri;
 
 import java.io.ByteArrayOutputStream;
@@ -11,7 +15,8 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * Decodes tile-icon bytes through the platform image decoder, with the ICO
+ * Decodes static SVG icons through AndroidSVG at tile resolution and raster
+ * tile-icon bytes through the platform image decoder, with the ICO
  * container unwrapped by {@link IcoImage} first.
  *
  * <p>{@code BitmapFactory} covers PNG, JPEG, WebP, GIF, and BMP on every API
@@ -37,13 +42,21 @@ public final class IconBitmapDecoder implements WebAppFaviconFetcher.Decoder {
 
     private static final int READ_BUFFER_BYTES = 8 * 1024;
 
+    static {
+        // Keep XML entity expansion inside the existing bounded-payload contract.
+        SVG.setInternalEntitiesEnabled(false);
+    }
+
     @Override
     public WebAppFaviconFetcher.Size boundsOf(byte[] bytes, int length) {
         IcoImage.Frame frame = IcoImage.bestFrame(bytes, length);
         if (frame == null || frame.isPng()) {
             int offset = frame == null ? 0 : frame.getOffset();
             int frameLength = frame == null ? length : frame.getLength();
-            return bounds(bytes, offset, frameLength);
+            WebAppFaviconFetcher.Size raster = bounds(bytes, offset, frameLength);
+            if (raster.getWidth() > 0 && raster.getHeight() > 0) return raster;
+            SVG svg = svg(bytes, length);
+            return svg == null ? raster : svgSize(svg);
         }
         byte[] bmp = IcoImage.toBmp(bytes, frame);
         return bmp == null ? bounds(bytes, 0, length) : bounds(bmp, 0, bmp.length);
@@ -55,7 +68,26 @@ public final class IconBitmapDecoder implements WebAppFaviconFetcher.Decoder {
         if (frame == null || frame.isPng()) {
             int offset = frame == null ? 0 : frame.getOffset();
             int frameLength = frame == null ? length : frame.getLength();
-            return decodeBytes(bytes, offset, frameLength, sampleSize);
+            Bitmap raster = decodeBytes(bytes, offset, frameLength, sampleSize);
+            if (raster != null) return raster;
+            SVG svg = svg(bytes, length);
+            if (svg == null) return null;
+            WebAppFaviconFetcher.Size size = svgSize(svg);
+            Bitmap image = Bitmap.createBitmap(size.getWidth(), size.getHeight(), Bitmap.Config.ARGB_8888);
+            svg.setDocumentWidth(size.getWidth());
+            svg.setDocumentHeight(size.getHeight());
+            try {
+                svg.renderToCanvas(new Canvas(image));
+            } catch (RuntimeException renderFailure) {
+                image.recycle();
+                return null;
+            }
+            if (!hasVisiblePixel(image)) {
+                // A valid-but-blank SVG must not become an invisible tile icon.
+                image.recycle();
+                return null;
+            }
+            return image;
         }
         byte[] bmp = IcoImage.toBmp(bytes, frame);
         Bitmap decoded = bmp == null
@@ -96,19 +128,53 @@ public final class IconBitmapDecoder implements WebAppFaviconFetcher.Decoder {
         } catch (IOException | RuntimeException unreadable) {
             return null;
         }
-        IconBitmapDecoder decoder = new IconBitmapDecoder();
-        WebAppFaviconFetcher.Size bounds = decoder.boundsOf(bytes, bytes.length);
-        if (bounds == null || !FaviconResponsePolicy.isUsableDimensions(
-                bounds.getWidth(), bounds.getHeight())) {
+        try {
+            IconBitmapDecoder decoder = new IconBitmapDecoder();
+            WebAppFaviconFetcher.Size bounds = decoder.boundsOf(bytes, bytes.length);
+            if (bounds == null || !FaviconResponsePolicy.isUsableDimensions(
+                    bounds.getWidth(), bounds.getHeight())) {
+                return null;
+            }
+            Bitmap bitmap = decoder.decode(bytes, bytes.length,
+                    FaviconResponsePolicy.sampleSizeFor(bounds.getWidth(), bounds.getHeight()));
+            if (bitmap != null && !FaviconResponsePolicy.isWithinMemoryBudget(bitmap.getByteCount())) {
+                bitmap.recycle();
+                return null;
+            }
+            return bitmap;
+        } catch (RuntimeException undecodable) { return null; }
+    }
+
+    private static SVG svg(byte[] bytes, int length) {
+        if (bytes == null || length <= 0 || length > bytes.length
+                || length > FaviconResponsePolicy.MAX_RESPONSE_BYTES) return null;
+        try {
+            return SVG.getFromInputStream(new ByteArrayInputStream(bytes, 0, length));
+        } catch (SVGParseException | RuntimeException invalid) {
             return null;
         }
-        Bitmap bitmap = decoder.decode(bytes, bytes.length,
-                FaviconResponsePolicy.sampleSizeFor(bounds.getWidth(), bounds.getHeight()));
-        if (bitmap != null && !FaviconResponsePolicy.isWithinMemoryBudget(bitmap.getByteCount())) {
-            bitmap.recycle();
-            return null;
+    }
+
+    /** Any pixel with a non-zero alpha channel, i.e. the render drew something. */
+    private static boolean hasVisiblePixel(Bitmap image) {
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if (Color.alpha(image.getPixel(x, y)) != 0) {
+                    return true;
+                }
+            }
         }
-        return bitmap;
+        return false;
+    }
+
+    /** SVG coordinates are not source pixels: rasterize at the existing tile budget. */
+    private static WebAppFaviconFetcher.Size svgSize(SVG svg) {
+        float ratio = svg.getDocumentAspectRatio();
+        int longest = FaviconResponsePolicy.TARGET_MAX_DIMENSION;
+        if (!Float.isFinite(ratio) || ratio <= 0) return new WebAppFaviconFetcher.Size(longest, longest);
+        int width = ratio >= 1 ? longest : Math.max(1, Math.round(longest * ratio));
+        int height = ratio >= 1 ? Math.max(1, Math.round(longest / ratio)) : longest;
+        return new WebAppFaviconFetcher.Size(width, height);
     }
 
     private static WebAppFaviconFetcher.Size bounds(byte[] bytes, int offset, int length) {
