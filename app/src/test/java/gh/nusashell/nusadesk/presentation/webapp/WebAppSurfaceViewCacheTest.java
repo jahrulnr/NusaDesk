@@ -14,6 +14,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.BindException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -67,8 +68,15 @@ public class WebAppSurfaceViewCacheTest {
 
     @After
     public void tearDown() throws Exception {
-        server.close();
+        surface.release();
         executor.shutdownNow();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                fail("probe executor did not stop");
+            }
+        } finally {
+            server.close();
+        }
     }
 
     @Test
@@ -129,7 +137,17 @@ public class WebAppSurfaceViewCacheTest {
     public void clearWebCacheOnABoundButUnreachableSurfaceStillAnswers() throws Exception {
         // Bound, so a definition exists — but the endpoint never answered, so
         // no WebView was created and the throwaway path runs the clear.
-        server.close();
+        server.stopAnswering();
+        // The unavailable endpoint must stay owned by this fixture. Closing
+        // it would let an unrelated listener reuse the port before the probe.
+        try (ServerSocket competitor = new ServerSocket()) {
+            try {
+                competitor.bind(new InetSocketAddress("127.0.0.1", server.port()));
+                fail("unreachable fixture released its port to another listener");
+            } catch (BindException expected) {
+                // Still owned; no unrelated HTTP app can make the probe pass.
+            }
+        }
         bind();
         assertEquals(WebAppSurfaceView.State.UNREACHABLE, surface.getState());
         assertNull("no WebView exists while the endpoint is down",
@@ -182,6 +200,7 @@ public class WebAppSurfaceViewCacheTest {
         private final ServerSocket serverSocket;
         private final Thread thread;
         private volatile boolean closed;
+        private volatile boolean answering = true;
 
         private FixtureServer() throws IOException {
             serverSocket = new ServerSocket();
@@ -204,6 +223,12 @@ public class WebAppSurfaceViewCacheTest {
             }
         }
 
+        void stopAnswering() {
+            // Reject TCP connections with a reset, while retaining the bound
+            // endpoint. A closed listener cannot promise an unused port.
+            answering = false;
+        }
+
         int port() {
             return serverSocket.getLocalPort();
         }
@@ -212,6 +237,10 @@ public class WebAppSurfaceViewCacheTest {
             byte[] body = "<html><body>fixture</body></html>".getBytes(StandardCharsets.UTF_8);
             while (!closed) {
                 try (Socket socket = serverSocket.accept()) {
+                    if (!answering) {
+                        socket.setSoLinger(true, 0);
+                        continue;
+                    }
                     InputStream in = socket.getInputStream();
                     byte[] request = new byte[1024];
                     in.read(request);
