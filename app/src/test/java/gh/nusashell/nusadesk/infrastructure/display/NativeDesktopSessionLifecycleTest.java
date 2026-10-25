@@ -133,6 +133,54 @@ public class NativeDesktopSessionLifecycleTest {
         assertEquals(false, get(session, "bound")); assertEquals(1, context.unbinds);
     }
 
+    @Test public void oldBindingDisconnectCannotAcknowledgeNewDisplayProcessDeath() throws Exception {
+        Work work = new Work();
+        NativeDesktopSession session = new NativeDesktopSession(new BindingContext(), work);
+        ServiceConnection previous = bind(session);
+        ServiceConnection current = bind(session);
+        CountDownLatch currentProcessGone = new CountDownLatch(1);
+        put(session, "serverGone", currentProcessGone);
+
+        previous.onServiceDisconnected(null);
+
+        assertEquals("only the current binding can acknowledge its process death",
+                1, currentProcessGone.getCount());
+        assertSame(current, get(session, "connection"));
+        assertTrue(work.queue.isEmpty());
+    }
+
+    @Test public void stopDuringBindingWaitsForLateEndpointThenShutsItDownWithoutLaunchingGuest() throws Exception {
+        Work work = new Work(); BindingContext context = new BindingContext();
+        NativeDesktopSession session = new NativeDesktopSession(context, work);
+        CountDownLatch connected = new CountDownLatch(1);
+        Method factory = NativeDesktopSession.class.getDeclaredMethod("newConnection", int.class, CountDownLatch.class);
+        factory.setAccessible(true);
+        ServiceConnection connection = (ServiceConnection) factory.invoke(session, 0, connected);
+        put(session, "connection", connection); put(session, "bound", true);
+        put(session, "bindingComplete", connected);
+        AtomicInteger shutdowns = new AtomicInteger();
+        CompletableFuture<Void> stop = CompletableFuture.runAsync(() -> {
+            try { session.stopAndAwait(); }
+            catch (Exception error) { throw new AssertionError(error); }
+        });
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while ((int) get(session, "generation") == 0 && System.nanoTime() < deadline) Thread.yield();
+        assertEquals(1, get(session, "generation"));
+        assertFalse(stop.isDone());
+        connection.onServiceConnected(null, new IX11Server.Stub() {
+            public ParcelFileDescriptor connectRenderer() { throw new AssertionError("stopping renderer"); }
+            public void shutdown() {
+                shutdowns.incrementAndGet();
+                try { ((CountDownLatch) get(session, "serverGone")).countDown(); }
+                catch (Exception error) { throw new AssertionError(error); }
+            }
+        });
+        stop.get(3, TimeUnit.SECONDS);
+        assertEquals(1, shutdowns.get()); assertEquals(1, context.unbinds);
+        assertTrue("a cancelled bind must not stage/start the guest WM", work.queue.isEmpty());
+        assertNull(get(session, "server")); assertEquals(false, get(session, "bound"));
+    }
+
     @Test public void retryReconnectsRendererInsteadOfReportingAnUnconnectedDisplayRunning() throws Exception {
         Work work = new Work(); NativeDesktopSession session = new NativeDesktopSession(new BindingContext(), work);
         DesktopTasks tasks = (DesktopTasks) get(session, "tasks");

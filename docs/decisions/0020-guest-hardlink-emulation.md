@@ -113,7 +113,8 @@ NusaDesk issue #1 on the S7 Edge:
   answered `EPERM`, and a broken `uv` cache stayed undeletable.
 
 The packaged PRoot now carries a third recorded patch (see the build script and
-`docs/research/proot-arm64-build-spike.md`) that never renames nor unlinks an
+the `proot-arm64-build-spike` research note, since removed — in git history)
+that never renames nor unlinks an
 ordinary symbolic-link source: without `AT_SYMLINK_FOLLOW` the new name is
 another symbolic link with the same content, with it the target is resolved
 (relative to the link's directory, or through the guest translation of an

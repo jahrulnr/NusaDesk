@@ -80,6 +80,22 @@ public class ProotLauncherTest {
         assertTrue(text.contains("NUSADESK_CONTRIBUTOR=\"NusaDesk\""));
         assertTrue(text.contains("NUSADESK_SOURCE=\"https://github.com/jahrulnr/NusaDesk\""));
     }
+
+    @Test public void nativeBuildBindsSessionSharedMemoryAfterAndroidDev() throws Exception {
+        ProotLaunchSpec spec = new ProotLauncher(context).buildSpec(
+                ProotLauncher.SUPPORTED_APP_ID, Collections.singletonList("/bin/sh"),
+                Collections.emptyList(), Collections.emptyMap());
+        List<String> binds = spec.getBindMounts().stream().map(ProotBindMount::toBindArgument)
+                .collect(java.util.stream.Collectors.toList());
+        String bind = rootfs.resolve("tmp/.nusadesk-shm") + ":/dev/shm!";
+        if (gh.nusashell.nusadesk.BuildConfig.NATIVE_DESKTOP_ENABLED) {
+            assertTrue(binds.contains(bind));
+            assertTrue(binds.indexOf(bind) > binds.indexOf("/dev:/dev"));
+            assertTrue(Files.isDirectory(rootfs.resolve("tmp/.nusadesk-shm")));
+        } else {
+            assertFalse(binds.contains(bind));
+        }
+    }
     @Test
     public void buildSpecAutoBindsActivatedAddonOverlays() throws Exception {
         Path sshOverlay = activateOverlay(

@@ -12,7 +12,8 @@ toggling. The user's requirement for the wifi domain is explicit: the surface
 should be rich — control, transfer, and server use cases — while staying inside
 what the platform actually allows.
 
-The platform matrix (`docs/research/platform-capability-matrix.md`) separates
+The platform matrix (the `platform-capability-matrix` research note, since
+removed — see git history) separates
 the domain cleanly:
 
 - hard limits: programmatic toggle (`setWifiEnabled` is always false for a

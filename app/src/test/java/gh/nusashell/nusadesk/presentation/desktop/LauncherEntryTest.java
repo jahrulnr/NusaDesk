@@ -94,4 +94,27 @@ public class LauncherEntryTest {
         assertEquals(first.hashCode(), same.hashCode());
         assertNotEquals(first, other);
     }
+
+    /**
+     * The long-press actions menu — and with it the homescreen pin — reaches
+     * every app tile but never the product's own System/Logs surfaces or the
+     * Add-app action (ADR-0077). The curated terminal is the one built-in
+     * surface a user can pin, because it opens a real app surface.
+     */
+    @Test
+    public void actionsReachEveryAppButNotTheProductSurfaces() {
+        assertTrue(LauncherEntry.terminalApp(
+                commandApp("cmd-htop", "Htop", null)).hasActions());
+        assertTrue(LauncherEntry.webApp(new WebAppDefinition(
+                WebAppId.of("notebook"), "Notebook", null, 8000,
+                1, 1, 0)).hasActions());
+        assertTrue(LauncherEntry.linuxApp(new gh.nusashell.nusadesk.domain
+                .display.LinuxDesktopApp("gimp", "GIMP",
+                "/usr/share/applications/gimp.desktop", null)).hasActions());
+        assertTrue(LauncherEntry.curated(DesktopApp.TERMINAL).hasActions());
+
+        assertFalse(LauncherEntry.addApp().hasActions());
+        assertFalse(LauncherEntry.curated(DesktopApp.SYSTEM).hasActions());
+        assertFalse(LauncherEntry.curated(DesktopApp.LOGS).hasActions());
+    }
 }

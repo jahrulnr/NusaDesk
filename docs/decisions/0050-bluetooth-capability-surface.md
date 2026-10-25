@@ -13,7 +13,8 @@ has **no** bluetooth client command (and the GPL app's receiver has no
 bluetooth action), so there is no parity contract to follow — this is a
 NusaDesk-native surface, not parity work.
 
-The platform matrix (`docs/research/platform-capability-matrix.md`) splits the
+The platform matrix (the `platform-capability-matrix` research note, since
+removed — see git history) splits the
 domain into what a third-party app can legally do and what it cannot:
 
 - possible with the declared grants: adapter state/name, bonded devices,

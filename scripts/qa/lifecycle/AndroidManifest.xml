@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="qa.nusadesk.lifecycle">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="29" />
+    <application android:label="NusaDesk lifecycle QA" android:hasCode="true" />
+    <instrumentation android:name="qa.nusadesk.lifecycle.LifecycleDriver" android:targetPackage="gh.nusashell.nusadesk" />
+</manifest>

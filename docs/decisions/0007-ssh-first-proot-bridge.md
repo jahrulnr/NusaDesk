@@ -48,8 +48,9 @@ model Termux's `proot-distro` uses. PRoot shares the Android kernel and app UID;
 it is a compatibility layer, not a security sandbox (see `docs/research-findings.md`).
 
 **Current evidence.** The bridge has since been built, packaged, and run on
-device (ADR-0008, `docs/research/proot-arm64-build-spike.md` and
-`proot-app-domain-device-spike.md`). The on-device evidence to date is the
+device (ADR-0008, the `proot-arm64-build-spike` and
+`proot-app-domain-device-spike` research notes, both since removed — see git
+history). The on-device evidence to date is the
 Ubuntu Base download/verify/extract/activate proof plus PRoot execution under
 `untrusted_app`, a guest OpenSSH listener on `127.0.0.1:22022`, a live xterm.js
 WebView session, and a foreground-service supervisor — all on one Android

@@ -6,7 +6,8 @@ Accepted and implemented. The launcher/factory contract is implemented and
 unit-tested, and on-device PRoot viability spikes were run on an Android 10/API 29
 arm64 device. The first spike proved the bridge binary runs and PRoot ptrace
 interception works **in the shell domain**. A follow-up app-domain spike
-(`docs/research/proot-app-domain-device-spike.md`) resolved blocker 1
+(the `proot-app-domain-device-spike` research note, since removed — see git
+history) resolved blocker 1
 (packaging) and proved a curated-rootfs guest command as the app UID in the
 `u:r:runas_app:s0` domain. The `untrusted_app` honesty gate subsequently
 passed: `ProotLauncher` is wired into the runtime supervisor and a curated
@@ -25,7 +26,8 @@ policies.
 ADR-004 packages a standalone PRoot PIE executable as `libproot.so` in the APK
 native-library area, and ADR-007 makes PRoot the leading execution bridge for
 the SSH-first product. The research spike
-(`docs/research/proot-arm64-build-spike.md`) built and ELF-verified the binary
+(the `proot-arm64-build-spike` research note, since removed — see git history)
+built and ELF-verified the binary
 but made **no device-success claim**. This slice implements the concrete launch
 integration — a command factory/launcher that turns the curated active rootfs
 plus a fixed guest argv into a PRoot `ProcessBuilder` invocation — and runs the
@@ -120,8 +122,8 @@ installed.
    follow-up spike set `packaging.jniLibs.useLegacyPackaging true` in
    `app/build.gradle` (no manifest edit, no security control disabled); the
    installer now extracts `libproot.so` to `nativeLibraryDir` as
-   `-rwxr-xr-x` and the `run-as` app test passes. See
-   `docs/research/proot-app-domain-device-spike.md`.
+   `-rwxr-xr-x` and the `run-as` app test passes. See the
+   `proot-app-domain-device-spike` research note (removed; in git history).
 2. **Curated rootfs not installed on the device — ADDRESSED.** The curated
    Ubuntu Base rootfs was later installed by the real `AndroidRuntimeInstaller`
    at `<filesDir>/linux-wrapper/runtimes/ubuntu-base-arm64/active` and verified

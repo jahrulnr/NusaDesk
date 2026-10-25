@@ -30,7 +30,8 @@
 #   Talloc  : samba talloc 2.4.2 tarball (LGPL-3.0-or-later), statically linked.
 #   NDK     : Android NDK r28c (28.2.13676358), clang 19, 16 KB page capable.
 #
-# License obligations produced by this build (see docs/research note):
+# License obligations produced by this build (full analysis in the removed
+# proot-arm64-build-spike research note; see git history):
 #   - libproot.so is a derivative of GPL-2.0-or-later PRoot + LGPL-3.0-or-later
 #     talloc. The combined work is distributable under GPL-2.0+ (PRoot's
 #     "or later" clause permits upgrading to GPLv3, which is compatible with
@@ -148,7 +149,8 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Apply recorded build patches (see docs/research note for full origin)
+# 3. Apply recorded build patches (full origin in the removed
+#    proot-arm64-build-spike research note; see git history)
 # ---------------------------------------------------------------------------
 log "Applying build patches..."
 
@@ -821,8 +823,9 @@ fi
 # entries from getdents64(2) results, and its compaction wedged the tracer on
 # the S10e: a build with the same trap but a no-op filter ran five
 # concurrent-clone rounds clean, while any build that compacted the batch
-# wedged (docs/research/proot-fork-hang-vendor-kernels.md records the bisect and
-# every attempt to repair it).  The hiding is now structural instead: the
+# wedged (the proot-fork-hang-vendor-kernels research note records the bisect
+# and every attempt to repair it; removed with the old research tree, kept in
+# git history).  The hiding is now structural instead: the
 # session points PROOT_L2S_DIR at an app-private directory and binds that same
 # path into the guest (ProotPaths.l2sDirPath, ProotLauncher), so the backing
 # files never live inside a guest directory and no filter is needed.  Legacy
@@ -983,8 +986,8 @@ index 8b10be1..25e0500 100644
 +		 * resolved the intermediate before the rename, or a
 +		 * concurrent one resolving it right now, is told ENOENT
 +		 * for a file that exists.  A concurrent git clone wedged
-+		 * on exactly that on the S10e; see
-+		 * docs/research/proot-fork-hang-vendor-kernels.md.  */
++		 * on exactly that on the S10e; see the removed
++		 * proot-fork-hang-vendor-kernels research note (git history).  */
 +		status = resolve_stable_backing(final, stable);
  		if (status < 0)
  			return status;

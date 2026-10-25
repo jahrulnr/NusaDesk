@@ -17,7 +17,6 @@ import android.system.Os;
 import android.system.OsConstants;
 import android.util.Log;
 
-import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -318,8 +317,11 @@ public final class NativeDesktopSession implements NativeDesktopPort {
         }
         @Override public void onServiceDisconnected(ComponentName name) {
             connected.countDown();
+            // A delayed callback from an unbound service must not acknowledge
+            // the death of the replacement server before its /tmp is cleaned.
+            if (connection != this) return;
             serverGone.countDown();
-            if (connection == this && generation == attempt) {
+            if (generation == attempt) {
                 stopAsync("Linux display stopped. Open again to retry.");
             }
         }
@@ -506,7 +508,8 @@ public final class NativeDesktopSession implements NativeDesktopPort {
         main.post(() -> {
             if (generation == attempt) {
                 opening = false;
-                String message = "Linux display failed: " + error.getMessage();
+                String message = "Linux display failed: " + (error.getMessage() == null
+                        ? error.getClass().getSimpleName() : error.getMessage());
                 if (tasks.selectedId() != null) tasks.fail(tasks.selectedId(), message);
                 tasksChanged(); publish(State.FAILED, message);
             }
@@ -518,13 +521,8 @@ public final class NativeDesktopSession implements NativeDesktopPort {
         IOException last = null;
         do {
             try (LocalSocket socket = new LocalSocket()) {
-                // Bounded connect so a wedged stale listener cannot stall past the probe window.
-                socket.connect(new LocalSocketAddress(path.toString(), LocalSocketAddress.Namespace.FILESYSTEM), 500);
-                socket.setSoTimeout(1000);
-                socket.getOutputStream().write(new byte[]{'l', 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0});
-                byte[] setup = new byte[8];
-                new DataInputStream(socket.getInputStream()).readFully(setup);
-                if (setup[0] != 1) throw new IOException("X11 setup was refused");
+                X11SocketProbe.exchange(socket, new LocalSocketAddress(
+                        path.toString(), LocalSocketAddress.Namespace.FILESYSTEM));
                 return;
             } catch (IOException error) { last = error; }
             Thread.sleep(100);

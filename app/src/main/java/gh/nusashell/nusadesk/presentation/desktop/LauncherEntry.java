@@ -194,6 +194,19 @@ public final class LauncherEntry {
         return kind == Kind.TERMINAL_APP;
     }
 
+    /**
+     * True when long-pressing this entry can offer its actions menu. Every
+     * pinnable app qualifies — registered web and terminal apps, installed
+     * Linux apps, and the curated terminal — while {@code Add app}, System,
+     * and Logs are product surfaces the launcher never pins (ADR-0077).
+     */
+    public boolean hasActions() {
+        if (kind == Kind.CURATED) {
+            return DesktopApp.TERMINAL.getId().equals(id);
+        }
+        return kind != Kind.ADD_APP;
+    }
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {

@@ -212,6 +212,11 @@ public final class GuestSshDaemon {
      * the file is deterministic product config, not guest state.
      */
     public String configText() {
+        return configText(false);
+    }
+
+    /** Native builds expose the same local X11 address to shell and exec sessions. */
+    public String configText(boolean nativeDisplayEnabled) {
         return "ListenAddress 127.0.0.1\n"
                 + "HostKey " + hostKeyPath() + "\n"
                 + "PermitRootLogin yes\n"
@@ -222,6 +227,8 @@ public final class GuestSshDaemon {
                 + "AllowTcpForwarding no\n"
                 + "AllowAgentForwarding no\n"
                 + "X11Forwarding no\n"
+                + (nativeDisplayEnabled ? "SetEnv DISPLAY="
+                        + gh.nusashell.nusadesk.application.display.NativeDesktopPort.X11_DISPLAY + "\n" : "")
                 + "PermitTunnel no\n"
                 + "Subsystem sftp internal-sftp\n";
     }

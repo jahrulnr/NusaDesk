@@ -172,8 +172,14 @@ public final class LauncherTileView extends LinearLayout {
             default:
                 String detail = entry.getDescriptionRes() != 0
                         ? getContext().getString(entry.getDescriptionRes()) : label;
-                return getContext().getString(openable
-                        ? R.string.app_tile_open_desc : R.string.app_tile_locked_desc, detail);
+                if (!openable) {
+                    return getContext().getString(R.string.app_tile_locked_desc, detail);
+                }
+                // Entries with an actions menu (curated terminal, Linux apps)
+                // say so; the rest only promise the open gesture.
+                return getContext().getString(entry.hasActions()
+                        ? R.string.app_tile_open_actions_desc
+                        : R.string.app_tile_open_desc, detail);
         }
     }
 

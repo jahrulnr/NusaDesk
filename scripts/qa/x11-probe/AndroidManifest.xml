@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="qa.nusadesk.x11probe">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="29" />
+    <application android:label="NusaDesk X11 probe QA" android:hasCode="true" />
+    <instrumentation android:name="gh.nusashell.nusadesk.infrastructure.display.X11SocketProbeDriver" android:targetPackage="qa.nusadesk.x11probe" />
+</manifest>

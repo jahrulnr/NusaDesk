@@ -18,6 +18,32 @@ public class GuestEphemeralStateCleanerTest {
     @Rule
     public final TemporaryFolder temporary = new TemporaryFolder();
 
+    @Test public void sharedMemorySurvivesPreparationButIsRemovedAtSessionCleanup() throws Exception {
+        Path root = temporary.newFolder("root").toPath();
+        Path shm = GuestEphemeralStateCleaner.prepareSharedMemory(root);
+        assertTrue(Files.isDirectory(shm));
+        Files.write(shm.resolve("live"), new byte[]{1});
+        GuestEphemeralStateCleaner.prepareSharedMemory(root);
+        assertTrue(Files.exists(shm.resolve("live")));
+        GuestEphemeralStateCleaner.clearGuestTmp(root);
+        assertFalse(Files.exists(shm));
+        GuestEphemeralStateCleaner.prepareSharedMemory(root);
+        assertFalse(Files.exists(shm.resolve("live")));
+    }
+
+    @Test public void sharedMemoryCannotFollowASymlinkOutsideGuestTmp() throws Exception {
+        Path root = temporary.newFolder("root").toPath();
+        Path outside = temporary.newFolder("outside").toPath();
+        Files.createDirectory(root.resolve("tmp"));
+        Files.createSymbolicLink(root.resolve("tmp/.nusadesk-shm"), outside);
+        try {
+            GuestEphemeralStateCleaner.prepareSharedMemory(root);
+            fail("expected existing directory validation");
+        } catch (java.io.IOException expected) {
+            assertTrue(expected.getMessage().contains("not a real directory"));
+        }
+    }
+
     @Test
     public void clearsFilesDirectoriesAndSymlinksButKeepsTmpDirectory() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();

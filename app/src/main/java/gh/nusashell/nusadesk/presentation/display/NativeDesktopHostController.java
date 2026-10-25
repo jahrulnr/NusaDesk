@@ -3,6 +3,9 @@ package gh.nusashell.nusadesk.presentation.display;
 import android.content.Context;
 import android.util.Log;
 import android.view.View;
+import android.widget.Toast;
+
+import gh.nusashell.nusadesk.R;
 
 import gh.nusashell.nusadesk.application.display.LinuxDesktopCatalog;
 import gh.nusashell.nusadesk.domain.display.DesktopTask;
@@ -16,6 +19,7 @@ import gh.nusashell.nusadesk.presentation.desktop.AppSurfaceHostView;
 import gh.nusashell.nusadesk.presentation.desktop.DesktopHomeView;
 
 import java.util.List;
+import java.util.Collections;
 import java.util.function.Consumer;
 
 /**
@@ -56,6 +60,8 @@ public final class NativeDesktopHostController {
         }
     };
     private LinuxDesktopCatalog linuxDesktopCatalog;
+    private String pendingPinnedId;
+    private List<DesktopTask> retainedTasks = Collections.emptyList();
 
     public NativeDesktopHostController(Context context, DesktopHomeView desktopHome,
             AppSurfaceHostView appSurfaceHost, Host host) {
@@ -88,16 +94,72 @@ public final class NativeDesktopHostController {
         if (linuxDesktopCatalog == null) {
             return;
         }
-        linuxDesktopCatalog.refresh((apps, error) -> {
+        LinuxDesktopCatalog requestedCatalog = linuxDesktopCatalog;
+        requestedCatalog.refresh((apps, error) -> {
+            if (linuxDesktopCatalog != requestedCatalog) {
+                return;
+            }
             if (error == null) {
                 desktopHome.setLinuxApps(apps);
+                String requestedId = pendingPinnedId;
+                pendingPinnedId = null;
+                if (requestedId != null) {
+                    for (LinuxDesktopApp app : apps) {
+                        if (requestedId.equals(app.getId())) {
+                            openLinuxApp(app);
+                            return;
+                        }
+                    }
+                    // The grid retains a running/minimized app even if its
+                    // desktop file is removed. Its pin must resume that same
+                    // owned process, without trying to launch a missing file.
+                    for (DesktopTask task : retainedTasks) {
+                        if (requestedId.equals(task.getApp().getId())
+                                && (task.getState() == DesktopTask.State.RUNNING
+                                || task.getState() == DesktopTask.State.MINIMIZED)) {
+                            openLinuxApp(task.getApp());
+                            return;
+                        }
+                    }
+                    Toast.makeText(context, R.string.launcher_pin_removed,
+                            Toast.LENGTH_LONG).show();
+                }
             } else {
                 Log.w("NusaDeskGUI", "Desktop scan: " + error);
+                if (pendingPinnedId != null) {
+                    pendingPinnedId = null;
+                    Toast.makeText(context, error, Toast.LENGTH_LONG).show();
+                }
             }
         });
     }
 
+    /**
+     * Resolves a pin through the live catalog. A cold launch arrives before
+     * start(), and a stopped runtime drops scans until its running signal;
+     * retaining only the id lets that next scan open the current desktop file.
+     */
+    public void openPinnedLinuxApp(String id) {
+        host.showShell();
+        if (id == null || id.trim().isEmpty()) {
+            return;
+        }
+        pendingPinnedId = id;
+        refreshLinuxApps();
+    }
+
+    /** The pending shortcut id retained by Activity saved state across recreation. */
+    public String pendingPinnedId() {
+        return pendingPinnedId;
+    }
+
+    /** User navigation supersedes a shortcut still waiting for its catalog. */
+    public void cancelPinnedLaunch() {
+        pendingPinnedId = null;
+    }
+
     private void renderNativeTasks(List<DesktopTask> tasks) {
+        retainedTasks = tasks;
         desktopHome.setRunningLinuxApps(tasks);
     }
 

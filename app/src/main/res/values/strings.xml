@@ -66,6 +66,7 @@
     <string name="app_logs_desc">Logs. Boot and service output from Linux.</string>
     <string name="app_locked">Locked</string>
     <string name="app_tile_open_desc">%1$s Double tap to open.</string>
+    <string name="app_tile_open_actions_desc">%1$s Double tap to open, long press for actions.</string>
     <string name="app_tile_locked_desc">%1$s Finish Linux setup to open it.</string>
 
     <!-- Launcher search -->
@@ -172,7 +173,7 @@
     <string name="webapp_edit_title">Edit app</string>
     <!-- Accessible sentence for a user web app tile: the app's own name, then the
          gestures the tile really supports. -->
-    <string name="webapp_tile_open_desc">%1$s. Double tap to open, long press to edit.</string>
+    <string name="webapp_tile_open_desc">%1$s. Double tap to open, long press for actions.</string>
     <string name="webapp_tile_locked_desc">%1$s. Finish Linux setup to open it.</string>
     <string name="webapp_form_body">Name the app and give the port its server listens on inside Linux. The app is opened at its own loopback address; you never type a URL.</string>
     <string name="webapp_field_name">Name</string>
@@ -200,6 +201,11 @@
     <string name="webapp_delete_confirm_action">Remove</string>
     <string name="webapp_cancel">Cancel</string>
     <string name="webapp_menu_edit">Edit app…</string>
+    <!-- Long-press menu on a launcher tile (ADR-0077). -->
+    <string name="launcher_add_to_home">Add to Home screen</string>
+    <string name="launcher_pin_unsupported">This launcher cannot pin shortcuts.</string>
+    <!-- Shown by the launcher when a pinned shortcut\u2019s app was removed. -->
+    <string name="launcher_pin_removed">This app was removed.</string>
     <string name="webapp_menu_reload_no_cache">Reload without cache</string>
     <string name="webapp_menu_clear_cache">Clear cache</string>
     <string name="webapp_tab_main">Main page</string>
@@ -239,7 +245,7 @@
     <string name="app_form_type_label">Type</string>
     <string name="app_form_type_web">Web app</string>
     <string name="app_form_type_command">Terminal command</string>
-    <string name="terminal_app_tile_open_desc">%1$s. Double tap to open it in its own terminal, long press to edit.</string>
+    <string name="terminal_app_tile_open_desc">%1$s. Double tap to open it in its own terminal, long press for actions.</string>
     <string name="terminal_app_tile_locked_desc">%1$s. Finish Linux setup to open it.</string>
     <string name="terminal_form_body">Name the app and give the command it runs inside Linux. Opening the app starts that command in its own terminal.</string>
     <string name="terminal_field_command">Command</string>

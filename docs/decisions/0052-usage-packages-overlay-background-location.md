@@ -10,7 +10,8 @@ Four declarations from the permission recheck had no capability behind them:
 overlay surface — it already served as the background-activity-start
 exemption), and `ACCESS_BACKGROUND_LOCATION`. Upstream Termux:API has no
 client command for the first three (verified against the tracked surface
-audit in `docs/research/termux-api-upstream-surface.md`: client v0.60.0 and the
+audit in the `termux-api-upstream-surface` research note, since removed — see
+git history: client v0.60.0 and the
 GPL app's receiver), so they are NusaDesk-native work. Background location is
 the one
 domain where upstream is moving: the app's master branch (unreleased,

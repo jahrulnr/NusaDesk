@@ -86,21 +86,42 @@ evidence; stock Android 10 and 16 KB runtime remain unverified. The S7 chooser
 can slightly clip its right decoration edge while Save/Cancel remain usable.
 Installed GUI `.desktop` entries now appear on Home (ADR-0069); Terminal=true
 entries are outside this GUI catalog. PNG icons are resolved from common theme
-locations; SVG-only/custom theme inheritance uses the monogram fallback. No
-session D-Bus is provided by the launcher; D-Bus-only/single-instance activation,
+locations; SVG-only/custom theme inheritance uses the monogram fallback. Each
+launcher child has its own private D-Bus session (ADR-0073); there is no shared
+desktop-session bus. D-Bus-only/single-instance activation,
 self-daemonizing apps, full desktop sessions and non-X11 apps require further
-integration. The helper uses GIO Exec fallback to retain process ownership. The tested
-Mousepad logs a dconf bus warning; settings that require the session bus have
-not been validated as persistent.
+integration. The helper uses GIO Exec fallback to retain process ownership.
+Settings persistence across private sessions has not been validated.
 Switching/minimizing native tasks now retains their processes and windows in
-one guest/display. Home resumes them. Closing an app or the whole session still
-has no generic toolkit save/quit negotiation. Task ownership relies on guest
+one guest/display. Home resumes them. Close asks the app to quit through EWMH,
+so its own unsaved-document dialog can negotiate; whole-session Stop terminates
+the process tree. Task ownership relies on guest
 `_NET_WM_PID`/transient metadata; applications that omit it are not validated.
 Live tasks are not restored after Android process death or guest restart.
 Catalog refresh occurs on runtime-ready/foreground/Home, without a continuous
 guest filesystem watch.
 No general guest GPU driver is provided. This remains experimental GUI support.
 GPU limits are recorded below, separately from native display availability.
+
+Native builds provide `DISPLAY=:1` to new terminal shell/exec sessions and
+guest services (ADR-0078). This is the local X11 address, not an automatic
+server-start or readiness guarantee. Existing processes keep their previous
+environment until restarted. Installer detection of desktop capability does
+not establish Pet/SDL or Electron/Chromium runtime compatibility. Linux windows
+render inside NusaDesk's native display surface; a desktop pet is not an Android
+overlay above the dashboard or WebView.
+An independently spawned Pet/dock window is not yet a separate NusaDesk task.
+The native toolbar controls the selected desktop application; it does not give
+that Pet its own Minimize/Close action. Hiding the native surface hides its
+pixels with the surface. Independent windows may remain above another native
+application because they share the X server; app-specific hide/restore/close
+ownership for these windows is not implemented.
+
+Native builds bind an app-private, session-temporary file directory at
+`/dev/shm` after Android's `/dev` bind (ADR-0079). It supports regular shared
+file mappings and consumes app storage; it is not kernel tmpfs, System V IPC,
+or GPU-buffer sharing. The NusaShell integration report records actual Electron
+and Pet results plus the guest root-launcher adaptation.
 
 ## Product limitations to preserve
 
@@ -175,8 +196,8 @@ where `git clone` stopped inside `index-pack`. The upstream fix
 (`termux/proot` `8b994150`, tag v5.1.107.95 and later), which the shipped
 bridge now carries (v5.1.107.96), covers the kernel variant that fix names;
 this Samsung kernel still reproduces it, so the hazard is not fully closed. Full
-evidence and the reproduction recipe:
-`docs/research/proot-fork-hang-vendor-kernels.md`.
+evidence and the reproduction recipe were recorded in the
+`proot-fork-hang-vendor-kernels` research note, since removed; see git history.
 
 What works today:
 
@@ -762,8 +783,8 @@ this project's device evidence) expose no usable driver to a glibc guest, so
 guest rendering and inference stay on the CPU there. NPU acceleration has no
 guest path: the platform NN API is deprecated and vendor runtimes are
 host-side only. CPU inference with small models through the capability bridge
-is feasible and was verified on the S10e — see
-`docs/research/guest-local-llm-spike.md`.
+is feasible and was verified on the S10e — see the `guest-local-llm-spike`
+research note (removed; in git history).
 
 For the native desktop display research (2026-10-23), **Android 10/API 29+
 remains the target**. GPU acceleration is not a prerequisite for the first
@@ -807,9 +828,19 @@ The candidate-specific GPU limits are:
 
 No claim of universal GPU acceleration or zero-copy end-to-end is made.
 Resolution, sustained CPU/RAM use, thermal behavior, and latency require a
-real guest-to-surface measurement. Candidate API/ABI constraints and the
-bounded next experiment are recorded in
-[the native display feasibility report](research/native-desktop-display-feasibility.md).
+real guest-to-surface measurement. The experimental native X11 contract is
+recorded in [ADR-0068](decisions/0068-experimental-native-x11-app-surface.md).
+
+The separately installed NusaShell Pet now uses XComposite automatic redirection
+while it is running to retain current window pixels beneath its changing X11
+shape. This needs libXcomposite and the server's Composite extension and adds
+server-side off-screen storage proportional to viewable window contents; it is
+not evidence of GPU acceleration for guest apps. Its previous global
+`background=None` mutation was removed because it changed other clients' clear
+behavior and could not be restored. Pet exit/disconnect releases its redirection
+request. Physical acceptance is limited to the Android 10 ARM64 device used for
+the [Pet audit](../tasks/reviews/pet-background-audit-2026-10-26.md); other OEMs,
+modern Android, 16 KB pages, and sustained memory/thermal behavior are unverified.
 
 ### Resolver doctor is bounded and allowlisted
 

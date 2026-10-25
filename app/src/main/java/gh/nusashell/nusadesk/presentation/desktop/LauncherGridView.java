@@ -38,13 +38,18 @@ public final class LauncherGridView extends LinearLayout {
         void onEntryOpened(LauncherEntry entry);
     }
 
+    /** Receives a long press on a tile, with the tile itself as the menu anchor. */
+    public interface ActionListener {
+        void onEntryActions(LauncherEntry entry, View anchor);
+    }
+
     private final List<LauncherTileView> tiles = new ArrayList<>();
 
     private List<LauncherEntry> entries = Collections.emptyList();
     private boolean unlocked;
     private int columns = 3;
     private OpenListener openListener;
-    private OpenListener editListener;
+    private ActionListener actionListener;
 
     public LauncherGridView(Context context) {
         super(context);
@@ -62,13 +67,14 @@ public final class LauncherGridView extends LinearLayout {
     }
 
     /**
-     * Receives a long press on a tile that has something to edit. Only the
-     * user-registered entries — web apps and terminal commands — do; the
-     * gesture is also stated in the tile's content description, so it is never
-     * the only way to reach the edit form.
+     * Receives a long press on an entry that {@link LauncherEntry#hasActions()
+     * offers actions} — every pinnable app plus the editable registrations —
+     * so the shell can show its menu (edit, home-screen pin). The gesture is
+     * also stated in the tile's content description, so it is never the only
+     * way to reach the actions.
      */
-    public void setOnEntryEditListener(OpenListener listener) {
-        this.editListener = listener;
+    public void setOnEntryActionsListener(ActionListener listener) {
+        this.actionListener = listener;
     }
 
     /**
@@ -235,10 +241,11 @@ public final class LauncherGridView extends LinearLayout {
         for (LauncherEntry entry : entries) {
             LauncherTileView tile = new LauncherTileView(getContext());
             tile.setOnClickListener(view -> open((LauncherTileView) view));
-            if (entry.isWebApp() || entry.isTerminalApp()) {
+            if (entry.hasActions()) {
                 tile.setOnLongClickListener(view -> {
-                    if (editListener != null) {
-                        editListener.onEntryOpened(((LauncherTileView) view).getEntry());
+                    if (actionListener != null) {
+                        actionListener.onEntryActions(
+                                ((LauncherTileView) view).getEntry(), view);
                     }
                     return true;
                 });

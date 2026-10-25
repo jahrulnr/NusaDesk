@@ -519,6 +519,13 @@ and minimizes/restores the foreground task through EWMH. Home renders immutable
 live task snapshots as badges on the existing app icons; tapping an icon resumes
 that task, and the title bar offers Minimize and graceful Close. All app
 channels and the one WM close on a worker before temporary-storage cleanup.
+ADR-0078 supplies the same `DISPLAY=:1` endpoint to native-build SSH shell/exec
+sessions and the PRoot supervisor, so terminal applications and user services
+can detect native display capability. The endpoint variable is not a readiness
+verdict; native server startup remains owned by the display launch lifecycle.
+ADR-0079 provides native guest `/dev/shm` through a nested strict PRoot bind to
+an app-private directory under session `/tmp`; cleanup follows the same
+process-death fence and temporary-storage boundary.
 ADR-0073 adds unconditional binding cleanup, renderer reconnection, and a private
 D-Bus session for each GIO child. Successful helper CLOSED removes the task;
 nonzero exits remain failures. Catalog refreshes coalesce into a subsequent scan.
@@ -542,3 +549,13 @@ web surface. Restart fences SSH teardown and TCP port release before replacement
 renderer is created only on demand; dead diagnostic tabs do not consume live tab
 capacity. Physical delayed-start, reuse and restart samples were exercised on
 the API 29 ARM64 device.
+
+
+ADR-0077 adds Android homescreen pins through `ShortcutManager` and a
+non-exported trampoline into the single-task shell. Web/command pins resolve
+registry ids after runtime readiness; Linux pins resolve desktop ids against
+the current guest catalog. Pending opens survive Activity recreation and user
+navigation cancels them. Reconciliation waits for loaded sources before
+classifying ids as deleted, disables/re-enables pins, and updates changed
+labels/icons without re-pinning. The launcher owns confirmation and the visual
+treatment of disabled pins.

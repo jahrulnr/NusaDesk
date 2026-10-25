@@ -20,6 +20,8 @@ Readiness requires both the WM and an attached renderer. Renderer disconnection
 invalidates display readiness; Retry reconnects to the retained server instead
 of publishing RUNNING without a renderer. Stale view/binding callbacks do not
 invalidate a newer surface or resurrect a stopped generation.
+Disconnect callbacks check binding ownership before acknowledging server death;
+an old binding must not release the replacement server's shutdown latch.
 
 Each GIO application launch runs inside `dbus-run-session`. The helper disables
 D-Bus activation in its own GIO launch environment to retain the actual spawned
@@ -50,3 +52,28 @@ Focused regressions, physical Quit/Close/uninstall observations, fresh dialog
 captures and limitations were collected during review remediation. Historical
 identical screenshots are explicitly withdrawn as independent before/restore
 evidence.
+
+
+## Android 10 readiness probe correction (2026-10-25)
+
+A cold Linux homescreen launch exposed `UnsupportedOperationException` from
+`LocalSocket.connect(address, timeout)` before X11 could start. The overload is
+unimplemented in the Android 10 framework; its existence in the SDK was not
+runtime evidence. The protocol exchange now lives in `X11SocketProbe`:
+materialize the descriptor, set a 500 ms socket timeout before the supported
+single-argument connect, then use a 1000 ms timeout for the X11 setup exchange.
+Android's `LocalSocketImpl` sets both `SO_SNDTIMEO` and `SO_RCVTIMEO`; a full Unix
+listener backlog therefore cannot block connect indefinitely. The existing
+8-second retry window remains. Null exception messages display their class
+name, with the complete exception still logged.
+
+`scripts/qa/x11-probe/run.sh` compiles that actual production source into an
+isolated self-targeted instrumentation APK. On API 29 it passes accepted and
+refused setup, a silent peer read timeout, and a saturated listener backlog
+(connect returned in 515 ms). It does not stop NusaDesk or claim PRoot/runtime
+coverage; the real native app launch is a separate device check. An initial
+candidate using `Os.fcntlInt` was rejected by this device test because that
+public API requires API 30; it was not deployed into NusaDesk.
+
+Source: [Android 10 LocalSocket](https://github.com/aosp-mirror/platform_frameworks_base/blob/android10-release/core/java/android/net/LocalSocket.java)
+and [LocalSocketImpl timeout options](https://github.com/aosp-mirror/platform_frameworks_base/blob/android10-release/core/java/android/net/LocalSocketImpl.java).

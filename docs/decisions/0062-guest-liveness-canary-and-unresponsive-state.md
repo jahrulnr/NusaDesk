@@ -16,7 +16,8 @@ UNRESPONSIVE inside a minute, and recover through `Restart Linux`.
 ## Context
 
 The PRoot bridge's `link2symlink` extension can lose a tracee to a vendor
-kernel quirk (`docs/research/proot-fork-hang-vendor-kernels.md`). Once one
+kernel quirk (the `proot-fork-hang-vendor-kernels` research note, since
+removed — see git history). Once one
 tracee is lost, **every later command that forks in that guest hangs**: the
 child stays stopped while its parent waits for it. The session does not die
 — `sshd` keeps its TCP connection and the terminal's own 30 s SSH heartbeat

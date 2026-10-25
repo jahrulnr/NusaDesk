@@ -240,7 +240,7 @@
         tools:ignore="QueryAllPackagesPermission" />
 
     <!--
-        Termux:API parity surface (docs/evidence/termux-parity-matrix.md). Every entry
+        Termux:API parity surface (tasks/evidence/termux-parity-matrix.md). Every entry
         here exists because a `termux-*` client command needs it and the user
         asked for the full Android capability surface to be reachable from the
         guest. The pattern is unchanged from ADR-0030: one method = one
@@ -337,10 +337,16 @@
         <service android:name=".infrastructure.display.X11ServerService"
             android:process=":native_display" android:exported="false" />
 
+        <!--
+            singleTask because the shell is one Activity: a pinned homescreen
+            shortcut must re-enter the running shell through onNewIntent, not
+            stack a second instance on top of it (ADR-0077).
+        -->
         <activity
             android:name=".presentation.MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -412,6 +418,19 @@
             android:name=".infrastructure.androidbridge.foreground.CapabilityForegroundActivity"
             android:excludeFromRecents="true"
             android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!--
+            Pinned-shortcut trampoline (ADR-0077): the launcher's pinned
+            shortcut lands here — the system shortcut path may start an
+            unexported activity — and the intent is re-stamped with the
+            unforgeable proof before it reaches the exported shell.
+        -->
+        <activity
+            android:name=".infrastructure.homescreen.PinnedShortcutActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!--

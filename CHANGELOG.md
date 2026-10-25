@@ -9,8 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.5] - 2026-10-26
+
 ### Added
 
+- Launcher app actions offer Add to Home screen with badged Android shortcuts;
+  shortcuts follow labels/icons, reconcile removed apps, and wait for runtime
+  readiness on cold launch (ADR-0077).
 - Experimental native X11 Linux app surfaces, desktop-file discovery, touch and
   keyboard controls, zoom/layout controls, and retained apps with Minimize/Close
   and launcher badges (opt-in native build; ADR-0068–0070, ADR-0073).
@@ -19,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux desktop icons behind guest version symlinks resolve in the guest
+  before host decoding, fixing the installed NusaShell native launcher icon.
+- Native guest apps receive a writable, session-scoped `/dev/shm` bind;
+  Electron no longer aborts because Android's `/dev` lacks that directory
+  (ADR-0079).
+- Native builds pass `DISPLAY=:1` into new terminal sessions and guest service
+  managers, allowing applications such as the NusaShell installer to detect
+  the available native display endpoint (ADR-0078).
+- A late disconnect from an old native-display binding can no longer acknowledge
+  the replacement process's death before guest temporary-storage cleanup.
+- Homescreen pins deliver repeated warm launches and resume retained Linux
+  tasks after their desktop file disappears; cold commands wait for Linux.
+- Android 10 native display startup uses the supported local-socket connect
+  API with bounded send/read timeouts; it no longer fails with an unsupported
+  timeout overload before the X11 handshake.
 - Terminal drags survive DOM row replacement: long gestures keep following
   the finger and can reverse direction without lifting (ADR-0076).
 - One-finger scrolling reaches mouse-tracking and alternate-screen terminal
@@ -149,8 +169,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binds that same path into the guest, so the extension's `.l2s.` backing files
   never appear in a guest listing. The directory filter that used to hide them
   was removed with it: its compaction wedged the tracer on the S10e, which is
-  what made a concurrent `git clone` hang, and the bisect is recorded in
-  `docs/research/proot-fork-hang-vendor-kernels.md`. Five concurrent-clone rounds
+  what made a concurrent `git clone` hang, and the bisect is recorded in the
+  `proot-fork-hang-vendor-kernels` research note (since removed; in git
+  history). Five concurrent-clone rounds
   on the S10e pass, `rm -rf` over a tree with emulated links keeps links outside
   it readable, and the workaround in `docs/limitations.md` stays for sessions
   that already wedged. The bridge also carries two further fixes: it keeps the
@@ -170,7 +191,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pinned digests are updated with it. Device verification on the S10e shows the
   remote-clone path passing; the Samsung kernel still reproduces the wedge, so
   the hazard stays documented with a workaround and a recovery step in
-  `docs/limitations.md` (`docs/research/proot-fork-hang-vendor-kernels.md`).
+  `docs/limitations.md` (the `proot-fork-hang-vendor-kernels` research note,
+  since removed; in git history).
 
 ## [0.14.0] - 2026-10-10
 

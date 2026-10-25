@@ -26,6 +26,7 @@ import gh.nusashell.nusadesk.domain.runtime.RuntimeSnapshot;
 import gh.nusashell.nusadesk.domain.runtime.RuntimeState;
 import gh.nusashell.nusadesk.domain.terminal.TerminalCommandApp;
 import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
+import gh.nusashell.nusadesk.infrastructure.homescreen.PinnedAppShortcut;
 import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
 import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
 import gh.nusashell.nusadesk.presentation.GuestSshStatusAware;
@@ -41,6 +42,7 @@ import gh.nusashell.nusadesk.presentation.widget.SetupPhasePolicy;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -107,6 +109,11 @@ public final class DesktopHomeView extends FrameLayout
     private Button updateDismiss;
 
     private List<LinuxDesktopApp> linuxApps = Collections.emptyList();
+    /** True once the guest catalog has reported at least once this session —
+     * before that, an empty {@link #linuxApps} means "not scanned", not
+     * "nothing installed", and pinned Linux shortcuts must not be culled. */
+    private boolean linuxCatalogLoaded;
+    private boolean registeredAppsLoaded;
     private List<WebAppDefinition> webApps = Collections.emptyList();
     private List<TerminalCommandApp> terminalApps = Collections.emptyList();
     private Map<String, Bitmap> favicons = Collections.emptyMap();
@@ -131,7 +138,7 @@ public final class DesktopHomeView extends FrameLayout
     private final RuntimeStatusBus.Listener statusListener = this::renderSessionStatus;
 
     private LauncherGridView.OpenListener entryOpenListener;
-    private LauncherGridView.OpenListener entryEditListener;
+    private LauncherGridView.ActionListener entryActionsListener;
     private View.OnClickListener updateOpenListener;
     private View.OnClickListener updateDismissListener;
 
@@ -216,9 +223,9 @@ public final class DesktopHomeView extends FrameLayout
                 entryOpenListener.onEntryOpened(entry);
             }
         });
-        grid.setOnEntryEditListener(entry -> {
-            if (entryEditListener != null) {
-                entryEditListener.onEntryOpened(entry);
+        grid.setOnEntryActionsListener((entry, anchor) -> {
+            if (entryActionsListener != null) {
+                entryActionsListener.onEntryActions(entry, anchor);
             }
         });
         wireSearch();
@@ -242,11 +249,12 @@ public final class DesktopHomeView extends FrameLayout
     }
 
     /**
-     * Receives a long press on a registered app tile — a web app or a terminal
-     * command — which opens its edit form.
+     * Receives a long press on a registered app tile — a web app, a terminal
+     * command, or an installed Linux app — anchored on the tile for the
+     * actions menu.
      */
-    public void setOnEntryEditListener(LauncherGridView.OpenListener listener) {
-        this.entryEditListener = listener;
+    public void setOnEntryActionsListener(LauncherGridView.ActionListener listener) {
+        this.entryActionsListener = listener;
     }
 
     /** Wires the update banner's "View release" action (ADR-0038). */
@@ -334,6 +342,7 @@ public final class DesktopHomeView extends FrameLayout
      */
     public void setLinuxApps(List<LinuxDesktopApp> apps) {
         linuxApps = apps == null ? Collections.emptyList() : apps;
+        linuxCatalogLoaded = true;
         render();
     }
 
@@ -341,6 +350,7 @@ public final class DesktopHomeView extends FrameLayout
             List<WebAppDefinition> webApps, List<TerminalCommandApp> commandApps) {
         this.webApps = webApps == null ? Collections.emptyList() : webApps;
         this.terminalApps = commandApps == null ? Collections.emptyList() : commandApps;
+        registeredAppsLoaded = true;
         render();
     }
 
@@ -458,6 +468,7 @@ public final class DesktopHomeView extends FrameLayout
 
         List<LauncherEntry> entries = LauncherModel.entries(webApps, terminalApps, linuxApps, runningTasks);
         List<LauncherEntry> visible = LauncherModel.filter(entries, query(), this::labelOf);
+        reconcilePinnedShortcuts(entries);
 
         // One installer surface while any core component is missing, and
         // while a user-requested optional toolkit install is still running.
@@ -515,6 +526,31 @@ public final class DesktopHomeView extends FrameLayout
             content.setPadding(content.getPaddingLeft(), content.getPaddingTop(),
                     content.getPaddingRight(), wanted);
         }
+    }
+
+    /**
+     * Keeps the Android homescreen honest (ADR-0077): every render, the set
+     * of pinnable entry ids is compared against the shortcuts the launcher
+     * still holds — a deleted app's pin is disabled (the launcher may dim the
+     * homescreen), a reinstalled one's comes back, and a live one whose icon
+     * sources changed (new image, re-fetched favicon, rename) is re-pushed.
+     * Linux entries only count once the guest catalog has actually reported,
+     * so a stopped runtime does not read as "all Linux apps deleted".
+     */
+    private void reconcilePinnedShortcuts(List<LauncherEntry> entries) {
+        if (!registeredAppsLoaded) {
+            return;
+        }
+        Map<String, PinnedAppShortcut.EntryIcon> live = new HashMap<>();
+        for (LauncherEntry entry : entries) {
+            if (!entry.hasActions()) {
+                continue;
+            }
+            live.put(entry.getId(), new PinnedAppShortcut.EntryIcon(
+                    entry.getIconUri(), favicons.get(entry.getId()),
+                    entry.getIconRes(), labelOf(entry)));
+        }
+        PinnedAppShortcut.reconcilePins(getContext(), live, linuxCatalogLoaded);
     }
 
     /** The grid's app count: the {@code Add app} action is not an app. */

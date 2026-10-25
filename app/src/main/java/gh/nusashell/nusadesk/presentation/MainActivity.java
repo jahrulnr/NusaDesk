@@ -26,8 +26,10 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.Menu;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
+import android.widget.PopupMenu;
 import android.widget.Toast;
 
 import gh.nusashell.nusadesk.BuildConfig;
@@ -65,11 +67,15 @@ import gh.nusashell.nusadesk.domain.webapp.WebAppDefinition;
 import gh.nusashell.nusadesk.domain.webapp.WebAppId;
 import gh.nusashell.nusadesk.domain.webapp.WebAppSignInCredential;
 import gh.nusashell.nusadesk.domain.workspace.WorkspaceFolder;
+import gh.nusashell.nusadesk.domain.display.LinuxDesktopApp;
 import gh.nusashell.nusadesk.infrastructure.backup.BackupDocumentAccess;
 import gh.nusashell.nusadesk.infrastructure.backup.GuestBackupTransfer;
 import gh.nusashell.nusadesk.infrastructure.backup.LastBackupStore;
 import gh.nusashell.nusadesk.infrastructure.battery.BatteryOptimizationAccess;
 import gh.nusashell.nusadesk.infrastructure.boot.BootAutostartPreferences;
+import gh.nusashell.nusadesk.infrastructure.homescreen.PinnedAppShortcut;
+import gh.nusashell.nusadesk.infrastructure.homescreen.PinnedShortcutActivity;
+import gh.nusashell.nusadesk.infrastructure.homescreen.PinnedShortcutProof;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogCatalog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTail;
@@ -86,6 +92,8 @@ import gh.nusashell.nusadesk.infrastructure.service.RuntimeHostService;
 import gh.nusashell.nusadesk.infrastructure.service.TerminalTabsBus;
 import gh.nusashell.nusadesk.infrastructure.service.TerminalTabsController;
 import gh.nusashell.nusadesk.infrastructure.service.TerminalTabsRegistry;
+import gh.nusashell.nusadesk.infrastructure.service.RuntimeStatusBus;
+import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
 import gh.nusashell.nusadesk.infrastructure.ssh.SshSecurityInitializer;
 import gh.nusashell.nusadesk.infrastructure.terminal.SharedPreferencesTerminalCommandStore;
 import gh.nusashell.nusadesk.infrastructure.update.ApkDownloader;
@@ -292,7 +300,17 @@ public final class MainActivity extends Activity {
             "gh.nusashell.nusadesk.update.STATUS";
     /** Hard cap for a streamed release asset. */
     private static final long APK_SIZE_CAP = 64L * 1024 * 1024;
+    /** Pinned-homescreen-shortcut contract (ADR-0077): which entry kind and id reopen. */
+    private static final String EXTRA_PINNED_KIND =
+            "gh.nusashell.nusadesk.extra.PINNED_KIND";
+    private static final String EXTRA_PINNED_ID =
+            "gh.nusashell.nusadesk.extra.PINNED_ID";
     private Handler mainHandler;
+    private LauncherEntry.Kind pendingPinnedKind;
+    private String pendingPinnedId;
+    private final RuntimeStatusBus.Listener pinnedRuntimeListener = status -> resumePinnedEntry();
+    private static final String STATE_PINNED_KIND = "pendingPinnedKind";
+    private static final String STATE_PINNED_ID = "pendingPinnedId";
 
     private RuntimeSnapshot currentSnapshot;
     private RuntimeSnapshot addonSnapshot;
@@ -463,6 +481,34 @@ public final class MainActivity extends Activity {
                 ((AppFormView) surface).restoreDraft(savedInstanceState);
             }
         }
+        // A pinned homescreen shortcut overrides whatever the last shell state
+        // restored: the user asked for one app's surface, not where they left off.
+        if (savedInstanceState != null) {
+            String pending = savedInstanceState.getString(STATE_PINNED_KIND);
+            if (pending != null) {
+                try {
+                    LauncherEntry.Kind kind = LauncherEntry.Kind.valueOf(pending);
+                    String id = savedInstanceState.getString(STATE_PINNED_ID);
+                    if (kind == LauncherEntry.Kind.LINUX_APP && BuildConfig.NATIVE_DESKTOP_ENABLED) {
+                        nativeDesktop.openPinnedLinuxApp(id);
+                    } else {
+                        pendingPinnedKind = kind;
+                        pendingPinnedId = id;
+                    }
+                } catch (IllegalArgumentException malformed) {
+                    // An obsolete saved kind falls back to the restored shell.
+                }
+            }
+        }
+        dispatchPinnedShortcut(getIntent());
+    }
+
+    /** A pinned shortcut re-enters while the shell is already running (singleTask). */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        dispatchPinnedShortcut(intent);
     }
 
     /**
@@ -494,6 +540,8 @@ public final class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         activityStarted = true;
+        RuntimeStatusBus.getInstance().register(pinnedRuntimeListener);
+        resumePinnedEntry();
         if (BuildConfig.NATIVE_DESKTOP_ENABLED) {
             nativeDesktop.start();
         }
@@ -524,6 +572,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         activityStarted = false;
+        RuntimeStatusBus.getInstance().unregister(pinnedRuntimeListener);
         if (BuildConfig.NATIVE_DESKTOP_ENABLED) {
             nativeDesktop.stop();
         }
@@ -651,6 +700,13 @@ public final class MainActivity extends Activity {
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
+        String nativePending = nativeDesktop.pendingPinnedId();
+        if (pendingPinnedKind != null || nativePending != null) {
+            outState.putString(STATE_PINNED_KIND, nativePending != null
+                    ? LauncherEntry.Kind.LINUX_APP.name() : pendingPinnedKind.name());
+            outState.putString(STATE_PINNED_ID, nativePending != null
+                    ? nativePending : pendingPinnedId);
+        }
         outState.putString(STATE_DESTINATION, activeDestination.name());
         outState.putString(STATE_WEB_APP, activeWebAppId);
         outState.putString(STATE_SYSTEM_PAGE,
@@ -738,7 +794,7 @@ public final class MainActivity extends Activity {
                 desktopHome.isUsbAdbSelected(), desktopHome.isTermuxSelected(),
                 false));
         desktopHome.setOnEntryOpenListener(this::openEntry);
-        desktopHome.setOnEntryEditListener(this::openEntryEditor);
+        desktopHome.setOnEntryActionsListener(this::showEntryActions);
         desktopHome.setOnUpdateOpenListener(view -> onBannerInstall());
         desktopHome.setOnUpdateDismissListener(view -> dismissUpdateBanner());
     }
@@ -859,6 +915,7 @@ public final class MainActivity extends Activity {
 
     /** Shows the launcher. */
     private void showShell() {
+        cancelPendingPinnedEntry();
         nativeDesktop.refreshLinuxApps();
         settleKeyboardFor(desktopHome);
         activeDestination = DesktopDestination.HOME;
@@ -871,6 +928,7 @@ public final class MainActivity extends Activity {
 
     /** Shows one fixed surface (terminal, system, add/edit form). */
     private void showSurface(DesktopDestination destination) {
+        cancelPendingPinnedEntry();
         activeDestination = destination;
         activeWebAppId = null;
         activeTerminalAppId = null;
@@ -920,6 +978,7 @@ public final class MainActivity extends Activity {
 
     /** Shows one user web app surface, probing its endpoint before it loads. */
     private void showWebApp(WebAppDefinition definition) {
+        cancelPendingPinnedEntry();
         activeDestination = DesktopDestination.HOME;
         activeWebAppId = definition.getId().value();
         activeTerminalAppId = null;
@@ -1064,12 +1123,179 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** Long-press on a user app tile opens that app's edit form. */
+    /** The actions menu's Edit item opens that app's edit form. */
     private void openEntryEditor(LauncherEntry entry) {
         if (entry.isWebApp()) {
             openAppForm(entry.getWebApp(), null);
         } else if (entry.isTerminalApp()) {
             openAppForm(null, entry.getTerminalApp());
+        }
+    }
+
+    /**
+     * Long-press on an actionable tile shows the entry's menu, anchored on the
+     * tile: the edit form for the user-registered kinds, and the launcher's
+     * own "add to Home screen" flow for every pinnable app (ADR-0077).
+     */
+    private void showEntryActions(LauncherEntry entry, View anchor) {
+        List<Runnable> actions = new ArrayList<>();
+        PopupMenu menu = new PopupMenu(this, anchor);
+        if (entry.isWebApp() || entry.isTerminalApp()) {
+            menu.getMenu().add(Menu.NONE, actions.size(), actions.size(),
+                    R.string.webapp_menu_edit);
+            actions.add(() -> openEntryEditor(entry));
+        }
+        menu.getMenu().add(Menu.NONE, actions.size(), actions.size(),
+                R.string.launcher_add_to_home);
+        actions.add(() -> pinEntry(entry));
+        menu.setOnMenuItemClickListener(item -> {
+            int index = item.getItemId();
+            if (index < 0 || index >= actions.size()) {
+                return false;
+            }
+            actions.get(index).run();
+            return true;
+        });
+        menu.show();
+    }
+
+    /**
+     * Pins a homescreen shortcut for one entry. The icon carries the NusaDesk
+     * mark as a launcher-style badge so the tile reads as "this app, through
+     * NusaDesk"; the system shows its own confirm UI, and a removed app's
+     * shortcut later re-enters here and reconciles to the shell.
+     */
+    private void pinEntry(LauncherEntry entry) {
+        String label = entry.getLabelRes() != 0
+                ? getString(entry.getLabelRes()) : entry.getLabel();
+        // The shortcut targets the unexported trampoline, never the exported
+        // shell directly (ADR-0077).
+        Intent launch = new Intent(this, PinnedShortcutActivity.class)
+                .setAction(Intent.ACTION_VIEW)
+                .putExtra(EXTRA_PINNED_KIND, entry.getKind().name());
+        if (entry.getKind() == LauncherEntry.Kind.LINUX_APP && entry.getLinuxApp() != null) {
+            LinuxDesktopApp app = entry.getLinuxApp();
+            launch.putExtra(EXTRA_PINNED_ID, app.getId());
+        } else {
+            launch.putExtra(EXTRA_PINNED_ID, entry.getId());
+        }
+        boolean pinned = PinnedAppShortcut.pin(this, entry.getId(),
+                new PinnedAppShortcut.EntryIcon(entry.getIconUri(),
+                        favicons.get(entry.getId()), entry.getIconRes(), label),
+                launch);
+        if (!pinned) {
+            Toast.makeText(this, R.string.launcher_pin_unsupported,
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * A pinned homescreen shortcut re-enters here through the unexported
+     * trampoline, which alone can stamp {@link PinnedShortcutProof} — an
+     * {@code ACTION_VIEW} composed by another app fails that check, so the
+     * exported activity is not a way to trigger launches (ADR-0077). The
+     * stored entry then opens exactly what its tile would open; stale ids
+     * reconcile to the shell because the system keeps the shortcut even
+     * after the app is gone.
+     */
+    private void dispatchPinnedShortcut(Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) {
+            return;
+        }
+        try {
+            // The proof check consumes its extra on success; whatever remains
+            // below cannot dispatch a second time.
+            if (!PinnedShortcutProof.matches(this, intent)) {
+                return;
+            }
+            cancelPendingPinnedEntry();
+            String kindExtra = intent.getStringExtra(EXTRA_PINNED_KIND);
+            if (kindExtra == null) {
+                return;
+            }
+            String id = intent.getStringExtra(EXTRA_PINNED_ID);
+            intent.removeExtra(EXTRA_PINNED_KIND);
+            intent.removeExtra(EXTRA_PINNED_ID);
+            dispatchPinnedEntry(LauncherEntry.Kind.valueOf(kindExtra), id);
+        } catch (IllegalArgumentException unknown) {
+            // A kind or entry the product never pins.
+        } catch (RuntimeException hostile) {
+            // Malformed extras (unparcel failures included) settle as the
+            // shell, never as a crash another app could trigger.
+            refreshUserApps();
+        }
+    }
+
+    /** Pinned commands/web apps wait for the same service readiness as launcher tiles. */
+    private boolean awaitPinnedRuntime(LauncherEntry.Kind kind, String id) {
+        if (pinnedRuntimeReady()) return false;
+        showShell();
+        pendingPinnedKind = kind;
+        pendingPinnedId = id;
+        return true;
+    }
+
+    private boolean pinnedRuntimeReady() {
+        HostRuntimeStatus status = RuntimeStatusBus.getInstance().current();
+        return status != null && status.isRuntimeRunning()
+                && TerminalTabsRegistry.getInstance().port() != null;
+    }
+
+    private void resumePinnedEntry() {
+        if (!activityStarted || pendingPinnedKind == null || !pinnedRuntimeReady()) return;
+        LauncherEntry.Kind kind = pendingPinnedKind;
+        String id = pendingPinnedId;
+        pendingPinnedKind = null;
+        pendingPinnedId = null;
+        dispatchPinnedEntry(kind, id);
+    }
+
+    private void cancelPendingPinnedEntry() {
+        pendingPinnedKind = null;
+        pendingPinnedId = null;
+        nativeDesktop.cancelPinnedLaunch();
+    }
+
+    /** Opens the surface a verified pinned shortcut names. */
+    private void dispatchPinnedEntry(LauncherEntry.Kind kind, String id) {
+        switch (kind) {
+            case WEB_APP: {
+                WebAppDefinition definition = definitionFor(id);
+                if (definition != null) {
+                    if (awaitPinnedRuntime(kind, id)) return;
+                    showWebApp(definition);
+                } else {
+                    showShell();
+                }
+                return;
+            }
+            case TERMINAL_APP: {
+                TerminalCommandApp app = commandAppFor(id);
+                if (app != null) {
+                    if (awaitPinnedRuntime(kind, id)) return;
+                    showTerminalApp(app);
+                } else {
+                    showShell();
+                }
+                return;
+            }
+            case LINUX_APP: {
+                if (!BuildConfig.NATIVE_DESKTOP_ENABLED) {
+                    return;
+                }
+                nativeDesktop.openPinnedLinuxApp(id);
+                return;
+            }
+            case CURATED: {
+                // The only pinnable curated surface is the terminal (ADR-0077);
+                // unknown or unpinnable ids reconcile to the shell.
+                if (DesktopApp.TERMINAL.getId().equals(id)) {
+                    showSurface(DesktopApp.TERMINAL.getDestination());
+                }
+                return;
+            }
+            default:
+                // Add-app and unpinnable surfaces never reach here.
         }
     }
 
@@ -1083,6 +1309,7 @@ public final class MainActivity extends Activity {
      * is created, and nothing is queued to run later.
      */
     private void showTerminalApp(TerminalCommandApp app) {
+        cancelPendingPinnedEntry();
         if (app == null) {
             refreshUserApps();
             return;

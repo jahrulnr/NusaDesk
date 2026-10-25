@@ -22,5 +22,6 @@ AGENTS.md). PRoot is a compatibility layer, not a security sandbox.
 
 The binary is built from pinned, source-reviewed upstream by
 `scripts/build-proot-arm64.sh`, which records exact revisions, licenses, and
-patches. See `docs/research/proot-arm64-build-spike.md` for provenance,
-reproducibility evidence, license obligations, and unresolved blockers.
+patches. The `proot-arm64-build-spike` research note that recorded provenance,
+reproducibility evidence, license obligations, and unresolved blockers was
+removed with the old `docs/research` tree; it remains in git history.

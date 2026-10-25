@@ -74,7 +74,9 @@ def files():
 
 def icon_path(icon):
     if icon.startswith("/") and Path(icon).is_file() and Path(icon).suffix.lower() == ".png":
-        return icon
+        # Resolve inside the guest: an absolute target of a version symlink
+        # otherwise resolves against Android's root when the host decodes it.
+        return str(Path(icon).resolve())
     if "/" in icon or ".." in icon:
         # A themed icon name is a single segment; separators or parent
         # traversal are spec-invalid and must not escape the theme roots.
@@ -84,9 +86,9 @@ def icon_path(icon):
             for size in ("48x48", "64x64", "128x128", "256x256", "32x32"):
                 path = base / theme / size / "apps" / (icon + ".png")
                 if path.is_file():
-                    return str(path)
+                    return str(path.resolve())
     path = Path("/usr/share/pixmaps") / (icon + ".png")
-    return str(path) if path.is_file() else ""
+    return str(path.resolve()) if path.is_file() else ""
 
 
 def entry(desktop_id, path):

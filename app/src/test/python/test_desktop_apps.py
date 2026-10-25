@@ -81,6 +81,15 @@ class DesktopAppsTest(unittest.TestCase):
         icon.write_bytes(b"png")
         self.assertEqual(str(icon), apps.icon_path(str(icon)))
 
+    def test_absolute_icon_through_version_symlink_returns_guest_canonical_path(self):
+        version = self.root / "versions" / "1.0"
+        version.mkdir(parents=True)
+        icon = version / "icon.png"
+        icon.write_bytes(b"png")
+        current = self.root / "current"
+        current.symlink_to(version, target_is_directory=True)
+        self.assertEqual(str(icon), apps.icon_path(str(current / "icon.png")))
+
     def test_desktop_visibility_and_tryexec_use_glib(self):
         self.desktop(self.system, "terminal.desktop", "Terminal=true\n")
         self.desktop(self.system, "nodisplay.desktop", "NoDisplay=true\n")

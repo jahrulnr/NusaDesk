@@ -7,6 +7,8 @@ import android.system.Os;
 import android.system.OsConstants;
 import android.util.Log;
 
+import gh.nusashell.nusadesk.BuildConfig;
+import gh.nusashell.nusadesk.application.display.NativeDesktopPort;
 import gh.nusashell.nusadesk.application.session.HostKeyTrustStore;
 import gh.nusashell.nusadesk.domain.network.RuntimePort;
 import gh.nusashell.nusadesk.domain.runtime.CuratedRuntimeCatalog;
@@ -1331,6 +1333,9 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
     /** Extra env for the daemon launch: the overlay library path when used. */
     private Map<String, String> daemonEnv(GuestSshDaemon daemon) {
         Map<String, String> env = new HashMap<>();
+        // The supervisor also starts user services: they need the endpoint even
+        // when they are not descendants of an interactive SSH login shell.
+        if (BuildConfig.NATIVE_DESKTOP_ENABLED) env.put("DISPLAY", NativeDesktopPort.X11_DISPLAY);
         String libraryPath = daemon.overlayLibraryPath();
         if (libraryPath != null) {
             env.put("LD_LIBRARY_PATH", libraryPath);
@@ -1345,7 +1350,7 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
     private void writeDaemonConfig(Path rootfs, GuestSshDaemon daemon) throws IOException {
         Path config = daemon.resolveGuestFile(daemon.configPath(), rootfs);
         Files.createDirectories(config.getParent());
-        Files.write(config, daemon.configText().getBytes(StandardCharsets.US_ASCII));
+        Files.write(config, daemon.configText(BuildConfig.NATIVE_DESKTOP_ENABLED).getBytes(StandardCharsets.US_ASCII));
     }
 
     /**

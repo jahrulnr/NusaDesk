@@ -23,6 +23,24 @@ public final class GuestEphemeralStateCleaner {
     private GuestEphemeralStateCleaner() {
     }
 
+    /** File-backed POSIX shared memory; contents have the same lifetime as guest /tmp. */
+    public static Path prepareSharedMemory(Path activeRootfs) throws IOException {
+        if (activeRootfs == null) throw new IllegalArgumentException("activeRootfs must not be null");
+        Path tmp = activeRootfs.resolve("tmp");
+        if (!Files.exists(tmp, LinkOption.NOFOLLOW_LINKS)) Files.createDirectory(tmp);
+        requireDirectory(tmp);
+        Path shared = tmp.resolve(".nusadesk-shm");
+        if (!Files.exists(shared, LinkOption.NOFOLLOW_LINKS)) Files.createDirectory(shared);
+        requireDirectory(shared);
+        applyPrivateTmpMode(shared);
+        return shared;
+    }
+
+    private static void requireDirectory(Path path) throws IOException {
+        if (Files.isSymbolicLink(path) || !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
+            throw new IOException("guest temporary path is not a real directory: " + path);
+    }
+
     /**
      * Clear the guest {@code /tmp} directory, creating it when the curated
      * rootfs omitted it. A failure is returned to the caller rather than being

@@ -294,6 +294,14 @@ public final class ProotLauncher {
         Path prootLoader = ProotPaths.prootLoaderPath(nativeLibraryDir);
 
         List<ProotBindMount> binds = new ArrayList<>(ProotCommandFactory.DEFAULT_SYSTEM_BINDS);
+        if (gh.nusashell.nusadesk.BuildConfig.NATIVE_DESKTOP_ENABLED) {
+            try {
+                Path shared = GuestEphemeralStateCleaner.prepareSharedMemory(activeRootfs);
+                binds.add(ProotBindMount.ofStrict(shared.toString(), "/dev/shm"));
+            } catch (IOException error) {
+                throw new ProotLaunchException("could not prepare guest shared memory", error);
+            }
+        }
         // Bind the guest /etc/resolv.conf from Android's active-network DNS so
         // every PRoot path (setup, daemon, deb extraction, probe) resolves
         // consistently. When Android has no valid DNS, no bind is added and the

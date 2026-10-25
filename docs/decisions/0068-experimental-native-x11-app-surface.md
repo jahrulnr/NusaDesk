@@ -13,8 +13,9 @@ and renders into the Android app area without WebView or VNC/RFB. One selected
 app fills that area, including its dialogs and popups. Android 10/API 29 is the
 minimum target; no device-owner or lock-task integration is required.
 
-The source audit in `docs/research/native-desktop-display-feasibility.md` selects
-Termux:X11 as the smallest viable native display basis. The upstream native
+The source audit recorded in the `native-desktop-display-feasibility` research
+note (since removed — see git history) selects Termux:X11 as the smallest
+viable native display basis. The upstream native
 server calls process exit on termination/fatal failure and must not run inside
 the launcher process. Importing its full Android module would also import its
 Activity, manifest, input services and Kotlin dependencies.

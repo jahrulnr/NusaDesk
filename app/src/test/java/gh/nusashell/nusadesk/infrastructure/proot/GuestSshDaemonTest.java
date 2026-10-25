@@ -131,6 +131,16 @@ public class GuestSshDaemonTest {
         assertFalse(daemon.configText().contains("0.0.0.0"));
     }
 
+    @Test public void onlyNativeBuildSessionsAdvertiseTheLocalDisplayEndpoint() throws Exception {
+        touch(rootfs.getRoot(), "usr/sbin/sshd");
+        GuestSshDaemon daemon = GuestSshDaemon.detect(rootfs.getRoot().toPath(), null);
+        assertFalse(daemon.configText().contains("DISPLAY="));
+        assertFalse(daemon.configText(false).contains("DISPLAY="));
+        assertTrue(daemon.configText(true).contains("SetEnv DISPLAY=:1\n"));
+        assertTrue("local display does not require SSH X11 forwarding",
+                daemon.configText(true).contains("X11Forwarding no\n"));
+    }
+
     @Test
     public void pidFileIsPersistedInsideTheDaemonsConfigDirectory() throws Exception {
         touch(overlay.getRoot(), CuratedRuntimeCatalog.SSH_OVERLAY_ENTRYPOINT);
