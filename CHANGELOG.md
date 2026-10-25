@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release metadata is prepared with `make bump-version`: VERSION, changelog,
+  security documentation and minor-line archives stay in sync. CI checks
+  metadata before starting the Android build.
 - Linux desktop icons behind guest version symlinks resolve in the guest
   before host decoding, fixing the installed NusaShell native launcher icon.
 - Native guest apps receive a writable, session-scoped `/dev/shm` bind;

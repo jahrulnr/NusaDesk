@@ -4,6 +4,7 @@ GRADLEW ?= ./gradlew
 ADB ?= adb
 NODE ?= node
 PYTHON ?= python3
+NEW_VERSION ?=
 APK ?= app/build/outputs/apk/debug/app-debug.apk
 GRADLE_FLAGS ?= --no-daemon
 
@@ -16,12 +17,12 @@ RELEASE_APK ?= app/build/outputs/apk/release/app-release.apk
 SDK_DIR ?= $(shell sed -n 's/^sdk\.dir=//p' local.properties 2>/dev/null)
 APKSIGNER ?= $(shell find "$(SDK_DIR)/build-tools" -name apksigner 2>/dev/null | sort -V | tail -n 1)
 
-.PHONY: test lint build check release devices push install clean
+.PHONY: test lint build check release devices push install clean bump-version check-version
 
 # Run the JVM/unit test suite (which includes the Robolectric cross-API launch
 # guard, ADR-0022) and every pure-JavaScript terminal policy test. The glob is
 # deliberate: a new policy test must not be able to sit outside the gate.
-test:
+test: check-version
 	$(GRADLEW) $(GRADLE_FLAGS) test
 	$(PYTHON) -B -m unittest discover -s app/src/test/python
 	@for policy_test in app/src/test/js/*.test.js; do \
@@ -39,6 +40,14 @@ build: lint
 
 # Run the complete local quality gate.
 check: test build
+
+# Prepare the next patch, or an explicit release, without publishing anything.
+bump-version:
+	$(PYTHON) -B scripts/bump-version.py "$(NEW_VERSION)"
+
+# Cheap metadata preflight; Gradle's independent guard remains in place.
+check-version:
+	$(PYTHON) -B scripts/bump-version.py --check
 
 # Build and verify the signed release APK from the local signing material in
 # $(SECRET_DIR) (ADR-0040): the keystore plus the .env holding the

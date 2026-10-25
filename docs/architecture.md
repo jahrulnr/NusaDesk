@@ -53,6 +53,23 @@ flowchart TD
 
 The AGP 9.4 baseline requires Gradle 9.6 and JDK 17; the project pins those values in the build files. See the official [AGP 9.4 compatibility notes](https://developer.android.com/build/releases/agp-9-4-0-release-notes) and [Java versions in Android builds](https://developer.android.com/build/jdks).
 
+## Release metadata
+
+Use `make bump-version` to prepare the next patch, or
+`make bump-version NEW_VERSION=0.15.0` for a chosen version. This updates the
+VERSION marker, changelog and security document together; Unreleased notes
+become the dated release notes, and a new minor line archives the previous
+line under `docs/changelogs/`. Gradle derives APK versionName/versionCode from
+VERSION. Run `make check-version` for a quick consistency check.
+
+To repair a failed bump without creating another release, pass the existing
+VERSION explicitly, for example `make bump-version NEW_VERSION=0.14.5`.
+Existing release notes/date and new Unreleased work are preserved. These
+commands never commit, push, tag or publish; after reviewing and pushing a
+real VERSION change, the existing release workflow handles publication.
+A metadata-only repair of an already-pushed version needs the workflow's
+manual dispatch because the push trigger watches VERSION only. See [ADR-0067](decisions/0067-version-derived-from-marker-and-generated-changelog-asset.md).
+
 ## Layers
 
 ```mermaid

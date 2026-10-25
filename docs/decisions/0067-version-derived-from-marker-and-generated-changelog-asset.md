@@ -61,8 +61,19 @@ Rejected alternatives:
 
 ## Consequences
 
-- A release bump edits `VERSION` + `CHANGELOG.md` + `SECURITY.md`; the Gradle
-  side updates itself. `VersionConsistencyTest` still guards the whole set.
+- Run `make bump-version` for the next patch or
+  `make bump-version NEW_VERSION=0.15.0` for an explicit release. The Python
+  standard-library script synchronizes `VERSION`, `CHANGELOG.md`, and
+  `SECURITY.md`, moves Unreleased notes into the dated release, and archives
+  the previous minor line on rollover. Repeating the current version repairs
+  metadata without consuming new Unreleased notes or changing release dates.
+  It validates the plan before writing, writes VERSION last, and rolls back
+  ordinary I/O failures; a process/power interruption is caught by the guard.
+  It does not commit, tag, push, build, or publish. Gradle still derives APK
+  metadata from VERSION, and `VersionConsistencyTest` remains independent.
+- `make check-version` is a read-only preflight, also run before `make test`
+  and at the start of release CI, so inconsistent release documentation fails
+  before Android dependencies and the full test suite are run.
 - The debug APK's `versionCode` now tracks the marker too; installing a debug
   build over an installed release with a higher code is rejected by the
   platform, as before — only the numbers moved.

@@ -73,6 +73,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          python3 -B scripts/bump-version.py --check
+
           if ! grep -qE "^## \[$VERSION\]( |$)" CHANGELOG.md; then
             echo "CHANGELOG.md has no section for VERSION=$VERSION" >&2
             exit 1
