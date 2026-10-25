@@ -12,6 +12,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.BindException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -63,8 +64,15 @@ public class WebAppSurfaceViewReloadTest {
 
     @After
     public void tearDown() throws Exception {
-        server.close();
+        surface.release();
         executor.shutdownNow();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                fail("probe executor did not stop");
+            }
+        } finally {
+            server.close();
+        }
     }
 
     @Test
@@ -98,7 +106,17 @@ public class WebAppSurfaceViewReloadTest {
 
     @Test
     public void anUnreachableAppStaysRecoverableThroughTheSameAction() throws Exception {
-        server.close();
+        server.stopAnswering();
+        // The unavailable endpoint must stay owned by this fixture. Closing
+        // it would let an unrelated listener reuse the port before the probe.
+        try (ServerSocket competitor = new ServerSocket()) {
+            try {
+                competitor.bind(new InetSocketAddress("127.0.0.1", server.port()));
+                fail("unreachable fixture released its port to another listener");
+            } catch (BindException expected) {
+                // Still owned; no unrelated HTTP app can make the probe pass.
+            }
+        }
         bind();
 
         assertEquals("nothing answers on the port any more",
@@ -110,6 +128,25 @@ public class WebAppSurfaceViewReloadTest {
         assertEquals("the reload is the same probe, so it stays honestly "
                 + "unreachable instead of showing a browser error page",
                 WebAppSurfaceView.State.UNREACHABLE, surface.getState());
+
+        server.resumeAnswering();
+        surface.reload();
+        settle();
+        assertEquals("the same action recovers when this exact endpoint returns",
+                WebAppSurfaceView.State.LOADED, surface.getState());
+        assertEquals(definition.getEndpointUrl(), surfaceWebView().getUrl());
+    }
+
+    @Test
+    public void aNonHttpListenerDoesNotLoadAWebView() {
+        server.sendInvalidHttp();
+        bind();
+        assertEquals("a TCP listener without a valid HTTP response is unavailable",
+                WebAppSurfaceView.State.UNREACHABLE, surface.getState());
+        server.resumeAnswering();
+        surface.reload();
+        settle();
+        assertEquals(WebAppSurfaceView.State.LOADED, surface.getState());
     }
 
     private void bind() {
@@ -153,6 +190,8 @@ public class WebAppSurfaceViewReloadTest {
         private final ServerSocket serverSocket;
         private final Thread thread;
         private volatile boolean closed;
+        private volatile boolean answering = true;
+        private volatile boolean invalidHttp;
 
         private FixtureServer() throws IOException {
             serverSocket = new ServerSocket();
@@ -175,6 +214,21 @@ public class WebAppSurfaceViewReloadTest {
             }
         }
 
+        void stopAnswering() {
+            // Reject TCP connections with a reset, while retaining the bound
+            // endpoint. A closed listener cannot promise an unused port.
+            answering = false;
+        }
+
+        void sendInvalidHttp() {
+            invalidHttp = true;
+        }
+
+        void resumeAnswering() {
+            invalidHttp = false;
+            answering = true;
+        }
+
         int port() {
             return serverSocket.getLocalPort();
         }
@@ -183,12 +237,21 @@ public class WebAppSurfaceViewReloadTest {
             byte[] body = "<html><body>fixture</body></html>".getBytes(StandardCharsets.UTF_8);
             while (!closed) {
                 try (Socket socket = serverSocket.accept()) {
+                    if (!answering) {
+                        socket.setSoLinger(true, 0);
+                        continue;
+                    }
                     InputStream in = socket.getInputStream();
                     byte[] request = new byte[1024];
                     // Read the request head; a GET is answered without waiting
                     // for a body the fixture never sends.
                     in.read(request);
                     OutputStream out = socket.getOutputStream();
+                    if (invalidHttp) {
+                        out.write("not an HTTP response\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                        out.flush();
+                        continue;
+                    }
                     out.write(("HTTP/1.1 200 OK\r\n"
                             + "Content-Type: text/html; charset=utf-8\r\n"
                             + "Content-Length: " + body.length + "\r\n"

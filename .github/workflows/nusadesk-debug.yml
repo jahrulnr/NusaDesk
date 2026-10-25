@@ -75,3 +75,14 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nusadesk-debug-test-reports
+          path: |
+            app/build/test-results/
+            app/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -54,6 +54,19 @@ public class WebAppReadinessObserverTest {
     }
 
     @Test
+    public void missingHttpStatusCannotCountAsAnHttpResponse() {
+        for (int status : new int[]{-1, 0}) {
+            WebAppReadinessObserver.Result result = new WebAppReadinessObserver(
+                    new FakeProbe(status), 10, 10).observe(8080);
+            assertEquals("no HTTP response was parsed: " + status,
+                    WebAppReadinessObserver.Outcome.UNREACHABLE, result.getOutcome());
+            assertFalse(result.isReachable());
+            assertEquals(0, result.getHttpStatus());
+            assertTrue(result.getDetail().contains(Integer.toString(status)));
+        }
+    }
+
+    @Test
     public void unreachablePortReportsUnreachableWithZeroStatus() {
         WebAppReadinessObserver.Result result =
                 new WebAppReadinessObserver(

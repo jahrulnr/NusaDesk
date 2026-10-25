@@ -124,6 +124,12 @@ public final class WebAppReadinessObserver {
             int status = probe.probe(
                     SCHEME, HOST, guestPort, HEALTH_PATH,
                     connectTimeoutMillis, readTimeoutMillis);
+            // HttpURLConnection may return -1 instead of throwing when a
+            // TCP listener's reply is not HTTP. It is not a response code.
+            if (status <= 0) {
+                return new Result(Outcome.UNREACHABLE, 0,
+                        "No valid HTTP response (status " + status + ")");
+            }
             return new Result(Outcome.REACHABLE, status, "HTTP " + status);
         } catch (IOException failure) {
             String reason = failure.getMessage() == null

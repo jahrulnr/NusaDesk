@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Web-app readiness no longer treats a missing HTTP status (`-1` or `0`) as
+  a reachable app when a TCP listener does not answer valid HTTP.
+
+- Web-app reload tests keep ownership of their unavailable endpoint instead
+  of probing a freed port; failed CI runs retain JUnit and HTML test reports.
+
 - Release metadata is prepared with `make bump-version`: VERSION, changelog,
   security documentation and minor-line archives stay in sync. CI checks
   metadata before starting the Android build.

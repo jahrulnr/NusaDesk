@@ -217,3 +217,14 @@ jobs:
             --title "NusaDesk $VERSION" \
             --notes-file release-notes.md \
             --verify-tag
+
+      - name: Upload test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nusadesk-release-test-reports
+          path: |
+            app/build/test-results/
+            app/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 14
