@@ -514,13 +514,13 @@ flowchart LR
 
 ## Experimental native Linux GUI (ADR-0068)
 
-An opt-in build (`-PnativeDesktop=true`) adds a native SurfaceView app area
+The regular build adds a native SurfaceView app area
 for the foreground Linux GUI among retained apps in the existing guest. A
 private Android process hosts the pinned Xlorie server and hands its renderer FD through Binder; the
 main process hosts the Java/JNI renderer and focused-area input. The guest
 connects through the shared session `/tmp` X11 socket, with TCP disabled.
-This display path does not use WebView or VNC/RFB. The default build omits the
-native display binary and tile.
+This display path does not use WebView or VNC/RFB. Developers can explicitly
+omit it with `-PnativeDesktop=false`; regular update APKs retain it (ADR-0080).
 
 The runtime host remains the lifecycle owner. Display teardown is awaited
 before ADR-0027 clears `/tmp`; hiding/recreating a surface does not create
@@ -576,3 +576,8 @@ navigation cancels them. Reconciliation waits for loaded sources before
 classifying ids as deleted, disables/re-enables pins, and updates changed
 labels/icons without re-pinning. The launcher owns confirmation and the visual
 treatment of disabled pins.
+
+ADR-0081 adds a supervised Android GLES virglrenderer child to the private
+X11 service. Guest Mesa uses a private Unix socket after an offscreen pixel
+check, with software fallback and an explicit Electron compatibility wrapper.
+It shares the existing guest/display lifecycle; it adds no graphics TCP port.

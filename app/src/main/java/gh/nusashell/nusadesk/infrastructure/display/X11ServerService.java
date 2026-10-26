@@ -10,6 +10,7 @@ import android.os.Process;
 import android.system.Os;
 import android.util.Log;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.FutureTask;
@@ -22,6 +23,7 @@ import gh.nusashell.nusadesk.infrastructure.proot.ProotPaths;
 public final class X11ServerService extends Service {
     private final Handler main = new Handler(Looper.getMainLooper());
     private X11Server server;
+    private VirglRendererProcess graphics;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -34,6 +36,11 @@ public final class X11ServerService extends Service {
             }
             Os.setenv("TMPDIR", root.resolve("tmp").toString(), true);
             Os.setenv("XKB_CONFIG_ROOT", root.resolve("usr/share/X11/xkb").toString(), true);
+            try {
+                graphics = VirglRendererProcess.start(this, root);
+            } catch (IOException error) {
+                Log.w("NusaDeskX11", "GPU renderer unavailable; retaining software rendering", error);
+            }
             System.loadLibrary("Xlorie");
             server = new X11Server();
             if (!server.start(new String[]{":1", "-nolisten", "tcp", "-noreset", "-dpi", "144"})) {
@@ -60,7 +67,7 @@ public final class X11ServerService extends Service {
             }
         }
         @Override public void shutdown() {
-            main.post(() -> Process.killProcess(Process.myPid()));
+            main.post(() -> { closeGraphics(); Process.killProcess(Process.myPid()); });
         }
     };
 
@@ -68,6 +75,11 @@ public final class X11ServerService extends Service {
 
     @Override public void onDestroy() {
         super.onDestroy();
+        closeGraphics();
         Process.killProcess(Process.myPid());
+    }
+
+    private void closeGraphics() {
+        if (graphics != null) { graphics.close(); graphics = null; }
     }
 }

@@ -60,13 +60,14 @@ This file is the operational truth for what the current base project does **not*
 
 ## Experimental native desktop display (ADR-0068)
 
-The optional `-PnativeDesktop=true` build adds an experimental selected-app
-native X11 surface, now with retained apps/minimize/resume (ADR-0070). The default build includes no native display binary or
-launcher tile. The enabled build requires explicitly installed guest Openbox,
+Regular builds include an experimental selected-app native X11 surface, with
+retained apps/minimize/resume (ADR-0070, ADR-0080). Developers can explicitly
+omit it with `-PnativeDesktop=false`. Native GUI requires explicitly installed guest Openbox,
 XKB data and X11 utilities, plus Python 3 and GLib/GIO for desktop discovery;
 the sample additionally requires Mousepad; no product-managed GUI add-on or arbitrary
 GUI app installer exists. It links GPL display code and is not an MIT-only
-APK or a public release. API 29 is the target; actual device results follow.
+APK. Release source/build materials are described in `distribution.md`.
+API 29 is the target; actual device results follow.
 Clipboard synchronization and global keyboard capture are outside this slice.
 The initial touch/IME/save/session slice was observed on API 31, but those
 observations are historical and were not independently re-verified. The
@@ -779,8 +780,11 @@ deliver an already-consented device descriptor. What that means in practice:
 
 There is no general guest GPU path. The community Mesa stack is SoC-specific:
 Turnip covers Adreno GPUs only, and Mali devices (including the S10e used for
-this project's device evidence) expose no usable driver to a glibc guest, so
-guest rendering and inference stay on the CPU there. NPU acceleration has no
+this project's historical device evidence) expose no directly usable DRM
+render driver to a glibc guest. ADR-0081 adds a different path: guest Mesa
+virpipe forwards GL to an Android GLES virglrenderer process. Guest drawing
+through Mali-T880 was verified on the API 29 S7 Edge; this is a host bridge,
+not a guest-native Mali driver or a GPU inference implementation. NPU acceleration has no
 guest path: the platform NN API is deprecated and vendor runtimes are
 host-side only. CPU inference with small models through the capability bridge
 is feasible and was verified on the S10e — see the `guest-local-llm-spike`
@@ -793,15 +797,20 @@ renderer presents its buffers through EGL/GLES into a `SurfaceView`.
 Android presentation acceleration does not prove accelerated Linux OpenGL or
 Vulkan. The optional X11/Mousepad slice has displayed native guest frames
 on the API 29 S7 Edge (FloydROM); the earlier API 31 S10e observations are
-historical and were not independently re-verified. That is CPU-rendered 2D GUI
-evidence only.
+historical and were not independently re-verified. That initial slice was
+CPU-rendered 2D GUI evidence. The later ADR-0081 GPU experiment is recorded
+separately in [the virgl device evidence](evidence/virgl-2026-10-27.md), which
+includes a frame-interval comparison of virgl against llvmpipe while scrolling
+one Electron chat view. That comparison is not a general responsiveness or
+battery measurement, and virgl still drops frames.
 
 The attached Samsung S10e was re-inspected through ADB: Android 12/API 31,
 ARM64, Exynos 9820, Mali-G76, 4 KB pages; SurfaceFlinger reports OpenGL ES 3.2.
 That identifies the Android renderer only. It does not establish a working
 glibc guest GPU driver, DMA-BUF import, frame rate, input latency, battery
 cost, or zero-copy display. API 29 FloydROM has the bounded display evidence
-above; stock Android 10, other OEMs and 16 KB devices remain untested.
+above; the later S7 virgl proof does not establish S10e GPU compatibility.
+Stock Android 10, other OEMs and 16 KB devices remain untested.
 
 The candidate-specific GPU limits are:
 

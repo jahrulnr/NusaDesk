@@ -47,8 +47,7 @@ dispose cleanup. The preliminary 10px candidate passed five reversing
 physical gestures per mode, and native text selection was observed on that
 candidate. On 2026-10-25 the final installed 8px artifact separately passed
 five actual guest-shell and five actual OpenCode gestures lasting 6.5–7.2
-seconds. See [the evidence ledger](../evidence/terminal-gesture-lifetime.md)
-for raw traces, hashes, scope and limitations. Native selection was not
+seconds. Native selection was not
 independently reaccepted on this final artifact.
 
 Replacing xterm remains an option if a renderer/emulation defect is demonstrated.

@@ -2,9 +2,9 @@ plugins {
     id 'com.android.application'
 }
 
-// Experimental native GUI slice (ADR-0068). The default build excludes this
-// optional display binary; enabling it links GPL Xlorie.
-def nativeDesktopEnabled = providers.gradleProperty('nativeDesktop').orElse('false').get().toBoolean()
+// Regular builds retain the native desktop across updates (ADR-0080).
+// Developers may explicitly omit the GPL-linked display with -PnativeDesktop=false.
+def nativeDesktopEnabled = providers.gradleProperty('nativeDesktop').orElse('true').get().toBoolean()
 
 // The VERSION marker is the single source of truth for the app version
 // (ADR-0067): versionName and versionCode are both derived here, so a release
@@ -204,7 +204,11 @@ if (nativeDesktopEnabled) {
         inputs.file rootProject.file('scripts/verify-x11-submodules.sh')
         inputs.file rootProject.file('third_party/termux-x11/README.md')
         inputs.file rootProject.file('third_party/termux-x11/submodules.lock')
+        inputs.file rootProject.file('scripts/build-virgl-arm64.sh')
+        inputs.file rootProject.file('third_party/virglrenderer/android.patch')
+        inputs.file rootProject.file('third_party/virglrenderer/README.md')
         outputs.file layout.buildDirectory.file('generated/native-display/arm64-v8a/libXlorie.so')
+        outputs.file layout.buildDirectory.file('generated/native-display/arm64-v8a/libvirglserver.so')
         outputs.dir layout.buildDirectory.dir('generated/native-display-assets')
     }
     tasks.named('preBuild').configure { dependsOn 'buildNativeDesktop' }

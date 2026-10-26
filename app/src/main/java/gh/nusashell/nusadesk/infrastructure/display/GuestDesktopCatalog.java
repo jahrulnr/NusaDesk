@@ -73,6 +73,18 @@ public final class GuestDesktopCatalog implements LinuxDesktopCatalog {
             Files.setPosixFilePermissions(busTemporary, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
             Files.move(busTemporary, bus, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } finally { Files.deleteIfExists(busTemporary); }
+        stageGraphicsAsset(context, directory, "graphics-env.sh", false);
+        stageGraphicsAsset(context, directory, "graphics_probe.py", false);
+        stageGraphicsAsset(context, directory, "gpu-electron.sh", true);
+    }
+    private static void stageGraphicsAsset(Context context, Path directory, String name, boolean executable) throws IOException {
+        Path temporary = Files.createTempFile(directory, ".graphics-", ".tmp");
+        try (InputStream source = context.getAssets().open("native-desktop/" + name)) {
+            Files.copy(source, temporary, StandardCopyOption.REPLACE_EXISTING);
+            if (executable) Files.setPosixFilePermissions(temporary,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+            Files.move(temporary, directory.resolve(name), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally { Files.deleteIfExists(temporary); }
     }
     @Override public void refresh(Listener listener) {
         if (closed) return;

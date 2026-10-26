@@ -36,7 +36,7 @@ cmake -S "$source_dir/lorie/src/main/cpp" -B "$build_root/build" -G Ninja \
     -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON -DPython3_EXECUTABLE="${PYTHON:-/usr/bin/python3}"
 cmake --build "$build_root/build" --target Xlorie -j "${BUILD_JOBS:-4}"
 readelf_tool="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-"$readelf_tool" -h "$build_root/build/libXlorie.so" | grep -q 'AArch64'
+"$readelf_tool" -h "$build_root/build/libXlorie.so" | grep 'AArch64' >/dev/null
 # Every LOAD segment must be at least 16 KB aligned. Runtime 16 KB proof is separate.
 "$readelf_tool" -lW "$build_root/build/libXlorie.so" | awk '/LOAD/ { if ($NF != "0x4000" && $NF != "0x10000") bad=1; found=1 } END {exit (!found || bad)}'
 output_dir="$repo_dir/app/build/generated/native-display/arm64-v8a"
@@ -61,3 +61,4 @@ while IFS= read -r -d '' notice; do
     mkdir -p "$notice_dir/$(dirname "$relative")"
     cp "$notice" "$notice_dir/$relative"
 done < <(find "$source_dir/lorie/src/main/cpp" -type f     \( -iname 'COPYING*' -o -iname 'LICENSE*' -o -iname 'COPYRIGHT*' \) -print0)
+bash "$repo_dir/scripts/build-virgl-arm64.sh"

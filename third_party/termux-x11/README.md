@@ -6,11 +6,11 @@ License: GPL-3.0; the full upstream license is adjacent. The Xorg and other
 native submodules retain their own file notices/licenses. The submodule
 revisions are recorded in `submodules.lock` and the upstream Git tree.
 
-This optional experimental component is built only with `-PnativeDesktop=true`.
-It is not part of the default APK and no native binary is committed here.
-An enabled APK contains GPL-linked code; do not label it MIT-only or publish it
-without the corresponding source/build materials and license review described
-in ADR-0068. NusaDesk's existing own-source MIT notices remain intact.
+This experimental component is included in regular builds (ADR-0080).
+Developers can omit it with `-PnativeDesktop=false`; no native binary is
+committed here. The regular APK contains GPL-linked code and is distributed
+under GPL-3.0 terms, with native notices and a matching desktop source archive.
+See `docs/distribution.md`. NusaDesk's own-source MIT notices remain intact.
 
 Build: install NDK 29.0.14206865, CMake, Ninja, Python 3, Bison (including its
 package data), m4, patch and Git. Set `ANDROID_SDK_ROOT` or `sdk.dir`, then run
@@ -33,4 +33,5 @@ Vet rationale: an active, Android-native Xorg integration with a successful
 upstream CI build for the pinned revision, an established PRoot shared-tmp
 contract, and a software presentation fallback. Device behavior and limits are
 recorded in the native display evidence ledger; source availability/CI is not
-runtime proof. The default remains off while the experimental gates are open.
+runtime proof. Inclusion in regular builds does not close experimental
+compatibility gates.

@@ -50,8 +50,11 @@ jobs:
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-37.0" \
-            "build-tools;36.0.0"
+            "build-tools;36.0.0" \
+            "ndk;29.0.14206865"
           yes | sdkmanager --licenses >/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build bison m4 meson pkg-config
 
       - name: Cache Robolectric Android runtimes
         uses: actions/cache@v6
@@ -66,13 +69,20 @@ jobs:
             robolectric-${{ runner.os }}-
 
       - name: Run tests, lint, and assemble debug
-        run: make check
+        env:
+          X11_BUILD_ROOT: ${{ runner.temp }}/nusadesk-x11
+        run: |
+          make check
+          python3 -B scripts/package-desktop-source.py \
+            app/build/outputs/apk/debug/NusaDesk-debug-source.tar.gz "$X11_BUILD_ROOT/source"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
           name: nusadesk-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/NusaDesk-debug-source.tar.gz
           if-no-files-found: error
           retention-days: 14
 

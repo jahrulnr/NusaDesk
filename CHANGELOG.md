@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.6] - 2026-10-27
+
+### Added
+
+- Best-effort guest Mesa/virgl forwarding to Android GLES, pixel-probed software
+  fallback, and an explicit Electron compatibility launcher (ADR-0081). Mali-T880
+  non-MSAA drawing is verified; MSAA remains a known limitation. Measured on the
+  tested phone, scrolling one Electron chat view held a 16.7 ms median frame
+  interval against 134–184 ms on software rendering, but still drops frames.
+
+### Fixed
+
+- Include the native Linux desktop in regular APKs so installing a GitHub
+  update keeps installed GUI apps visible. CI builds and verifies the display
+  library and notices, and publishes matching desktop sources. The updater
+  selects the versioned APK even when a source archive is the first asset.
+
 ## [0.14.5] - 2026-10-26
 
 ### Added

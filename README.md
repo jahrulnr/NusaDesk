@@ -69,21 +69,3 @@ removed apps have their shortcuts disabled. See [ADR-0077](docs/decisions/0077-p
 ## Explore
 
 [What works today](docs/limitations.md) · [Security](SECURITY.md) · [Roadmap](docs/roadmap.md) · [Developer documentation](docs/architecture.md) · [Release notes](CHANGELOG.md) · [License](LICENSE)
-
-### Experimental native Linux GUI
-
-An opt-in ARM64 build (`-PnativeDesktop=true`) runs local guest GUI apps under
-Openbox inside a native Android SurfaceView, using a pinned Termux:X11 adaptation.
-Installed `.desktop` apps from standard XDG directories and
-`~/usr/share/applications` appear on Home. An in-app orb provides the keyboard,
-Linux keys, Touch/Drag/Pointer modes, zoom and layout width. Minimize keeps a
-native app running; Home badges the existing app icons and resumes them without restarting. It
-requires additional native build tools and explicit guest package installation;
-new terminal sessions and guest services receive its `DISPLAY=:1` endpoint
-([ADR-0078](docs/decisions/0078-native-display-environment.md)). The variable
-does not start the display server or establish application compatibility;
-the default build excludes the display library/tile. Device evidence covers
-Android 10/API 29; the earlier API 31 observations are historical, not
-re-verified. Remaining compatibility gates and GPL distribution constraints are
-recorded in [the limitations](docs/limitations.md) and the
-[build notes](third_party/termux-x11/README.md). This is not a public GUI release.

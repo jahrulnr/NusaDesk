@@ -1,0 +1,134 @@
+--- a/meson.build
++++ b/meson.build
+@@ -65,6 +65,8 @@
+    '-Werror=switch',
+    '-Wno-overlength-strings',
+    '-Wno-missing-field-initializers',
++   '-Wno-gnu-offsetof-extensions',
++   '-Wno-gnu-pointer-arith',
+    '-Werror=format',
+ ]
+ 
+@@ -295,7 +297,7 @@
+ 
+ if with_egl
+    if cc.has_header('epoxy/egl.h', dependencies: epoxy_dep) and epoxy_dep.get_variable(pkgconfig: 'epoxy_has_egl') == '1'
+-      if with_host_windows or with_host_darwin
++      if with_host_windows or with_host_darwin or host_machine.system() == 'android'
+          have_egl = true
+       else
+          if libdrm_dep.found()
+--- a/src/vrend/vrend_winsys.c
++++ b/src/vrend/vrend_winsys.c
+@@ -75,6 +75,12 @@
+          return -1;
+       }
+ 
++      use_context = CONTEXT_EGL;
++#elif defined(__ANDROID__)
++      egl = virgl_egl_init(NULL, flags & VIRGL_RENDERER_USE_SURFACELESS,
++                           flags & VIRGL_RENDERER_USE_GLES);
++      if (!egl)
++         return -1;
+       use_context = CONTEXT_EGL;
+ #else
+       (void)preferred_fd;
+--- a/src/mesa/util/detect_os.h
++++ b/src/mesa/util/detect_os.h
+@@ -24,7 +24,7 @@
+  * Android defines __linux__, so DETECT_OS_LINUX and DETECT_OS_UNIX will
+  * also be defined.
+  */
+-#if defined(__ANDROID__)
++#if 0
+ #define DETECT_OS_ANDROID 1
+ #endif
+ 
+--- a/vtest/vtest_main.c
++++ b/vtest/vtest_main.c
+@@ -23,8 +23,14 @@
+  **************************************************************************/
+ 
+ #include "vtest_server.h"
++#include <sys/prctl.h>
++#include <signal.h>
++#include <unistd.h>
+ 
+ int main(int argc, char** argv) {
++    pid_t parent = getppid();
++    if (parent == 1 || prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent)
++        return 1;
+     return vtest_main(argc, argv);
+ }
+ 
+--- a/vtest/vtest_shm.c
++++ b/vtest/vtest_shm.c
+@@ -32,6 +32,9 @@
+ 
+ #include <sys/syscall.h>
+ #include <unistd.h>
++#ifdef __ANDROID__
++#include <android/sharedmem.h>
++#endif
+ 
+ static int memfd_create(const char *name, unsigned int flags)
+ {
+@@ -51,13 +54,21 @@
+    char *str = malloc(length + 1);
+    snprintf(str, length + 1, "vtest-res-%u", handle);
+ 
++#ifdef __ANDROID__
++   fd = ASharedMemory_create(str, size);
++#else
+    fd = memfd_create(str, MFD_ALLOW_SEALING);
++#endif
+    free(str);
+    if (fd < 0) {
+       return report_failed_call("memfd_create", -errno);
+    }
+ 
++#ifdef __ANDROID__
++   ret = 0; /* ASharedMemory_create already fixed the ashmem region size. */
++#else
+    ret = ftruncate(fd, size);
++#endif
+    if (ret < 0) {
+       close(fd);
+       return report_failed_call("ftruncate", -errno);
+@@ -68,7 +79,11 @@
+ 
+ int vtest_shm_check(void)
+ {
++#ifdef __ANDROID__
++    int mfd = ASharedMemory_create("test", 4096);
++#else
+     int mfd = memfd_create("test", MFD_ALLOW_SEALING);
++#endif
+ 
+     if (mfd >= 0) {
+         close(mfd);
+--- a/vtest/meson.build
++++ b/vtest/meson.build
+@@ -33,7 +33,12 @@
+    'vtest.h'
+ ]
+ 
+-vtest_depends = [
++android_dep = []
++if host_machine.system() == 'android'
++   android_dep = [cc.find_library('android')]
++endif
++
++vtest_depends = android_dep + [
+    libvirglrenderer_dep,
+    gallium_dep,
+    thread_dep,
+@@ -70,7 +75,7 @@
+    'virgl_test_server',
+    virgl_test_server_sources,
+    link_with: [libvtest],
+-   dependencies : [libvirglrenderer_dep, gallium_dep],
++   dependencies : [libvirglrenderer_dep, gallium_dep] + android_dep,
+    install : true
+ )
+ 

@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="qa.nusadesk.gpuprobe">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="29" />
+    <application android:label="NusaDesk GPU capability probe" android:hasCode="true" android:extractNativeLibs="true" android:hardwareAccelerated="true" />
+    <instrumentation android:name="qa.nusadesk.gpuprobe.GpuProbe" android:targetPackage="qa.nusadesk.gpuprobe" />
+</manifest>

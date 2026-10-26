@@ -119,8 +119,11 @@ jobs:
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-37.0" \
-            "build-tools;36.0.0"
+            "build-tools;36.0.0" \
+            "ndk;29.0.14206865"
           yes | sdkmanager --licenses >/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build bison m4 meson pkg-config
 
       - name: Cache Robolectric Android runtimes
         if: steps.release_gate.outputs.should_release == 'true'
@@ -143,6 +146,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          TAG: ${{ steps.metadata.outputs.tag }}
         run: |
           set -euo pipefail
 
@@ -155,9 +159,13 @@ jobs:
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/nusadesk-release.jks"
           export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/nusadesk-release.jks"
+          export X11_BUILD_ROOT="$RUNNER_TEMP/nusadesk-x11"
 
           make check
           ./gradlew --no-daemon assembleRelease
+          python3 -B scripts/verify-desktop-apk.py app/build/outputs/apk/release/app-release.apk
+          python3 -B scripts/package-desktop-source.py \
+            "$RUNNER_TEMP/NusaDesk-$TAG-source.tar.gz" "$X11_BUILD_ROOT/source"
 
       - name: Verify the release signature against the pinned fingerprint
         if: steps.release_gate.outputs.should_release == 'true'
@@ -212,11 +220,15 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
           ASSET: ${{ steps.metadata.outputs.release_asset }}
         run: |
+          # Publish the APK first: older installed clients select assets[0].
+          # A separate upload keeps their next update installable too.
           gh release create "$TAG" "$ASSET" \
             --repo "$GITHUB_REPOSITORY" \
             --title "NusaDesk $VERSION" \
             --notes-file release-notes.md \
             --verify-tag
+          gh release upload "$TAG" "$RUNNER_TEMP/NusaDesk-$TAG-source.tar.gz" \
+            --repo "$GITHUB_REPOSITORY"
 
       - name: Upload test diagnostics on failure
         if: failure()

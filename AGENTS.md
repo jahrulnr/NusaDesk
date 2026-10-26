@@ -139,3 +139,8 @@ Never weaken or delete a test to make a build green. If an environment is missin
 - Do not add generated binaries, SDKs, downloaded rootfs archives, secrets, or local machine paths to the repository.
   - **Documented exception — the PRoot execution bridge.** `app/src/main/jniLibs/arm64-v8a/libproot.so` and `libproot-loader.so` are intentionally packaged native artifacts, not ad-hoc generated binaries. They are reproducibly built from pinned source revisions by `scripts/build-proot-arm64.sh`, which fails closed on a pinned-SHA-256 mismatch for both outputs and readelf-verifies the ELF (ADR-0004, ADR-0008). The bridge is an executable PIE renamed `.so` so the Android package installer extracts it into the read-only, executable `nativeLibraryDir`; it is never `dlopen`'d as a JNI library. This exception does not extend to downloaded rootfs archives, target-app payloads, or any other native artifact.
 - When a task is explicitly out of scope, create the contract/doc skeleton only; do not add speculative production code.
+
+The explicitly requested Mesa/virgl slice (ADR-0081) also packages the generated
+`libvirglserver.so` executable from digest-pinned virglrenderer/libepoxy sources
+in the installer's read-only native library directory. Its source build and
+license assets are tracked; generated binaries remain outside version control.

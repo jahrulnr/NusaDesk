@@ -37,6 +37,7 @@ lint:
 # Produce the debug APK after linting.
 build: lint
 	$(GRADLEW) $(GRADLE_FLAGS) assembleDebug
+	$(PYTHON) -B scripts/verify-desktop-apk.py $(APK)
 
 # Run the complete local quality gate.
 check: test build
@@ -68,6 +69,7 @@ release:
 	ANDROID_KEYSTORE_PATH="$(abspath $(SECRET_DIR)/keystore.jks)" \
 		$(GRADLEW) $(GRADLE_FLAGS) assembleRelease; \
 	apk="$(RELEASE_APK)"; \
+	$(PYTHON) -B scripts/verify-desktop-apk.py "$$apk"; \
 	"$(APKSIGNER)" verify --print-certs "$$apk"; \
 	cert="$$("$(APKSIGNER)" verify --print-certs "$$apk" | awk -F': ' '/certificate SHA-256 digest/ {print $$NF; exit}')"; \
 	expected="$$(printf '%s' "$$SHA" | tr -d ':' | tr '[:upper:]' '[:lower:]')"; \

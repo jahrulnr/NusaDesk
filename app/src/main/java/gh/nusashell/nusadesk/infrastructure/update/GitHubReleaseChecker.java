@@ -19,7 +19,7 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>The endpoint is the fixed {@code /releases/latest} API, which already
  * returns only non-draft, non-prerelease releases. The fields read are the
- * release identity ({@code tag_name}, {@code html_url}) plus the first
+ * release identity ({@code tag_name}, {@code html_url}) plus the versioned APK
  * asset's {@code browser_download_url}, {@code digest} (the
  * {@code sha256:<hex>} value GitHub computes on the uploaded file), and
  * {@code size} — the identity carries the version contract ({@code vX.Y.Z}
@@ -99,8 +99,12 @@ public final class GitHubReleaseChecker {
             String digest = null;
             long sizeBytes = -1L;
             JSONArray assets = json.optJSONArray("assets");
-            if (assets != null && assets.length() > 0) {
-                JSONObject asset = assets.getJSONObject(0);
+            String apkName = "NusaDesk-" + json.getString("tag_name") + ".apk";
+            for (int i = 0; assets != null && i < assets.length(); i++) {
+                JSONObject asset = assets.optJSONObject(i);
+                if (asset == null || !apkName.equals(asset.optString("name", ""))) {
+                    continue;
+                }
                 // The asset is usable only as a complete triple: an HTTPS url
                 // AND a well-formed channel digest. A missing or malformed
                 // piece drops the whole asset to the browser hand-off.
@@ -110,6 +114,7 @@ public final class GitHubReleaseChecker {
                     downloadUrl = url;
                     digest = "sha256:" + hex;
                     sizeBytes = asset.optLong("size", -1L);
+                    break;
                 }
             }
             return latest.isNewerThan(ReleaseVersion.parseOrNull(currentVersionName))
@@ -181,7 +186,7 @@ public final class GitHubReleaseChecker {
         /**
          * A newer release exists; {@code downloadUrl}/{@code digest}/
          * {@code sizeBytes} may be null when the channel did not report a
-         * usable first asset, in which case only the browser hand-off applies.
+         * usable versioned APK, in which case only the browser hand-off applies.
          */
         public static UpdateCheckResult updateAvailable(String tag, String releaseUrl,
                 String downloadUrl, String digest, long sizeBytes) {
@@ -210,7 +215,7 @@ public final class GitHubReleaseChecker {
         }
 
         /**
-         * HTTPS URL of the first release asset's APK, or {@code null} when the
+         * HTTPS URL of the versioned release APK, or {@code null} when the
          * channel did not report one over HTTPS — in which case the assisted
          * install must refuse and only the browser hand-off remains.
          */

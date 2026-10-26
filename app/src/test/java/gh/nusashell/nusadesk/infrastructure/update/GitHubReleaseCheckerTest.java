@@ -48,13 +48,31 @@ public class GitHubReleaseCheckerTest {
                 + "\"created_at\":\"2026-09-19T12:00:00Z\","
                 + "\"published_at\":\"2026-09-19T12:30:00Z\","
                 + "\"assets\":[{"
-                + "\"name\":\"app-release.apk\","
+                + "\"name\":\"NusaDesk-" + tag + ".apk\","
                 + (usableAsset
                         ? "\"browser_download_url\":\"" + ASSET_URL + "\","
                         + "\"digest\":\"" + ASSET_DIGEST + "\","
                         + "\"size\":" + ASSET_SIZE
                         : "\"browser_download_url\":\"https://github.com/jahrulnr/NusaDesk/releases/download/" + tag + "/app-release.apk\"")
                 + "}]}";
+    }
+
+    @Test
+    public void sourceArchiveBeforeApkDoesNotBecomeTheInstallAsset() {
+        String body = fixture("v0.4.0", RELEASE_URL).replace("\"assets\":[{",
+                "\"assets\":[{\"name\":\"NusaDesk-v0.4.0-source.tar.gz\","
+                        + "\"browser_download_url\":\"https://example.com/source.tar.gz\","
+                        + "\"digest\":\"" + ASSET_DIGEST + "\",\"size\":123},{");
+        UpdateCheckResult result = GitHubReleaseChecker.parseRelease("0.3.0", body);
+        assertEquals(ASSET_URL, result.getDownloadUrl());
+        assertEquals(ASSET_SIZE, result.getSizeBytes());
+    }
+
+    @Test
+    public void onlyTheVersionedReleaseApkCanBeInstalled() {
+        String body = fixture("v0.4.0", RELEASE_URL).replace(ASSET_URL,
+                "https://example.com/unrelated.apk").replace("NusaDesk-v0.4.0.apk", "other.apk");
+        assertNull(GitHubReleaseChecker.parseRelease("0.3.0", body).getDownloadUrl());
     }
 
     @Test

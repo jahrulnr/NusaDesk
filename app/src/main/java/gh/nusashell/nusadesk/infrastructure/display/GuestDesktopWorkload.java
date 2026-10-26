@@ -4,10 +4,12 @@ package gh.nusashell.nusadesk.infrastructure.display;
 final class GuestDesktopWorkload {
     static final String READY_MARKER = "__NUSADESK_GUI_READY__";
     static final String WM_READY_MARKER = "__NUSADESK_WM_READY__";
-    private static final String ENV = "set -eu\nexport DISPLAY="
+    private static final String SOFTWARE_ENV = "set -eu\nexport DISPLAY="
             + gh.nusashell.nusadesk.application.display.NativeDesktopPort.X11_DISPLAY
-            + " GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1\n";
-    static final String WM_SCRIPT = ENV + "xdpyinfo >/dev/null\n"
+            + " GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe\n";
+    private static final String ENV = SOFTWARE_ENV
+            + "if [ -r /opt/lw-desktop/graphics-env.sh ]; then . /opt/lw-desktop/graphics-env.sh; fi\n";
+    static final String WM_SCRIPT = SOFTWARE_ENV + "xdpyinfo >/dev/null\n"
             + "openbox --config-file /tmp/nusadesk-openbox.xml >/tmp/nusadesk-wm.log 2>&1 &\nwm=$!\n"
             + "cleanup() { trap - EXIT HUP INT TERM; kill \"$wm\" 2>/dev/null || :; wait 2>/dev/null || :; }\n"
             + "trap cleanup EXIT\ntrap 'exit 0' HUP INT TERM\ntries=0\n"

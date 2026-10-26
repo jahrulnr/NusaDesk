@@ -2,6 +2,9 @@
 
 ## Status
 
+ADR-0080 supersedes the default-off packaging and GPL distribution gate below
+with regular desktop APKs and accompanying source materials.
+
 Accepted for the enabled native-display build. Extends ADR-0068; the native
 renderer stays opt-in and its GPL distribution gate stays open. ADR-0070
 supersedes the original single-app/close-before-switch boundary with retained

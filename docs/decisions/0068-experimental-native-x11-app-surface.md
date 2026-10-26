@@ -2,6 +2,10 @@
 
 ## Status
 
+ADR-0080 supersedes the build-default and public-distribution boundary below:
+regular updates now include the renderer and matching desktop source materials.
+The experimental runtime compatibility limits remain in force.
+
 Accepted for the user-authorized best-effort experiment, behind the build-time
 `-PnativeDesktop=true` switch. Not a released GUI support claim. Device results
 and unresolved gates are tracked in `docs/limitations.md`.
