@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.7] - 2026-10-29
+
+### Fixed
+
+- Generate `/root/docs/desktop.md` and link it from both guest indexes so
+  guest agents can discover native X11, GUI ARM64 installation, Mesa/virgl
+  selection, the Electron wrapper and existing desktop prerequisites.
+- Restore the awareness writer's session-start hook so existing guests
+  actually receive updated docs and managed clients after an APK upgrade.
+- Prevent a PRoot assertion abort when reverse-translating symlinks with an
+  unbound host referrer, matching the crash reported while opening Devin CLI.
+- Offer Restart Linux on failed terminals and Reconnect/Restart Linux in
+  terminal menus; make explicit restarts from FAILED start a new attempt.
+- Include recent guest stderr in unexpected-exit diagnostics (ADR-0082).
+
 ## [0.14.6] - 2026-10-27
 
 ### Added

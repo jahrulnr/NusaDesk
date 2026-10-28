@@ -41,6 +41,7 @@ public class GuestAwarenessReadmeWriterTest {
         assertTrue(text.contains("(docs/media.md)"));
         assertTrue(text.contains("(docs/battery-sensors-location.md)"));
         assertTrue(text.contains("(docs/messaging-telephony.md)"));
+        assertTrue(text.contains("(docs/desktop.md)"));
         // Conditional on the optional Termux toolkit (ADR-0057): named, not
         // linked, because a core-only install has no termux-compat.md.
         assertTrue(text.contains("termux-compat.md"));
@@ -60,6 +61,9 @@ public class GuestAwarenessReadmeWriterTest {
         assertTrue(Files.isRegularFile(
                 rootfs.resolve("root/docs/battery-sensors-location.md")));
         assertTrue(Files.isRegularFile(rootfs.resolve("root/docs/messaging-telephony.md")));
+        Path desktop = rootfs.resolve("root/docs/desktop.md");
+        assertTrue(Files.isRegularFile(desktop));
+        assertTrue(Files.readString(desktop).contains("version 0.1.0"));
 
         Path cli = rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_CLI_RELATIVE_PATH);
         assertTrue("CLI must exist", Files.isRegularFile(cli));
@@ -91,6 +95,26 @@ public class GuestAwarenessReadmeWriterTest {
                 rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_RELATIVE_PATH))));
         assertTrue(java.util.Arrays.equals(cli, Files.readAllBytes(
                 rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_CLI_RELATIVE_PATH))));
+    }
+
+    @Test
+    public void refreshesDesktopGuideAndItsDiscoveryLinksWithoutAVersionChange() throws Exception {
+        Path rootfs = temporary.newFolder("rootfs").toPath();
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6");
+        Path desktop = rootfs.resolve("root/docs/desktop.md");
+        assertTrue(Files.isRegularFile(desktop));
+        String expected = Files.readString(desktop);
+        Files.writeString(desktop, "stale desktop advice");
+        Files.writeString(rootfs.resolve("root/README.md"), "old overview");
+        Files.writeString(rootfs.resolve("root/docs/README.md"), "old index");
+
+        assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6"));
+        assertEquals(expected, Files.readString(desktop));
+        assertTrue(Files.readString(rootfs.resolve("root/README.md")).contains("(docs/desktop.md)"));
+        assertTrue(Files.readString(rootfs.resolve("root/docs/README.md")).contains("(desktop.md)"));
+        assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6"));
     }
 
     @Test

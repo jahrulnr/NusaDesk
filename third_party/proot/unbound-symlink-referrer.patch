@@ -1,0 +1,23 @@
+diff --git a/src/path/path.c b/src/path/path.c
+--- a/src/path/path.c
++++ b/src/path/path.c
+@@ -450,7 +450,6 @@ int detranslate_path(Tracee *tracee, char path[PATH_MAX], const char t_referrer[PATH_MAX])
+ 
+ 			binding_referree = get_path_binding(tracee, HOST, path);
+ 			binding_referrer = get_path_binding(tracee, HOST, t_referrer);
+-			assert(binding_referrer != NULL);
+ 
+ 			/* Resolve bindings for symlinks that belong
+ 			 * to a binding and point to the same binding.
+@@ -461,7 +460,10 @@ int detranslate_path(Tracee *tracee, char path[PATH_MAX], const char t_referrer[PATH_MAX])
+ 			 * should appear as "/foo/a -> /foo/b" in the
+ 			 * guest rootfs namespace for consistency
+ 			 * reasons.  */
+-			if (binding_referree != NULL) {
++			/* A kernel/inherited symlink can have an unbound host
++			 * referrer.  There is then no shared binding to resolve;
++			 * retain the ordinary rootfs/unchanged-path handling. */
++			if (binding_referree != NULL && binding_referrer != NULL) {
+ 				comparison = compare_paths(binding_referree, binding_referrer);
+ 				follow_binding = (comparison == PATHS_ARE_EQUAL);
+ 			}

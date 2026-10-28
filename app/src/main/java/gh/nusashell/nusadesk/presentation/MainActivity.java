@@ -1354,6 +1354,7 @@ public final class MainActivity extends Activity {
                 }
             }
         }
+        addTerminalRecoveryActions(actions, TerminalSurfaceScope.commandApp(appId), snapshot);
         appSurfaceHost.setMenuActions(actions);
     }
 
@@ -1416,16 +1417,12 @@ public final class MainActivity extends Activity {
      */
     private void renderTerminalMenu(TerminalTabsSnapshot snapshot) {
         TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
-        if (port == null) {
-            appSurfaceHost.setMenuActions(Collections.emptyList());
-            return;
-        }
         List<AppSurfaceHostView.MenuAction> actions = new ArrayList<>();
-        if (!port.isFull()) {
+        if (port != null && !port.isFull()) {
             actions.add(new AppSurfaceHostView.MenuAction(
                     R.string.terminal_menu_new, this::openNewTerminal));
         }
-        if (snapshot != null) {
+        if (port != null && snapshot != null) {
             for (TerminalTabSnapshot tab : TerminalSurfaceScope.shellTabs().inScope(snapshot)) {
                 String tabId = tab.getId();
                 String label = terminalTabLabel(tab);
@@ -1433,7 +1430,26 @@ public final class MainActivity extends Activity {
                         label, () -> showTerminalTabActions(port, tabId, label)));
             }
         }
+        addTerminalRecoveryActions(actions, TerminalSurfaceScope.shellTabs(), snapshot);
         appSurfaceHost.setMenuActions(actions);
+    }
+
+    private void addTerminalRecoveryActions(List<AppSurfaceHostView.MenuAction> actions,
+                                             TerminalSurfaceScope scope, TerminalTabsSnapshot snapshot) {
+        TerminalTabSnapshot visible = scope.visible(snapshot);
+        if (visible != null && TerminalTabsRegistry.getInstance().port() != null) {
+            String tabId = visible.getId();
+            actions.add(new AppSurfaceHostView.MenuAction(R.string.terminal_reconnect, () -> {
+                TerminalTabsPort port = TerminalTabsRegistry.getInstance().port();
+                HostRuntimeStatus runtime = RuntimeStatusBus.getInstance().current();
+                if (port == null || runtime == null || !runtime.isRuntimeRunning()
+                        || !scope.includes(port.snapshot().tab(tabId))) return;
+                gh.nusashell.nusadesk.application.terminal.TerminalSessionPort tab = port.tab(tabId);
+                if (tab != null) tab.reconnect();
+            }));
+        }
+        actions.add(new AppSurfaceHostView.MenuAction(R.string.terminal_restart_linux,
+                () -> RuntimeHostService.requestRestart(this)));
     }
 
     /** A tab's stable menu name, independent of whether it runs a shell or command. */

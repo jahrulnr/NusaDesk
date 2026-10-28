@@ -81,3 +81,36 @@ or full GL/ES conformance. The measured scroll result is a frame-interval
 comparison in one Electron view, not a general application-latency claim.
 API 29 arm64 on this custom-ROM S7 is the tested configuration; other devices
 and 16 KB runtime behavior remain untested.
+
+## Guest awareness (2026-10-29)
+
+The generated `/root/README.md` and `/root/docs/README.md` now route users and
+guest agents to `/root/docs/desktop.md`. Previously neither index described
+the native desktop or renderer, so an installer could mistake a missing
+DISPLAY in SSH for a missing graphics stack and install another desktop.
+The guide explains the host-owned `:1` display/Openbox/session bus, ARM64
+desktop versus CLI artifacts, `.desktop` discovery, required dependencies
+versus package recommendations, renderer verification/fallback, and the
+Electron-only wrapper. It is refreshed by the existing awareness writer at
+session start, including content changes within the same app version.
+The `.agents` seed remains user-owned and is not forcibly replaced.
+
+Physical upgrade verification also exposed a disconnected startup hook:
+`GuestSshdWorkload` still imported the awareness writer but no longer called
+it. Restore the call after old-workload cleanup and before guest execution.
+A Robolectric regression invokes the real workload start entry point with
+an absent credential to stop before process execution; it checks generation
+and same-version refresh of the managed guide and both discovery indexes.
+
+The in-place signed upgrade on the API 29 ARM64 S7 produced the guide at its
+expected SHA-256 and both index links without manual guest file edits. The
+guide's shell block was extracted from that actual guest file and executed
+after opening an existing GUI tile: it reported `driver=virpipe`,
+`virgl (Mali-T880)`, the expected red/blue pixels and `verified: true`.
+The complete local gate passes 2,551 JVM tests, 34 Python tests, JavaScript
+checks, lint and APK assembly; the signed release and desktop packaging
+checks also pass.
+
+This documentation does not install, remove or claim compatibility of a
+specific third-party app. In particular, finding an OpenCode launcher entry
+does not establish that its GUI or GPU path runs successfully.

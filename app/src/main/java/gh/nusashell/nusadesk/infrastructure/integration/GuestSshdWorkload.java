@@ -386,6 +386,15 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             return;
         }
 
+        try {
+            // Refresh managed docs/clients on every start, including existing
+            // installs whose guest files predate this APK's capabilities.
+            GuestAwarenessReadmeWriter.ensure(rootfs, appVersion());
+        } catch (IOException | RuntimeException e) {
+            fail(listener, "could not refresh guest awareness files: " + e.getMessage());
+            return;
+        }
+
         char[] token = credential.token();
         if (token == null || token.length == 0) {
             fail(listener, "local SSH credential is absent");
@@ -1290,12 +1299,17 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
             }
             active = null;
             daemon.stopRequested = true;
-            String detail = exitDetail(process);
-            Log.e(TAG, "guest " + daemon.daemon.label() + " exited unexpectedly" + detail);
+            String reason = unexpectedExitReason(process, daemon.daemon.label(), daemon.monitor);
+            Log.e(TAG, reason);
             teardown(daemon);
-            callbackExecutor.execute(() -> daemon.listener.onFailed(
-                    "guest " + daemon.daemon.label() + " exited unexpectedly" + detail));
+            callbackExecutor.execute(() -> daemon.listener.onFailed(reason));
         });
+    }
+
+    static String unexpectedExitReason(Process process, String label, GuestSshdStderrMonitor monitor) {
+        String reason = "guest " + label + " exited unexpectedly" + exitDetail(process);
+        List<String> lines = monitor.recentLines();
+        return lines.isEmpty() ? reason : reason + "\n" + String.join("\n", lines);
     }
 
     private static String exitDetail(Process process) {

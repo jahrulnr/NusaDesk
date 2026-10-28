@@ -1148,3 +1148,14 @@ The Web + Terminal app type (ADR-0072) has an implementation and focused JVM
 tests and physical delayed-start/reuse/restart samples on API 29 ARM64.
 Commands must keep their server in the
 foreground; daemonized server ownership and automatic restart are not provided.
+
+### PRoot unbound-referrer fix (2026-10-29)
+
+ADR-0082 fixes the native assertion reported during Devin CLI startup and the
+missing terminal recovery actions. The native function regression and ARM64
+reproducible build are locally verified. An in-place release upgrade on an
+SM-G935F (API 29, ARM64, 4 KB pages) kept Devin connected for over 100 seconds;
+menu reconnect/restart and direct FAILED recovery were exercised on-device.
+This does not establish long-session or cross-device reliability. Reconnect
+reruns a command tab's command; Restart Linux replaces the whole guest session
+and closes its command tabs, which can be reopened from All apps.

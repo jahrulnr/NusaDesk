@@ -62,9 +62,9 @@ import java.util.Objects;
  * surface has no session control. While the runtime is not running — or no tab
  * exists yet — it says so and offers a way back to the launcher, never a
  * second start button. The exceptions are {@code UNRESPONSIVE} (ADR-0062) and
- * a {@code FAILED} whose workload survived the forced stop (ADR-0063): both
- * offer the host's {@code Restart Linux} action, the one-tap recovery whose
- * last leg restarts the app itself. A selected tab whose shell dropped or
+ * {@code FAILED} (ADR-0082): both offer the host's {@code Restart Linux}
+ * action. The host handles a fresh attempt or surviving-workload escalation
+ * (ADR-0063). A selected tab whose shell dropped or
  * failed while Linux stayed up shows the reconnect banner; the same action is
  * offered by the host notification.</p>
  *
@@ -106,9 +106,9 @@ public final class TerminalAppView extends FrameLayout
     private TerminalTabsRegistry tabsRegistry;
     private TerminalTabsBus tabsBus;
     private TabsListener tabsListener;
-    /** Attach-panel action for stopped/failed sessions: back to the launcher. */
+    /** Attach-panel action for stopped sessions: back to the launcher. */
     private OnClickListener goToDesktopListener;
-    /** Attach-panel action while the session is {@code UNRESPONSIVE} (ADR-0062). */
+    /** Attach-panel action for failed or unresponsive Linux sessions. */
     private OnClickListener restartLinuxListener;
 
     private TerminalTabsSnapshot tabsSnapshot = TerminalTabsSnapshot.empty();
@@ -170,7 +170,7 @@ public final class TerminalAppView extends FrameLayout
 
     /**
      * Wires the attach prompt's {@code Restart Linux} action (ADR-0062), shown
-     * only while the session is {@code UNRESPONSIVE}. The host binds it to the
+     * while the session is {@code FAILED} or {@code UNRESPONSIVE}. The host binds it to the
      * same service restart path the notification action uses; this surface
      * never owns a lifecycle.
      */
@@ -474,9 +474,8 @@ public final class TerminalAppView extends FrameLayout
      * launcher; it never offers a second start/stop control of its own — the
      * {@code UNRESPONSIVE} case's {@code Restart Linux} is the same host
      * service action the notification carries, not a second lifecycle. A
-     * {@code FAILED} session whose workload survived the forced stop offers
-     * the same action again: its escalation to an app self-restart is the
-     * one-tap recovery that failure names (ADR-0063).
+     * {@code FAILED} session offers the same action. The host decides whether
+     * to start a fresh session or escalate a surviving workload (ADR-0063).
      */
     private void renderAttachPanel(SessionState session) {
         switch (session) {
@@ -488,11 +487,7 @@ public final class TerminalAppView extends FrameLayout
                         reason == null || reason.trim().isEmpty()
                                 ? getContext().getString(R.string.session_failed_no_reason)
                                 : reason));
-                if (hostStatus != null && hostStatus.survivedStop()) {
-                    showRestartLinuxAction();
-                } else {
-                    showGoToDesktopAction();
-                }
+                showRestartLinuxAction();
                 break;
             case STARTING:
             case RECOVERING:

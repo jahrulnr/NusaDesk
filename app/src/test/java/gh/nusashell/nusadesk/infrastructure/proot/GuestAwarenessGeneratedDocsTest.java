@@ -20,6 +20,7 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(readme.contains("(docs/battery-sensors-location.md)"));
         assertTrue(readme.contains("(docs/messaging-telephony.md)"));
         assertTrue(readme.contains("(docs/calendar.md)"));
+        assertTrue(readme.contains("(docs/desktop.md)"));
         // The Termux topic doc ships only with the optional Termux toolkit
         // (ADR-0057), so the README names it conditionally instead of linking
         // a file a core-only install does not have.
@@ -40,6 +41,7 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(index.contains("(battery-sensors-location.md)"));
         assertTrue(index.contains("(messaging-telephony.md)"));
         assertTrue(index.contains("(calendar.md)"));
+        assertTrue(index.contains("(desktop.md)"));
         assertTrue(index.contains("(termux-compat.md)"));
         assertTrue(index.contains("/usr/local/bin/nusadesk-android"));
         assertTrue(index.contains("nusadesk-android calendar list"));

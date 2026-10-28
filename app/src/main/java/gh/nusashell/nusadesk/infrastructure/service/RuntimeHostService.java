@@ -265,11 +265,19 @@ public final class RuntimeHostService extends Service {
                 controller.start(appId, appVersion, sessionId, this::onStatus);
             }
         } else if (ACTION_RESTART.equals(action)) {
-            // Restart Linux (ADR-0062): take the existing stop path, and let
-            // publishStatus re-enter through ensureRunning once the session
-            // reaches a startable state. This is not a second lifecycle.
-            restartPending = true;
-            controller.stop(this::onStatus);
+            if (!controller.requiresLiveWorkload() && !controller.status().survivedStop()) {
+                // FAILED cannot transition to STOPPING. An explicit retry
+                // must enter the same start boundary as a foreground launch.
+                restartPending = false;
+                RuntimeCatalogEntry entry = CuratedRuntimeCatalog.ubuntuBaseArm64();
+                controller.ensureRunning(entry.getAppId(), entry.getVersion(),
+                        UUID.randomUUID().toString(), this::onStatus);
+            } else {
+                // A live or surviving workload still needs the existing stop
+                // path and, for a survivor, the process-tree escalation.
+                restartPending = true;
+                controller.stop(this::onStatus);
+            }
         } else if (ACTION_ENSURE_RUNNING.equals(action)) {
             // App-visible autostart: the app is in the foreground, so the local
             // Linux runtime must be up. The identity comes from the curated

@@ -70,10 +70,10 @@ PAGE_SIZE_FLAG="-Wl,-z,max-page-size=16384"
 THREADS_FLAG="-Wl,--threads=1"
 
 # Reproducible stripped output hash (sha256) for this exact configuration,
-# regenerated with patches A/B/C/C 2/C 3 applied. A rebuild of the pinned
+# regenerated with patches A/B/C/C 2/C 3/D applied. A rebuild of the pinned
 # revision with the same patch chain must reproduce it — the script dies
 # otherwise, which is the point of the pin.
-EXPECTED_SHA256="30236acb30550d59a96b038c9f1899b352831e1b495a9da85606c716b3800e6b"
+EXPECTED_SHA256="3f0310591d1380b972f574f10ba26607aa7378bfddb2c31f66d4555abe15b1ed"
 # Same for the freestanding loader shipped as libproot-loader.so.
 EXPECTED_LOADER_SHA256="12d2b63e897fd91a334fce23edea5d2419cae4d5fd2a369f05d03ab75682add0"
 
@@ -102,7 +102,7 @@ log() { printf '\033[1;34m[build-proot]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[build-proot] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 require() { command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
-require git curl sha256sum make
+require git curl sha256sum make patch cc python3
 
 # ---------------------------------------------------------------------------
 # 1. Locate / install the Android NDK
@@ -153,6 +153,16 @@ fi
 #    proot-arm64-build-spike research note; see git history)
 # ---------------------------------------------------------------------------
 log "Applying build patches..."
+
+# D: A symlink read with an unmapped host referrer must not abort the single
+# shared tracer (and therefore all SSH sessions). Keep existing path semantics
+# and exercise the real upstream function with assertions enabled on the host.
+PATH_PATCH="${REPO_ROOT}/third_party/proot/unbound-symlink-referrer.patch"
+if ! git -C "${PROOT_SRC}" apply --reverse --check "${PATH_PATCH}" 2>/dev/null; then
+  git -C "${PROOT_SRC}" apply --check "${PATH_PATCH}"
+  git -C "${PROOT_SRC}" apply "${PATH_PATCH}"
+fi
+"${PYTHON:-python3}" "${REPO_ROOT}/scripts/test-proot-detranslate.py" "${PROOT_SRC}"
 
 # Patch A: ashmem_memfd.c uses strcmp/memset without <string.h>. glibc pulls it
 # transitively; bionic does not, so it is a hard error under the NDK.
