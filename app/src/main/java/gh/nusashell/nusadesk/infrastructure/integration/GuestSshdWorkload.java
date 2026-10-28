@@ -389,7 +389,8 @@ public final class GuestSshdWorkload implements RuntimeWorkload {
         try {
             // Refresh managed docs/clients on every start, including existing
             // installs whose guest files predate this APK's capabilities.
-            GuestAwarenessReadmeWriter.ensure(rootfs, appVersion());
+            GuestAwarenessReadmeWriter.ensure(rootfs, appVersion(),
+                    GuestAwarenessReadmeWriter.assetSource(context.getAssets()));
         } catch (IOException | RuntimeException e) {
             fail(listener, "could not refresh guest awareness files: " + e.getMessage());
             return;

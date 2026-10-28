@@ -285,6 +285,15 @@ PRoot shares the host network namespace, so a guest loopback bind is reachable
 from the Android host process. Public/LAN binding is a separate, explicitly
 reviewed capability, not the default.
 
+The managed guest files the writers install split by medium: Markdown
+documentation (`/root/README.md`, `/root/docs/*.md`, the optional
+`termux-compat.md` template, and the seeded `.agents` bundle) ships as plain
+assets under `app/src/main/assets/guest-docs/` loaded through
+`GuestDocSource`, while executable scripts (`nusadesk-android`,
+`android-cli`, `termux-*` clients, the shared `termux_compat.py` module)
+stay Java-generated text because their bodies interpolate the command
+catalog and guards that must match the running code.
+
 ### Readiness, loopback, and WebView security
 
 - **Readiness** = the advertised health check succeeds, not merely that a PID
@@ -420,23 +429,33 @@ flowchart LR
   include `bridge.info`, battery/sensor/location reads, read-only
   contacts/call-log/SMS/telephony reads, the foreground-only location stream,
   `media.start`, `media.status`, `media.stop`, and the calendar slice
-  (`calendar.list` read plus `calendar.insert`/`update`/`delete`). There is no
-  arbitrary shell, reflection, URI, or Binder proxy. A strict-bound
+  (`calendar.list` read plus `calendar.insert`/`update`/`delete`), plus the
+  later capability waves: capture (`camera.info`, `camera.photo`,
+  `microphone.record.*`), media playback and routing, notifications/text/
+  speech/dialog, device state, storage/SAF/share/download, comms (keystore,
+  job scheduler), wifi and bluetooth domains, infrared, NFC, fingerprint,
+  packages/usage/overlay, USB pass-through, and `location.background.*`.
+  There is no arbitrary shell, reflection, URI, or Binder proxy. A strict-bound
   `/run/nusadesk/android-bridge.env` file gives authorized guest tools the
   current endpoint and token.
-- The envelope is param-free except for the declaring calendar writes, which
-  accept one bounded flat `params` object (ADR-0032). A method that does not
-  declare parameters answers `unsupported-parameter` when one is sent, an
-  unknown key inside a declaring method is `calendar-invalid-argument`, and any
-  other top-level field fails closed at decode time.
+- The envelope is param-free except for the methods that declare a bounded
+  flat `params` object (calendar writes, capture destinations, media-route
+  selection, and the rest of the per-domain parameter surface). A method that
+  does not declare parameters answers `unsupported-parameter` when one is
+  sent, an unknown key inside a declaring method fails closed as the
+  method's invalid-argument-family error (`invalid-argument`, or
+  `calendar-invalid-argument` for the calendar writes), and any other
+  top-level field fails closed at decode time. `params` values are
+  strings, integers, or booleans; typed keys reject the wrong JSON type.
 - `battery.status` uses Android's permission-free battery snapshot. The
   best-effort sysfs projection gives existing Linux programs a familiar read
   path, but it is not kernel sysfs, can be stale/unavailable, and guest writes
   may be overwritten by the next refresh.
 - `sensor.accelerometer` and `sensor.gyroscope` are bounded one-shot reads.
   They return finite x/y/z values, bounded accuracy text, and platform event
-  timestamps. Continuous sensor streaming and rate/backpressure contracts are
-  intentionally not promised yet.
+  timestamps. The full catalog is the separate `sensor.list` / `sensor.read`
+  / `sensor.stream.*` surface: bounded reads of named sensors, and one pull
+  stream whose poll returns the latest coalesced sample.
 - `location.get` is a bounded foreground-only one-shot adapter. It checks the
   current grant per request and returns explicit permission-required/denied,
   unavailable, timeout, or finite fix results. It never prompts, requests
@@ -446,8 +465,10 @@ flowchart LR
   and serves a unified RTSP-over-TCP stream on an explicit `127.0.0.1`
   ephemeral port. The server accepts at most two clients, uses bounded per-
   client queues, and disconnects a slow consumer rather than blocking capture.
-  It stores no JPEG, M4A, MP4, or other capture artifact; a guest consumer
-  saves manually when needed.
+  The stream session itself stores no JPEG, M4A, MP4, or other artifact; a
+  guest consumer saves manually when needed. Still photos and microphone
+  recordings are the separate `camera.photo` / `microphone.record.*` surface
+  that stages files at guest-supplied paths.
 - `media.start` never opens a permission prompt. It succeeds only after the
   camera/microphone foreground service is eligible, the RTSP listener is bound,
   and both encoder metadata sets are ready. Background starts, missing/denied
@@ -459,7 +480,9 @@ flowchart LR
   while an explicit live stream is active; it has its own user-visible Stop
   notification action.
 - Contacts/call-log/SMS/telephony methods are read-only, row/byte bounded, and
-  redact sensitive fields; SMS send and phone call remain unsupported.
+  redact sensitive fields. `sms.send` and `phone.call` are real side effects,
+  each behind its own per-call grant — a missing grant is a typed result,
+  never a prompt from the bridge worker.
 - The calendar slice reads the provider's instance table inside a fixed
   seven-day window (at most 50 rows) with a minimal projection, and its three
   write methods validate every field before a provider call, target only a

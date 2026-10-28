@@ -38,7 +38,7 @@ public class GuestTermuxCompatWriterTest {
             throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestTermuxCompatWriter.ensure(rootfs, "0.2.1"));
+                GuestTermuxCompatWriter.ensure(rootfs, "0.2.1", GuestDocsFixture.SOURCE));
 
         for (String command : GuestTermuxCompatWriter.COMMANDS) {
             Path script = rootfs.resolve(GuestTermuxCompatWriter.guestRelativePath(command));
@@ -123,7 +123,8 @@ public class GuestTermuxCompatWriterTest {
         Path doc = rootfs.resolve(GuestTermuxCompatWriter.GUEST_DOC_RELATIVE_PATH);
         assertTrue(Files.isRegularFile(doc));
         String docText = new String(Files.readAllBytes(doc), StandardCharsets.UTF_8);
-        assertEquals(GuestTermuxCompatWriter.docContent("0.2.1"), docText);
+        assertEquals(new String(GuestTermuxCompatWriter.docContent(
+                GuestDocsFixture.SOURCE, "0.2.1"), StandardCharsets.UTF_8), docText);
         assertTrue(docText.contains("signing"));
         assertTrue(docText.contains("key"));
         assertTrue(docText.contains("termux-sms-send"));
@@ -221,7 +222,7 @@ public class GuestTermuxCompatWriterTest {
     }
 
     @Test
-    public void generatedContentIsVersionGuarded() {
+    public void generatedContentIsVersionGuarded() throws IOException {
         for (String bad : new String[]{null, "", "  ", "0.2.1\nrm -rf /"}) {
             try {
                 GuestTermuxCompatWriter.moduleContent(bad);
@@ -230,7 +231,7 @@ public class GuestTermuxCompatWriterTest {
                 // Version guard.
             }
             try {
-                GuestTermuxCompatWriter.docContent(bad);
+                GuestTermuxCompatWriter.docContent(GuestDocsFixture.SOURCE, bad);
                 fail("doc must reject version " + bad);
             } catch (IllegalArgumentException expected) {
                 // Version guard.
@@ -249,7 +250,7 @@ public class GuestTermuxCompatWriterTest {
         assumeTrue("python3 must be available for the live round-trip",
                 interpreterAvailable());
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestTermuxCompatWriter.ensure(rootfs, "0.2.1");
+        GuestTermuxCompatWriter.ensure(rootfs, "0.2.1", GuestDocsFixture.SOURCE);
         Path env = temporary.newFolder("env").toPath().resolve("android-bridge.env");
         Files.write(env, "placeholder".getBytes(StandardCharsets.UTF_8));
         Path harness = temporary.newFolder("harness").toPath().resolve("run_termux_compat.py");
@@ -290,7 +291,7 @@ public class GuestTermuxCompatWriterTest {
     @Test
     public void sweepRemovesOnlyStaleGeneratedCommands() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestTermuxCompatWriter.ensure(rootfs, "0.2.1");
+        GuestTermuxCompatWriter.ensure(rootfs, "0.2.1", GuestDocsFixture.SOURCE);
         Path bin = rootfs.resolve(GuestTermuxCompatWriter.GUEST_BIN_RELATIVE_PATH);
         Path module = rootfs.resolve(GuestTermuxCompatWriter.GUEST_MODULE_RELATIVE_PATH);
 
@@ -315,7 +316,7 @@ public class GuestTermuxCompatWriterTest {
         }
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestTermuxCompatWriter.ensure(rootfs, "0.2.1"));
+                GuestTermuxCompatWriter.ensure(rootfs, "0.2.1", GuestDocsFixture.SOURCE));
 
         assertFalse("stale generated script must be swept", Files.exists(stale));
         assertTrue("user file must survive", Files.exists(userFile));
@@ -326,7 +327,7 @@ public class GuestTermuxCompatWriterTest {
         }
         // A second ensure with nothing stale is idempotent.
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestTermuxCompatWriter.ensure(rootfs, "0.2.1"));
+                GuestTermuxCompatWriter.ensure(rootfs, "0.2.1", GuestDocsFixture.SOURCE));
     }
 
     @Test
@@ -335,7 +336,7 @@ public class GuestTermuxCompatWriterTest {
         // import it — but the termux-* command set and its doc install only
         // through the optional TERMUX bundle.
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.1");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.1", GuestDocsFixture.SOURCE);
 
         assertTrue(Files.isRegularFile(
                 rootfs.resolve(GuestTermuxCompatWriter.GUEST_MODULE_RELATIVE_PATH)));
@@ -349,7 +350,7 @@ public class GuestTermuxCompatWriterTest {
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
                 GuestOptionalTools.install(rootfs, "0.2.1",
-                        GuestOptionalTools.Kind.TERMUX));
+                        GuestOptionalTools.Kind.TERMUX, GuestDocsFixture.SOURCE));
         for (String command : GuestTermuxCompatWriter.COMMANDS) {
             Path script = rootfs.resolve(
                     GuestTermuxCompatWriter.guestRelativePath(command));

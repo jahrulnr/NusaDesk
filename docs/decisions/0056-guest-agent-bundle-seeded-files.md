@@ -68,6 +68,7 @@ reappear.
 - Removing a bundled file in a later version leaves the seeded copy in
   place — the stale-file sweep used for managed `termux-*` scripts is
   deliberately not applied to user-owned files.
-- The `AGENTS.md`/`SKILL.md` content is generated Java text like the other
-  guest files (no mutable rootfs asset), and `GuestAgentSeedWriterTest` pins
+- The `AGENTS.md`/`SKILL.md` bodies ship as bundled assets under
+  `assets/guest-docs/agents/` like the other guest docs (no mutable rootfs
+  asset), and `GuestAgentSeedWriterTest` pins
   the seed/upgrade/edit/delete/occupancy matrix on the JVM.

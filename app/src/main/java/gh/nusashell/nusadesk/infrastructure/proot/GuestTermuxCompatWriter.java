@@ -81,6 +81,17 @@ public final class GuestTermuxCompatWriter {
     /** Absolute module directory inside the guest, used for sys.path. */
     public static final String GUEST_MODULE_DIR = "/usr/local/lib/nusadesk";
 
+    /**
+     * Bundled doc template path under
+     * {@link GuestAwarenessReadmeWriter#GUEST_DOCS_ASSET_ROOT}: prose lives in
+     * the asset; {@code {{COMMAND_LIST}}}, {@code {{COVERAGE}}}, and
+     * {@code {{MODULE_DIR}}} are spliced from the live catalog.
+     */
+    static final String DOC_ASSET_PATH = "docs/termux-compat.md";
+    private static final String COMMAND_LIST_TOKEN = "{{COMMAND_LIST}}";
+    private static final String COVERAGE_TOKEN = "{{COVERAGE}}";
+    private static final String MODULE_DIR_TOKEN = "{{MODULE_DIR}}";
+
     /** Marker prefix of every file this writer owns in the guest bin dir. */
     public static final String MARKER = "NusaDesk Termux-compat";
 
@@ -303,67 +314,52 @@ public final class GuestTermuxCompatWriter {
                 "") + "\n";
     }
 
-    /** The exact documentation page content for this layer. */
-    public static String docContent(String appVersion) {
+    /**
+     * The documentation page content for this layer: the bundled template at
+     * {@code guest-docs/docs/termux-compat.md} with the catalog-generated
+     * sections spliced in — {@code {{COMMAND_LIST}}} gets every command's
+     * docLines, {@code {{COVERAGE}}} gets the absent-list verdict,
+     * {@code {{MODULE_DIR}}} the module path, and
+     * {@link GuestAwarenessReadmeWriter#APP_VERSION_TOKEN} the app version.
+     *
+     * @param source bundled doc source
+     * @param appVersion APK version name, not user input
+     * @return the doc's final bytes
+     * @throws IOException when the template cannot be read
+     */
+    static byte[] docContent(GuestAwarenessReadmeWriter.GuestDocSource source,
+            String appVersion) throws IOException {
         String version = GuestAwarenessReadmeWriter.requireVersionForWriter(appVersion);
+        return new String(source.read(DOC_ASSET_PATH), StandardCharsets.UTF_8)
+                .replace(COMMAND_LIST_TOKEN, commandListText())
+                .replace(COVERAGE_TOKEN, coverageText())
+                .replace(MODULE_DIR_TOKEN, GUEST_MODULE_DIR)
+                .replace(GuestAwarenessReadmeWriter.APP_VERSION_TOKEN, version)
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** Every cataloged command's docLines, joined for {@code {{COMMAND_LIST}}}. */
+    private static String commandListText() {
         StringBuilder text = new StringBuilder();
-        text.append(String.join("\n",
-                "# Termux command compatibility",
-                "",
-                "NusaDesk installs a small set of Termux:API command-line clients into",
-                "`/usr/local/bin`. They exist because the Termux:API *app* cannot serve",
-                "this product: it only accepts callers that share the Termux signing",
-                "key and Android UID, and NusaDesk is a different app. The commands",
-                "themselves are a plain interface contract, so NusaDesk answers the",
-                "same questions from its own authenticated Android capability bridge.",
-                "",
-                "Scripts written against these Termux commands keep working without",
-                "changes. Nothing here contacts the Termux app, and no Termux app is",
-                "required or used.",
-                "",
-                "## Installed commands",
-                "",
-                ""));
         for (TermuxCommand command : TermuxCommandCatalog.all()) {
             for (String line : command.docLines()) {
                 text.append(line).append('\n');
             }
         }
-        text.append(String.join("\n",
-                "",
-                "## Output shape",
-                "",
-                "Output is the Termux JSON shape on stdout: object keys as Termux:API",
-                "emits them (for example `percentage`, `latitude`, `values`), enum",
-                "values in the Termux spelling (for example `CHARGING`, `PLUGGED_USB`),",
-                "and, where Termux has one, a `received` timestamp in the Termux",
-                "`yyyy-MM-dd HH:mm:ss` format (`termux-sms-list`). Values are computed",
-                "from the bounded bridge reading, so some fields are necessarily",
-                "best-effort: `termux-location` reports one foreground fix and omits",
-                "fields the bridge did not return; `termux-sensor` is a sequence of",
-                "one-shot reads rather than a continuous stream; `termux-sms-list`",
-                "carries the bridge's bounded message preview as `body`.",
-                "",
-                "Row caps are lower than Termux's defaults: `termux-sms-list` and",
-                "`termux-telephony-cellinfo` see at most 50 and 10 rows respectively",
-                "from the bounded bridge reading, so `-o` pages only within that",
-                "window. `termux-contact-list` expands one bridge row per number, so",
-                "it can print up to five entries for each of the bridge's 50 contact",
-                "rows. When the bridge itself hit its cap the row commands say so on",
-                "stderr; the exit code stays `0` because the rows that *were*",
-                "returned are valid.",
-                "",
-                "Every command is a thin script: it imports the shared runtime at",
-                "`" + GUEST_MODULE_DIR + "/termux_compat.py` and only translates",
-                "its flags into the fixed bridge call.",
-                "",
-                "## Exit codes",
-                "",
-                "- `0` - a result was printed",
-                "- `1` - the bridge returned a typed error (printed to stderr)",
-                "- `2` - usage error, an unparseable bridge payload, or the bridge",
-                "  was unreachable",
-                "",
+        int length = text.length();
+        return length > 0 ? text.substring(0, length - 1) : "";
+    }
+
+    /** The {@code {{COVERAGE}}} section, heading included. */
+    private static String coverageText() {
+        if (TermuxCommandCatalog.deliberatelyAbsent().isEmpty()) {
+            return String.join("\n",
+                    "## Coverage",
+                    "",
+                    "Every Termux:API client command this bridge can answer is",
+                    "installed - the list above is the full shipped set.");
+        }
+        StringBuilder text = new StringBuilder(String.join("\n",
                 "## Not installed",
                 "",
                 "Only methods this bridge answers are installed. Commands that need",
@@ -374,22 +370,8 @@ public final class GuestTermuxCompatWriter {
         for (String line : absentLines()) {
             text.append(line).append('\n');
         }
-        text.append(String.join("\n",
-                "",
-                "(`termux-sms-inbox` is upstream-deprecated: Termux replaced it with",
-                "`termux-sms-list`.) Camera and microphone are served by the live",
-                "media session instead: see [media.md](media.md).",
-                "",
-                "## Bridge session",
-                "",
-                "The commands read the same session file as `nusadesk-android`",
-                "(`/run/nusadesk/android-bridge.env`) and speak the same loopback",
-                "protocol, so they are only usable inside a live NusaDesk session.",
-                "",
-                generatedFooter(version),
-                "",
-                ""));
-        return text.append('\n').toString();
+        int length = text.length();
+        return length > 0 ? text.substring(0, length - 1) : "";
     }
 
     /** The deliberately-absent command names, wrapped to readable doc lines. */
@@ -416,11 +398,6 @@ public final class GuestTermuxCompatWriter {
             wrapped.add("  " + item);
         }
         return wrapped;
-    }
-
-    private static String generatedFooter(String version) {
-        return "> Docs generated by the NusaDesk Android app (version " + version
-                + "). Manual edits may be overwritten on the next session start.";
     }
 
     private static String header(String command, String version) {
@@ -492,13 +469,16 @@ public final class GuestTermuxCompatWriter {
      *
      * @param activeRootfs validated active rootfs directory
      * @param appVersion APK version name, not user input
+     * @param docSource source of the bundled doc template
      * @return whether any file was updated or everything was already current
      * @throws IOException when a fixed path is unsafe or cannot be written
      */
     public static GuestAwarenessReadmeWriter.Result ensure(Path activeRootfs,
-            String appVersion) throws IOException {
-        if (activeRootfs == null) {
-            throw new IllegalArgumentException("activeRootfs must not be null");
+            String appVersion,
+            GuestAwarenessReadmeWriter.GuestDocSource docSource)
+            throws IOException {
+        if (activeRootfs == null || docSource == null) {
+            throw new IllegalArgumentException("activeRootfs/docSource must not be null");
         }
         String version = GuestAwarenessReadmeWriter.requireVersionForWriter(appVersion);
         Path docs = prepareDirectory(activeRootfs, GUEST_DOCS_RELATIVE_PATH,
@@ -516,8 +496,7 @@ public final class GuestTermuxCompatWriter {
                     SCRIPT_PERMISSIONS);
         }
         updated |= ensureFile(docs.resolve("termux-compat.md"),
-                docContent(version).getBytes(StandardCharsets.UTF_8),
-                DOC_PERMISSIONS);
+                docContent(docSource, version), DOC_PERMISSIONS);
         updated |= sweepStale(bin);
         return updated ? GuestAwarenessReadmeWriter.Result.UPDATED
                 : GuestAwarenessReadmeWriter.Result.UNCHANGED;

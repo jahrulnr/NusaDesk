@@ -32,7 +32,7 @@ public class GuestAndroidCliWriterTest {
     public void installsExecutableCliThroughSharedEnsurePath() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE));
 
         Path cli = rootfs.resolve(GuestAndroidCliWriter.GUEST_CLI_RELATIVE_PATH);
         assertTrue("CLI must exist", Files.isRegularFile(cli));
@@ -45,11 +45,11 @@ public class GuestAndroidCliWriterTest {
 
         // Idempotent like the rest of the bundle.
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE));
         // A stale copy is replaced on version change.
         Files.write(cli, "stale".getBytes(StandardCharsets.UTF_8));
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.0"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.0", GuestDocsFixture.SOURCE));
         assertTrue(new String(Files.readAllBytes(cli), StandardCharsets.UTF_8)
                 .contains("App version: 0.2.0"));
     }
@@ -145,7 +145,7 @@ public class GuestAndroidCliWriterTest {
         assumeTrue("python3 must be available for the live android-cli round-trip",
                 interpreterAvailable());
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
         Path cli = rootfs.resolve(GuestAndroidCliWriter.GUEST_CLI_RELATIVE_PATH);
         Path full = temporary.newFolder("system-full").toPath();
         Path bare = temporary.newFolder("system-bare").toPath();

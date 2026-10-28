@@ -46,7 +46,10 @@ public class GuestSshdAwarenessStartupTest {
         Path guide = root.resolve("root/docs/desktop.md");
         workload.start(session, listener);
         assertTrue("real workload startup must generate the desktop guide", Files.isRegularFile(guide));
-        String expected = GuestAwarenessReadmeWriter.desktopDocContent(BuildConfig.VERSION_NAME);
+        String expected = new String(GuestAwarenessReadmeWriter.loadDoc(
+                GuestAwarenessReadmeWriter.assetSource(context.getAssets()),
+                "docs/desktop.md", BuildConfig.VERSION_NAME),
+                java.nio.charset.StandardCharsets.UTF_8);
         assertEquals(expected, Files.readString(guide));
 
         Files.writeString(guide, "stale advice");

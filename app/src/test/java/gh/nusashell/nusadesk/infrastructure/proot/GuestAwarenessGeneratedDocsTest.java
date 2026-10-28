@@ -1,7 +1,15 @@
 package gh.nusashell.nusadesk.infrastructure.proot;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.TreeSet;
+
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -12,9 +20,10 @@ import static org.junit.Assert.assertTrue;
 public class GuestAwarenessGeneratedDocsTest {
 
     @Test
-    public void readmeLinksToEveryTopicDoc() {
-        String readme = GuestAwarenessReadmeWriter.content("0.1.0");
+    public void readmeLinksToEveryTopicDoc() throws IOException {
+        String readme = GuestDocsFixture.doc("README.md", "0.1.0");
         assertTrue(readme.contains("(docs/README.md)"));
+        assertTrue(readme.contains("(docs/environment.md)"));
         assertTrue(readme.contains("(docs/bridge.md)"));
         assertTrue(readme.contains("(docs/media.md)"));
         assertTrue(readme.contains("(docs/battery-sensors-location.md)"));
@@ -30,20 +39,22 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(readme.contains("App version: 0.1.0"));
         // One line per topic doc plus the managed footer; keep the README a
         // single compact screen.
-        assertTrue(lineCount(readme) < 34);
+        assertTrue(lineCount(readme) < 36);
     }
 
     @Test
-    public void docsIndexListsEveryTopicAndTheCli() {
-        String index = GuestAwarenessReadmeWriter.docsIndexContent("0.1.0");
+    public void docsIndexListsEveryTopicAndTheCli() throws IOException {
+        String index = GuestDocsFixture.doc("docs/README.md", "0.1.0");
         assertTrue(index.contains("(bridge.md)"));
         assertTrue(index.contains("(media.md)"));
+        assertTrue(index.contains("(environment.md)"));
         assertTrue(index.contains("(battery-sensors-location.md)"));
         assertTrue(index.contains("(messaging-telephony.md)"));
         assertTrue(index.contains("(calendar.md)"));
         assertTrue(index.contains("(desktop.md)"));
         assertTrue(index.contains("(termux-compat.md)"));
         assertTrue(index.contains("/usr/local/bin/nusadesk-android"));
+        assertTrue(index.contains("android-cli"));
         assertTrue(index.contains("nusadesk-android calendar list"));
         assertTrue(index.contains("nusadesk-android calendar add --title"));
         assertTrue(index.contains("nusadesk-android calendar delete EVENT_ID"));
@@ -55,8 +66,8 @@ public class GuestAwarenessGeneratedDocsTest {
     }
 
     @Test
-    public void bridgeDocDocumentsEnvProtocolMethodsAndCliBoundary() {
-        String bridge = GuestAwarenessReadmeWriter.bridgeDocContent("0.1.0");
+    public void bridgeDocDocumentsEnvProtocolMethodsAndCliBoundary() throws IOException {
+        String bridge = GuestDocsFixture.doc("docs/bridge.md", "0.1.0");
         assertTrue(bridge.contains("/run/nusadesk/android-bridge.env"));
         assertTrue(bridge.contains("NUSADESK_ANDROID_BRIDGE_ADDRESS"));
         assertTrue(bridge.contains("NUSADESK_ANDROID_BRIDGE_PORT"));
@@ -70,6 +81,17 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(bridge.contains("media.stop"));
         assertTrue(bridge.contains("mediaplayer.outputs"));
         assertTrue(bridge.contains("mediaplayer.route.clear"));
+        // Capture, sensors catalog, background location, native extras, and
+        // USB are real methods and must be named, not left to imagination.
+        assertTrue(bridge.contains("camera.photo"));
+        assertTrue(bridge.contains("microphone.record.start"));
+        assertTrue(bridge.contains("sensor.list"));
+        assertTrue(bridge.contains("sensor.stream.start|poll|stop"));
+        assertTrue(bridge.contains("location.background.start|poll|stop"));
+        assertTrue(bridge.contains("wifi.hotspot.*"));
+        assertTrue(bridge.contains("packages.*"));
+        assertTrue(bridge.contains("usb.list"));
+        assertTrue(bridge.contains("usb.open"));
         assertTrue(bridge.contains("bt.hid.start"));
         assertTrue(bridge.contains("keyboard/mouse HID device"));
         assertTrue(bridge.contains("bt.audio.voice.start|stop"));
@@ -88,16 +110,24 @@ public class GuestAwarenessGeneratedDocsTest {
     }
 
     @Test
-    public void mediaDocDocumentsLiveOnlyLoopbackContract() {
-        String media = GuestAwarenessReadmeWriter.mediaDocContent("0.1.0");
+    public void mediaDocDocumentsLiveOnlyLoopbackContract() throws IOException {
+        String media = GuestDocsFixture.doc("docs/media.md", "0.1.0");
 
-        // Live-only: no capture files, no artifact paths, no persistence.
+        // Live stream is live-only; capture files are a separate surface.
         assertTrue(media.contains("live-only"));
-        assertTrue(media.contains("never writes a capture"));
-        assertTrue(media.contains("Save a file yourself from the stream"));
         assertTrue(media.contains("camera.snapshot"));
         assertTrue(media.contains("mic.record"));
         assertTrue(media.contains("retired"));
+        // The capture contract must be named: methods, grant, bound, clients.
+        assertTrue(media.contains("camera.info"));
+        assertTrue(media.contains("camera.photo"));
+        assertTrue(media.contains("microphone.record.start|info|stop"));
+        assertTrue(media.contains("RECORD_AUDIO"));
+        assertTrue(media.contains("0..900"));
+        assertTrue(media.contains("termux-camera-photo"));
+        assertTrue(media.contains("termux-microphone-record"));
+        assertFalse("the retired no-capture-anywhere claim must not come back",
+                media.contains("no guest capture file is produced anywhere"));
 
         // Loopback-only RTSP over TCP with a bounded client cap.
         assertTrue(media.contains("loopback-only"));
@@ -146,29 +176,36 @@ public class GuestAwarenessGeneratedDocsTest {
         String lower = media.toLowerCase();
         assertFalse(lower.contains("verified"));
         assertFalse(lower.contains("device-tested"));
-        assertTrue(lineCount(media) < 130);
+        assertTrue(lineCount(media) < 170);
     }
 
     @Test
-    public void batterySensorsLocationDocCoversAllSurfaces() {
-        String doc = GuestAwarenessReadmeWriter.batterySensorsLocationDocContent("0.1.0");
+    public void batterySensorsLocationDocCoversAllSurfaces() throws IOException {
+        String doc = GuestDocsFixture.doc("docs/battery-sensors-location.md", "0.1.0");
         assertTrue(doc.contains("battery.status"));
         assertTrue(doc.contains("/sys/class/power_supply/battery"));
         assertTrue(doc.contains("sensor.accelerometer"));
         assertTrue(doc.contains("sensor.gyroscope"));
+        assertTrue(doc.contains("sensor.list"));
+        assertTrue(doc.contains("sensor.read"));
+        assertTrue(doc.contains("sensor.stream.start|poll|stop"));
         assertTrue(doc.contains("location.get"));
         assertTrue(doc.contains("location.stream.start"));
         assertTrue(doc.contains("location.stream.poll"));
         assertTrue(doc.contains("location.stream.stop"));
-        assertTrue(doc.contains("foreground-only"));
         assertTrue(doc.contains("5 second interval"));
-        assertTrue(doc.contains("background location"));
-        assertTrue(doc.contains("automatic permission prompt"));
+        // Background location is a real opt-in surface behind nusadesk-loc.
+        assertTrue(doc.contains("location.background.start|poll|stop"));
+        assertTrue(doc.contains("nusadesk-loc"));
+        assertTrue(doc.contains("Allow all the time"));
+        assertTrue(doc.contains("location-background-permission-required"));
+        assertFalse("the retired foreground-only claim must not come back",
+                doc.contains("never opens a background location"));
     }
 
     @Test
-    public void messagingTelephonyDocCoversReadsAndSideEffectingGrants() {
-        String doc = GuestAwarenessReadmeWriter.messagingTelephonyDocContent("0.1.0");
+    public void messagingTelephonyDocCoversReadsAndSideEffectingGrants() throws IOException {
+        String doc = GuestDocsFixture.doc("docs/messaging-telephony.md", "0.1.0");
         for (String method : new String[]{
                 "contacts.list", "calllog.list", "sms.inbox",
                 "telephony.info", "telephony.cellinfo"}) {
@@ -190,8 +227,8 @@ public class GuestAwarenessGeneratedDocsTest {
     }
 
     @Test
-    public void calendarDocCoversReadWriteBoundsAndPermissions() {
-        String doc = GuestAwarenessReadmeWriter.calendarDocContent("0.1.0");
+    public void calendarDocCoversReadWriteBoundsAndPermissions() throws IOException {
+        String doc = GuestDocsFixture.doc("docs/calendar.md", "0.1.0");
 
         for (String method : new String[]{
                 "calendar.list", "calendar.insert", "calendar.update", "calendar.delete"}) {
@@ -221,15 +258,35 @@ public class GuestAwarenessGeneratedDocsTest {
     }
 
     @Test
-    public void everyGeneratedDocIsBoundedAndVersioned() {
+    public void environmentDocCoversTheNusaDeskSpecificContracts() throws IOException {
+        String doc = GuestDocsFixture.doc("docs/environment.md", "0.1.0");
+        assertTrue(doc.contains("127.0.0.1:22022"));
+        assertTrue(doc.contains("/tmp"));
+        assertTrue(doc.contains("/root/nusadesk"));
+        assertTrue(doc.contains("systemctl3"));
+        assertTrue(doc.contains("systemctl --user"));
+        assertTrue(doc.contains("udocker compose"));
+        assertTrue(doc.contains("ports:"));
+        assertTrue(doc.contains("lw-compose-supervisor"));
+        assertTrue(doc.contains("nusadesk-serve"));
+        assertTrue(doc.contains("nusadesk-usb"));
+        assertTrue(doc.contains("android-cli"));
+        assertTrue(doc.contains("termux-*"));
+        assertFalse("no claim that the guest is a VM",
+                doc.contains("full Docker environment"));
+    }
+
+    @Test
+    public void everyGeneratedDocIsBoundedAndVersioned() throws IOException {
         String version = "0.1.0";
         String[] docs = {
-                GuestAwarenessReadmeWriter.docsIndexContent(version),
-                GuestAwarenessReadmeWriter.bridgeDocContent(version),
-                GuestAwarenessReadmeWriter.mediaDocContent(version),
-                GuestAwarenessReadmeWriter.batterySensorsLocationDocContent(version),
-                GuestAwarenessReadmeWriter.messagingTelephonyDocContent(version),
-                GuestAwarenessReadmeWriter.calendarDocContent(version)
+                GuestDocsFixture.doc("docs/README.md", version),
+                GuestDocsFixture.doc("docs/bridge.md", version),
+                GuestDocsFixture.doc("docs/media.md", version),
+                GuestDocsFixture.doc("docs/battery-sensors-location.md", version),
+                GuestDocsFixture.doc("docs/messaging-telephony.md", version),
+                GuestDocsFixture.doc("docs/calendar.md", version),
+                GuestDocsFixture.doc("docs/environment.md", version)
         };
         for (String doc : docs) {
             assertTrue("docs must carry the app version", doc.contains("version " + version));
@@ -237,10 +294,41 @@ public class GuestAwarenessGeneratedDocsTest {
                     doc.contains("Docs generated by the NusaDesk Android app"));
             assertTrue("docs must warn about regeneration",
                     doc.contains("Manual edits may be overwritten"));
-            // The media doc is the largest topic (three track modes), so the
-            // single bound leaves headroom without letting a doc run away.
-            assertTrue("docs must stay bounded", lineCount(doc) < 130);
+            // The media doc is the largest topic (live stream plus the
+            // capture surface), so the single bound leaves headroom without
+            // letting a doc run away.
+            assertTrue("docs must stay bounded", lineCount(doc) < 170);
         }
+    }
+
+    /**
+     * The shipped asset tree and the writer constants must agree: a bundled
+     * file no list installs (or a list entry nobody ships) is a silent doc
+     * regression, so keep the two sets equal.
+     */
+    @Test
+    public void assetTreeAndWriterListsStayInSync() throws IOException {
+        Set<String> docAssets = new TreeSet<>();
+        Set<String> agentAssets = new TreeSet<>();
+        try (java.util.stream.Stream<Path> walk =
+                Files.walk(GuestDocsFixture.ASSET_DIR)) {
+            walk.filter(Files::isRegularFile)
+                    .map(path -> GuestDocsFixture.ASSET_DIR.relativize(path).toString())
+                    .forEach(asset -> (asset.startsWith("agents/")
+                            ? agentAssets : docAssets).add(asset));
+        }
+        // The Termux-compat doc is a template owned by GuestTermuxCompatWriter.
+        docAssets.remove("docs/termux-compat.md");
+        assertEquals(docAssets,
+                new TreeSet<>(Arrays.asList(GuestAwarenessReadmeWriter.DOC_ASSETS)));
+
+        // agents/<path> installs at root/.agents/<path>.
+        Set<String> expectedSeeds = new TreeSet<>();
+        for (String asset : agentAssets) {
+            expectedSeeds.add("root/." + asset);
+        }
+        assertEquals(expectedSeeds,
+                new TreeSet<>(GuestAgentSeedWriter.seededRelativePaths()));
     }
 
     private static int lineCount(String text) {

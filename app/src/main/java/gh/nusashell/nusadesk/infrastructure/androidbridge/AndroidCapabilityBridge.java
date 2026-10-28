@@ -42,8 +42,8 @@ import gh.nusashell.nusadesk.infrastructure.proot.ProotBindMount;
  * because other apps can share the device loopback namespace. The bridge is
  * never LAN-bound and exposes no arbitrary command or Android class dispatch:
  * every method is a fixed allowlist string in
- * {@link AndroidCapabilityRequestHandler}, and only the declaring calendar
- * writes and {@code usb.open} may carry one bounded {@code params} object.</p>
+ * {@link AndroidCapabilityRequestHandler}, and only the methods that declare
+ * one may carry a bounded {@code params} object.</p>
  *
  * <p>Shipped capabilities: Android BatteryManager projected through
  * {@code battery.status} and, when the fixed app-private projection can be
@@ -57,11 +57,11 @@ import gh.nusashell.nusadesk.infrastructure.proot.ProotBindMount;
  * {@code location.stream.stop}); and the live-only unified media session
  * ({@code media.start} / {@code media.status} / {@code media.stop}) that
  * captures camera + microphone with hardware encoders and serves one
- * loopback RTSP stream. Media is live-only: nothing writes a capture
- * artifact, no artifact directory exists, and no artifact path or bind is
- * exposed to the guest. Background location, a location foreground-service
- * start, and permission activities are deliberately not wired in this
- * phase.</p>
+ * loopback RTSP stream. The stream session itself is live-only - it
+ * writes no artifact of its own; still photos and microphone recordings
+ * are the separate {@code camera.photo} / {@code microphone.record.*}
+ * capture surface, and continuous fixes are the separate
+ * {@code location.background.*} foreground-service surface.</p>
  *
  * <p>The calendar slice reads the provider's instance table inside a fixed
  * seven-day window ({@code calendar.list}, at most 50 rows, no

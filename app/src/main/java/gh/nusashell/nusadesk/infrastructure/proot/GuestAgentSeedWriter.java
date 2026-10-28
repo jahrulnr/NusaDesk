@@ -93,14 +93,29 @@ public final class GuestAgentSeedWriter {
     private static final String FOREIGN = "-";
     private static final int SHA256_HEX_CHARS = 64;
 
+    /** Bundled seed asset paths under the guest-docs asset root. */
+    private static final String AGENTS_MD_ASSET_PATH = "agents/AGENTS.md";
+    private static final String SKILL_ASSET_PATH =
+            "agents/skills/" + SKILL_NAME + "/SKILL.md";
+    /** Placeholder in the skill asset's frontmatter. */
+    private static final String SKILL_NAME_TOKEN = "{{SKILL_NAME}}";
+    /**
+     * The seed bundle as {@code {guest-relative path, asset path}} pairs —
+     * one table so the file list and the path list can never desync.
+     */
+    private static final String[][] SEED_FILES = {
+            {GUEST_AGENTS_MD_RELATIVE_PATH, AGENTS_MD_ASSET_PATH},
+            {SKILL_FILE_RELATIVE_PATH, SKILL_ASSET_PATH},
+    };
+
     private GuestAgentSeedWriter() {
     }
 
     /** Guest-relative paths of every file in the seeded bundle, in order. */
     public static List<String> seededRelativePaths() {
-        List<String> paths = new ArrayList<>();
-        for (SeededFile file : seedFiles()) {
-            paths.add(file.relativePath);
+        List<String> paths = new ArrayList<>(SEED_FILES.length);
+        for (String[] entry : SEED_FILES) {
+            paths.add(entry[0]);
         }
         return Collections.unmodifiableList(paths);
     }
@@ -112,14 +127,17 @@ public final class GuestAgentSeedWriter {
      * @param activeRootfs validated active rootfs directory
      * @param appVersion APK version name, not user input; recorded in the
      *        bookkeeping header only — seeded file bodies carry no version
+     * @param docSource source of the bundled seed files
      * @return whether any file or the bookkeeping record was written
      * @throws IOException on a real write/read failure; unsafe fixed paths
      *         skip the affected entry instead of throwing
      */
     public static GuestAwarenessReadmeWriter.Result ensure(Path activeRootfs,
-            String appVersion) throws IOException {
-        if (activeRootfs == null) {
-            throw new IllegalArgumentException("activeRootfs must not be null");
+            String appVersion,
+            GuestAwarenessReadmeWriter.GuestDocSource docSource)
+            throws IOException {
+        if (activeRootfs == null || docSource == null) {
+            throw new IllegalArgumentException("activeRootfs/docSource must not be null");
         }
         String version = GuestAwarenessReadmeWriter.requireVersionForWriter(appVersion);
 
@@ -135,7 +153,7 @@ public final class GuestAgentSeedWriter {
         Map<String, String> state = readState(stateFile);
 
         boolean changed = false;
-        for (SeededFile file : seedFiles()) {
+        for (SeededFile file : seedFiles(docSource)) {
             String recorded = state.get(file.relativePath);
             Path target = activeRootfs.resolve(file.relativePath);
             // The parent walk never creates anything: deciding whether a file
@@ -154,7 +172,7 @@ public final class GuestAgentSeedWriter {
                 }
                 continue;
             }
-            byte[] wanted = file.content.getBytes(StandardCharsets.UTF_8);
+            byte[] wanted = file.content;
             String wantedDigest = sha256Hex(wanted);
             if (parent == ParentState.SAFE
                     && Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
@@ -217,245 +235,32 @@ public final class GuestAgentSeedWriter {
                 : GuestAwarenessReadmeWriter.Result.UNCHANGED;
     }
 
-    /**
-     * The exact {@code /root/.agents/AGENTS.md} text. Public so tests and
-     * documentation tooling can pin the shipped content.
-     */
-    public static String agentsMdContent() {
-        return String.join("\n",
-                "# NusaDesk guest - global agent instructions",
-                "",
-                "> Seeded by the NusaDesk Android app. Unlike the generated files",
-                "> at `/root/README.md` and `/root/docs/`, this file and the",
-                "> whole `/root/.agents/` tree belong to the user: the app",
-                "> updates a seeded file only while it is byte-identical to",
-                "> what it installed and never recreates one that was deleted.",
-                "> Edit freely.",
-                "",
-                "You are inside the NusaDesk guest: an Ubuntu Base ARM64 userland",
-                "running under PRoot on an Android device. That is a",
-                "compatibility layer, not a VM and not a container with its own",
-                "kernel. `root` here is guest root - every process still runs as",
-                "the Android app's uid inside the app's SELinux domain.",
-                "",
-                "## Environment facts",
-                "",
-                "- `/tmp` is wiped at every session start and `/run` holds",
-                "  per-session state (the bridge env, service markers). Nothing",
-                "  durable belongs in either.",
-                "- `/root/README.md` and `/root/docs/*.md` are app-generated and",
-                "  rewritten on session start - read them, never edit them.",
-                "- `systemctl` and `service` are the vendored systemctl3 bridge,",
-                "  not systemd. Only units enabled when `systemctl init` ran are",
-                "  restart-supervised, and `systemctl stop` on an enabled unit",
-                "  does not survive a session restart.",
-                "- Containers run through `udocker compose` only, and published",
-                "  `ports:` are rejected - services stay inside the guest.",
-                "- Guest storage (`/root`, `/home`, `/opt`, `/usr/local`, `/etc`,",
-                "  `/var/lib`) persists across sessions and is covered by the",
-                "  app's guest backup.",
-                "- The user's shared Android workspace, when they picked one, is",
-                "  bound at `/root/nusadesk` - real host storage visible to",
-                "  Android.",
-                "- The guest SSH endpoint is fixed at `127.0.0.1:22022`.",
-                "",
-                "## Reaching Android",
-                "",
-                "Two sanctioned doors - pick by what the task needs. The skill",
-                "`skills/termux-api-vs-android-cli/SKILL.md` has the full",
-                "decision.",
-                "",
-                "- **`termux-*` commands (optional capability clients) and",
-                "  `nusadesk-*` commands (native NusaDesk capability clients).**",
-                "  Use installed bridge commands for Android features: notifications,",
-                "  SMS/contacts/call log, telephony, calendar, location,",
-                "  sensors, battery, clipboard, dialogs, speech, camera and",
-                "  microphone capture, Bluetooth, Wi-Fi extras, installed",
-                "  packages, usage stats, overlays, USB pass-through, and LAN",
-                "  file serving. Prefer these: grants and failures come back as",
-                "  typed errors, output is documented JSON, and the bridge only",
-                "  answers a fixed method allowlist.",
-                "- **`android-cli` (native tools).** Runs the device's own",
-                "  binaries as the app uid: `getprop`, `toolbox`/`toybox`",
-                "  applets, `sh`, `exec <path>`, and `su` on rooted devices,",
-                "  plus `status`, `doctor`, and `permissions`. Use it for device",
-                "  state or utilities the bridge does not cover. `/system/bin`",
-                "  is deliberately not on `PATH` - go through `android-cli`.",
-                "- The real Termux:API app can never serve this guest - it is",
-                "  locked to the Termux app uid and signature. If the user",
-                "  installed optional Termux commands under System > One-click",
-                "  install, these `termux-*` clients use NusaDesk's bridge.",
-                "  Likewise, `nusadesk-usb` and guest `adb` need the independent",
-                "  USB / ADB choice; neither command set is presumed present.",
-                "- A platform denial is an honest boundary, not a bug: an app",
-                "  uid cannot run `pm`, `am`, `dumpsys`, `screencap`, and",
-                "  friends. The higher tiers - the device's own `adbd` once the",
-                "  user enables `adb tcpip`, or `su` on a rooted device - are",
-                "  the user's own enablement decision, not something to work",
-                "  around.",
-                "",
-                "## House rules for agents",
-                "",
-                "- Never print, log, or copy the session token in",
-                "  `/run/nusadesk/android-bridge.env`; the generated CLIs read",
-                "  it themselves.",
-                "- Do not hand-roll bridge calls with invented methods or",
-                "  params - use the installed CLIs.",
-                "- Do not kill `sshd`, `lw-session-supervisor`, or `systemctl",
-                "  init` - they are the session you are running inside.",
-                "- Guest root is still an app uid: no mounts, no raw devices,",
-                "  no kernel changes. Test a capability before relying on it.",
-                "- To detach the seeded files from future updates permanently,",
-                "  delete `/var/lib/nusadesk/agent-seed.state`; to get a fresh",
-                "  seed instead, delete the seeded files together with that",
-                "  state file.",
-                "",
-                "") + "\n";
-    }
-
-    /**
-     * The exact {@code skills/termux-api-vs-android-cli/SKILL.md} text.
-     * Public so tests and documentation tooling can pin the shipped content.
-     */
-    public static String skillContent() {
-        return String.join("\n",
-                "---",
-                "name: " + SKILL_NAME,
-                "description: Choose between the NusaDesk capability-bridge",
-                "  commands (`termux-*`/`nusadesk-*`) and the native",
-                "  `android-cli` tools - or the higher adb-shell/root tiers -",
-                "  whenever a guest task touches an Android capability, device",
-                "  state, or a device binary.",
-                "---",
-                "",
-                "# Termux API vs android-cli",
-                "",
-                "The guest has two sanctioned doors into Android, and they are",
-                "not interchangeable: the bridge is a typed, permission-aware",
-                "API while `android-cli` runs the device's own binaries under",
-                "the app's uid. Decide in this order.",
-                "",
-                "## 1. A bridge command covers it: use it",
-                "",
-                "If an installed `termux-*` or `nusadesk-*` command covers the",
-                "task, prefer it. `termux-*` and `nusadesk-usb`/guest `adb`",
-                "are separate opt-in toolkits: check `command -v` before",
-                "using them; only the user enables a missing one from System",
-                "> One-click install. Never enable it silently as a workaround.",
-                "Bridge calls return typed errors",
-                "(`<capability>-permission-required`, `-permission-denied`,",
-                "`-unavailable`, `-busy`, `-timeout`, `invalid-argument`),",
-                "documented JSON output, bounded reads, and stable exit codes",
-                "(`0` result, `1` typed error, `2` usage or transport).",
-                "",
-                "- `termux-*` - optional Termux:API client surface, command- and",
-                "  JSON-compatible with Termux: battery, location, sensors,",
-                "  SMS list/send, contacts, call log, telephony,",
-                "  notifications, clipboard, toast and dialogs, TTS and",
-                "  speech-to-text, media playback, camera info/photo,",
-                "  microphone record, NFC, infrared, fingerprint, torch,",
-                "  vibrate, volume, brightness, wallpaper, wifi info/scan,",
-                "  downloads, keystore, job scheduler, SAF storage, share,",
-                "  USB. The installed set and its exact field subsets are in",
-                "  `/root/docs/termux-compat.md`.",
-                "- `nusadesk-android` - live camera/mic media sessions, the",
-                "  bounded calendar (list/add/update/delete), media-player",
-                "  routing, `bridge info`.",
-                "- `nusadesk-bt` - Bluetooth adapter state, pairing, BLE, GATT,",
-                "  RFCOMM, the bounded keyboard/mouse HID role, headset voice",
-                "  recognition.",
-                "- `nusadesk-wifi`, `nusadesk-pkg`, `nusadesk-usage`,",
-                "  `nusadesk-overlay`, `nusadesk-loc` - wifi hotspot/",
-                "  suggestions/locks, package list/info/launch, usage stats,",
-                "  overlay plates, background location.",
-                "- `nusadesk-serve` + `nusadesk-net` - serve the workspace over",
-                "  HTTP on the LAN and find the address to hand out.",
-                "- `nusadesk-usb` + the wrapped `adb` (optional USB/ADB choice)",
-                "  - USB pass-through; the stock guest `adb` sees devices",
-                "  attached to the phone's USB port.",
-                "",
-                "A missing grant is a typed result, not a crash. The command",
-                "that needs the grant names it; `android-cli permissions`",
-                "lists every declared grant's state plus the Settings action",
-                "that opens it. Grants are the user's own decision - a denied",
-                "one stays denied; do not retry-loop or work around it.",
-                "",
-                "## 2. A device binary or device state: android-cli",
-                "",
-                "When the need is the device's own tooling or state rather",
-                "than a capability API, use `android-cli`:",
-                "",
-                "- `android-cli getprop [name]`, `toybox <applet>`, `toolbox",
-                "  `<applet>`, `sh` - the phone's own binaries run natively as",
-                "  the app uid;",
-                "- `android-cli exec <absolute-path> [args...]` - any binary",
-                "  under the bound trees, no verb allowlist;",
-                "- `android-cli status` / `doctor` - report the tier and probe",
-                "  what exists; `android-cli permissions` is the one",
-                "  bridge-backed verb (declared grant states).",
-                "",
-                "Every call prints an `android-cli: tier=… source=native",
-                "device=…` line on stderr (quiet with `-q`) and propagates the",
-                "child's exit code. `/system/bin`",
-                "is never on the guest `PATH` - it would shadow the Ubuntu",
-                "userland - so reach it through `android-cli`, not by adding",
-                "it to `PATH` or symlinking binaries.",
-                "",
-                "## 3. The platform denies it: a higher tier, not a workaround",
-                "",
-                "Power comes from the uid, not the binary. `pm`, `am`,",
-                "`dumpsys`, `screencap`, `input`, `settings put` and similar",
-                "are denied to an app uid by the platform's own checks - the",
-                "child's own error passes through verbatim with an",
-                "`android-cli: hint:` line. The honest answers are:",
-                "",
-                "- the **shell tier**: the device's own `adbd` over loopback,",
-                "  once the user enables `adb tcpip` on the device - their",
-                "  enablement decision, not wired by default;",
-                "- the **root tier**: `android-cli su` on a rooted device - one",
-                "  Magisk prompt per grant.",
-                "",
-                "Never pretend a denied verb ran, never silently retry, and",
-                "never claim guest root is device root.",
-                "",
-                "## Never",
-                "",
-                "- Do not contact the real Termux:API app: it is",
-                "  signature-locked to the Termux uid and rejects any other",
-                "  caller. The `termux-*` names here are served by NusaDesk's",
-                "  bridge.",
-                "- Do not call the bridge socket directly with an invented",
-                "  method or params - the allowlist is fixed; use the",
-                "  installed CLIs.",
-                "- Do not read or print the session token in",
-                "  `/run/nusadesk/android-bridge.env`.",
-                "- Do not add `/system/bin` to `PATH`.",
-                "",
-                "## Exit codes",
-                "",
-                "- `termux-*`/`nusadesk-*`: `0` result, `1` typed bridge error,",
-                "  `2` usage or unreachable bridge.",
-                "- `android-cli`: the child's own exit code; `2` usage, `5`",
-                "  tool absent (or device `su` missing on a non-rooted phone).",
-                "",
-                "") + "\n";
-    }
-
-    /** One bundled seed file: a fixed guest-relative path plus its text. */
+    /** One bundled seed file: a fixed guest-relative path plus its bytes. */
     private static final class SeededFile {
         private final String relativePath;
-        private final String content;
+        private final byte[] content;
 
-        SeededFile(String relativePath, String content) {
+        SeededFile(String relativePath, byte[] content) {
             this.relativePath = relativePath;
             this.content = content;
         }
     }
 
-    private static List<SeededFile> seedFiles() {
+    /**
+     * The bundled seed files, read from {@code guest-docs/agents/}: asset
+     * paths match the {@code .agents} tree minus the leading dot. Seeded
+     * bodies carry no version; only {@code {{SKILL_NAME}}} is substituted so
+     * the skill frontmatter cannot desync from {@link #SKILL_NAME}.
+     */
+    private static List<SeededFile> seedFiles(
+            GuestAwarenessReadmeWriter.GuestDocSource source) throws IOException {
         List<SeededFile> files = new ArrayList<>();
-        files.add(new SeededFile(GUEST_AGENTS_MD_RELATIVE_PATH, agentsMdContent()));
-        files.add(new SeededFile(SKILL_FILE_RELATIVE_PATH, skillContent()));
+        for (String[] entry : SEED_FILES) {
+            files.add(new SeededFile(entry[0],
+                    new String(source.read(entry[1]), StandardCharsets.UTF_8)
+                            .replace(SKILL_NAME_TOKEN, SKILL_NAME)
+                            .getBytes(StandardCharsets.UTF_8)));
+        }
         return files;
     }
 

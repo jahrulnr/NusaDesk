@@ -56,8 +56,9 @@ Activity, manifest, input services and Kotlin dependencies.
    records installed versions. It is not yet a digest-pinned, product-managed
    GUI add-on or a general app installer.
 7. The default build omits the optional native binary and launcher tile.
-   Enabling the slice links GPL-3.0 Xlorie; do not describe that APK as MIT-only.
-   Preserve the root MIT notices for NusaDesk's own source and package upstream
+   Enabling the slice links GPL-3.0 Xlorie, matching NusaDesk's own GPL-3.0
+   license. Preserve the root GPL-3.0 notice for NusaDesk's own source and
+   package upstream
    native notices. Public distribution requires corresponding source/build
    materials and a combined-work license review; this experiment publishes no
    release and makes no legal clearance claim.

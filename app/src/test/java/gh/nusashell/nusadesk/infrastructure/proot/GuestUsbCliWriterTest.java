@@ -33,7 +33,7 @@ public class GuestUsbCliWriterTest {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
                 GuestOptionalTools.install(rootfs, "0.1.0",
-                        GuestOptionalTools.Kind.USB_ADB));
+                        GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE));
 
         Path cli = rootfs.resolve(GuestUsbCliWriter.GUEST_CLI_RELATIVE_PATH);
         assertTrue("CLI must exist", Files.isRegularFile(cli));
@@ -47,11 +47,11 @@ public class GuestUsbCliWriterTest {
         // Idempotent like the rest of the bundle.
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
                 GuestOptionalTools.install(rootfs, "0.1.0",
-                        GuestOptionalTools.Kind.USB_ADB));
+                        GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE));
         // A stale copy is replaced on version change.
         Files.write(cli, "stale".getBytes(StandardCharsets.UTF_8));
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestOptionalTools.reconcile(rootfs, "0.2.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.2.0", GuestDocsFixture.SOURCE));
         assertTrue(new String(Files.readAllBytes(cli), StandardCharsets.UTF_8)
                 .contains("App version: 0.2.0"));
     }
@@ -115,7 +115,7 @@ public class GuestUsbCliWriterTest {
                 interpreterAvailable());
         Path rootfs = temporary.newFolder("rootfs").toPath();
         GuestOptionalTools.install(rootfs, "0.1.0",
-                GuestOptionalTools.Kind.USB_ADB);
+                GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE);
         Path cli = rootfs.resolve(GuestUsbCliWriter.GUEST_CLI_RELATIVE_PATH);
         Path env = temporary.newFolder("env").toPath().resolve("android-bridge.env");
         Files.write(env, "placeholder".getBytes(StandardCharsets.UTF_8));

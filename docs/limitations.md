@@ -442,8 +442,9 @@ typed getters plus `rejectUnknown` make a misspelled key fail closed as
   returns explicit `location-permission-required`,
   `location-permission-denied`, `location-unavailable`, or
   `location-timeout` states; background location and continuous GPS are not
-  claimed. A successful fix is bounded to finite coordinates, accuracy,
-  provider, and timestamp.
+  claimed by `location.get` itself (they are the separate
+  `location.background.*` surface described below). A successful fix is
+  bounded to finite coordinates, accuracy, provider, and timestamp.
 - `sensor.list`, `sensor.read`, and `sensor.stream.*` cover the platform
   `SensorManager` catalogue (42 sensors on the test device) with bounded
   one-shot and sequential samples in the upstream `{SENSOR: {values: [..]}}`
@@ -470,8 +471,12 @@ typed getters plus `rejectUnknown` make a misspelled key fail closed as
   `<capability>-permission-required`/`-permission-denied` result, never a
   prompt from the bridge worker and never a fabricated read.
 - `location.stream.start`, `.poll`, and `.stop` provide a bounded
-  foreground-only pull stream with a capped queue; background location and
-  FGS startup are not wired.
+  foreground-only pull stream with a capped queue that lives only with the
+  bridge session. Continuous fixes are the separate
+  `location.background.start|poll|stop` surface behind `nusadesk-loc`: a
+  `location` foreground service that requires the "Allow all the time" grant
+  (on API 30+ there is no runtime dialog for it; Android 10 can still grant
+  it from a runtime prompt).
 - The request is a flat JSON object with `v`, `id`, `token`, `method`, and an
   optional bounded `params`; the response is a flat bounded JSON object.
   There is no arbitrary shell, reflection, URI, Binder, or class dispatch.
@@ -1109,7 +1114,7 @@ The future APK will likely need a small native execution bridge even though the 
 
 ### License and distribution
 
-PRoot is GPL-2.0-or-later. Packaging and distributing it requires GPLv2+ source/notice obligations, and the combined-work implications need legal review before distribution. Invoking PRoot as a separate executable is intended to keep the clearest practical GPL boundary, but **no GPL-cleanliness claim is made**. Dropbear (permissive/MIT-style) and OpenSSH (BSD) are includable in the curated rootfs, but their license/notice/attribution obligations apply. The app's own code is MIT-licensed (root `LICENSE`).
+PRoot is GPL-2.0-or-later. Packaging and distributing it requires GPLv2+ source/notice obligations, and the combined-work implications need legal review before distribution. Invoking PRoot as a separate executable is intended to keep the clearest practical GPL boundary, but **no GPL-cleanliness claim is made**. Dropbear (permissive/MIT-style) and OpenSSH (BSD) are includable in the curated rootfs, but their license/notice/attribution obligations apply. The app's own code is GPL-3.0-licensed (root `LICENSE`).
 
 ### Google Play
 

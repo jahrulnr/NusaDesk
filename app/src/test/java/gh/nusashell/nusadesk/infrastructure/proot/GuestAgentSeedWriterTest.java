@@ -37,7 +37,7 @@ public class GuestAgentSeedWriterTest {
         Path rootfs = temporary.newFolder("rootfs").toPath();
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAgentSeedWriter.ensure(rootfs, VERSION));
+                GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE));
 
         Path agentsMd = rootfs.resolve(AGENTS_MD);
         Path skill = rootfs.resolve(SKILL);
@@ -60,8 +60,8 @@ public class GuestAgentSeedWriterTest {
         Path stateFile = rootfs.resolve(STATE);
         assertTrue(Files.isRegularFile(stateFile));
         String state = text(stateFile);
-        assertTrue(state.contains(sha256(GuestAgentSeedWriter.agentsMdContent()) + " " + AGENTS_MD));
-        assertTrue(state.contains(sha256(GuestAgentSeedWriter.skillContent()) + " " + SKILL));
+        assertTrue(state.contains(sha256(GuestDocsFixture.agentsMd()) + " " + AGENTS_MD));
+        assertTrue(state.contains(sha256(GuestDocsFixture.skill()) + " " + SKILL));
         assertFalse(Files.exists(rootfs.resolve("root/.agents").resolve("agent-seed.state")));
     }
 
@@ -78,11 +78,11 @@ public class GuestAgentSeedWriterTest {
     @Test
     public void secondRunLeavesEverythingUntouched() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         long mtime = Files.getLastModifiedTime(rootfs.resolve(AGENTS_MD)).toMillis();
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAgentSeedWriter.ensure(rootfs, VERSION));
+                GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE));
         assertEquals(mtime,
                 Files.getLastModifiedTime(rootfs.resolve(AGENTS_MD)).toMillis());
     }
@@ -90,7 +90,7 @@ public class GuestAgentSeedWriterTest {
     @Test
     public void upgradeReplacesOnlyTheUnmodifiedSeed() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
 
         // Simulate an older shipped copy: the file on disk and the recorded
         // digest both describe bytes that are no longer the bundled text.
@@ -101,28 +101,28 @@ public class GuestAgentSeedWriterTest {
         rewriteStateEntry(rootfs, AGENTS_MD, sha256(oldShipped));
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAgentSeedWriter.ensure(rootfs, VERSION));
-        assertEquals(GuestAgentSeedWriter.agentsMdContent(), text(agentsMd));
+                GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE));
+        assertEquals(GuestDocsFixture.agentsMd(), text(agentsMd));
         assertTrue(text(rootfs.resolve(STATE))
-                .contains(sha256(GuestAgentSeedWriter.agentsMdContent()) + " " + AGENTS_MD));
+                .contains(sha256(GuestDocsFixture.agentsMd()) + " " + AGENTS_MD));
     }
 
     @Test
     public void userEditedFileIsNeverOverwrittenAcrossVersions() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         Path agentsMd = rootfs.resolve(AGENTS_MD);
         Files.write(agentsMd, "my own instructions\n".getBytes(StandardCharsets.UTF_8));
 
         // The state header notes the new app version, so the run reports a
         // write - but the edited file itself is never touched.
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAgentSeedWriter.ensure(rootfs, "9.9.9"));
+                GuestAgentSeedWriter.ensure(rootfs, "9.9.9", GuestDocsFixture.SOURCE));
         assertEquals("my own instructions\n", text(agentsMd));
         // The recorded baseline is still the installed digest, so a later
         // shipped change keeps hands off this file too.
         assertTrue(text(rootfs.resolve(STATE))
-                .contains(sha256(GuestAgentSeedWriter.agentsMdContent()) + " " + AGENTS_MD));
+                .contains(sha256(GuestDocsFixture.agentsMd()) + " " + AGENTS_MD));
     }
 
     @Test
@@ -133,25 +133,25 @@ public class GuestAgentSeedWriterTest {
         Files.write(agentsMd, "user file from before the feature existed\n"
                 .getBytes(StandardCharsets.UTF_8));
 
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         assertEquals("user file from before the feature existed\n", text(agentsMd));
         assertTrue(text(rootfs.resolve(STATE)).contains("- " + AGENTS_MD));
 
         // A foreign path that later disappears is never seeded over.
         Files.delete(agentsMd);
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         assertFalse(Files.exists(agentsMd));
     }
 
     @Test
     public void deletedSeedFileIsNotRecreatedOnLaterStarts() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         Path skill = rootfs.resolve(SKILL);
         Files.delete(skill);
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAgentSeedWriter.ensure(rootfs, VERSION));
+                GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE));
         assertFalse(Files.exists(skill));
         // The seed record survives so the deletion is remembered.
         assertTrue(text(rootfs.resolve(STATE)).contains(SKILL));
@@ -160,11 +160,11 @@ public class GuestAgentSeedWriterTest {
     @Test
     public void deletingTheWholeAgentsTreeIsNotUndone() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         deleteRecursively(rootfs.resolve("root/.agents"));
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAgentSeedWriter.ensure(rootfs, VERSION));
+                GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE));
         assertFalse(Files.exists(rootfs.resolve("root/.agents")));
         // The state file lives outside .agents, so it survived the deletion.
         assertTrue(Files.isRegularFile(rootfs.resolve(STATE)));
@@ -177,7 +177,7 @@ public class GuestAgentSeedWriterTest {
         Files.createDirectories(rootfs.resolve("root"));
         Files.createSymbolicLink(rootfs.resolve("root/.agents"), outside);
 
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
 
         assertFalse(Files.exists(outside.resolve("AGENTS.md")));
         assertTrue(Files.isSymbolicLink(rootfs.resolve("root/.agents")));
@@ -191,13 +191,13 @@ public class GuestAgentSeedWriterTest {
     @Test
     public void seededPathReplacedBySymlinkIsNotFollowed() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         Path agentsMd = rootfs.resolve(AGENTS_MD);
         Path elsewhere = temporary.newFile("elsewhere.md").toPath();
         Files.delete(agentsMd);
         Files.createSymbolicLink(agentsMd, elsewhere);
 
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         assertTrue(Files.isSymbolicLink(agentsMd));
         assertFalse(text(elsewhere).contains("NusaDesk guest"));
     }
@@ -205,13 +205,13 @@ public class GuestAgentSeedWriterTest {
     @Test
     public void corruptStateFileNeverOverwritesPresentFiles() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         Path agentsMd = rootfs.resolve(AGENTS_MD);
         Files.write(agentsMd, "user edit after seeding\n".getBytes(StandardCharsets.UTF_8));
         Path stateFile = rootfs.resolve(STATE);
         Files.write(stateFile, "garbage not a manifest\n".getBytes(StandardCharsets.UTF_8));
 
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
 
         // From an unreadable baseline every present path is treated as
         // user-owned; the file is preserved and pinned foreign.
@@ -229,7 +229,7 @@ public class GuestAgentSeedWriterTest {
         Files.createSymbolicLink(rootfs.resolve("var/lib/nusadesk"), outside);
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAgentSeedWriter.ensure(rootfs, VERSION));
+                GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE));
         assertFalse(Files.exists(rootfs.resolve("root/.agents")));
         assertFalse(Files.exists(outside.resolve("agent-seed.state")));
     }
@@ -243,7 +243,7 @@ public class GuestAgentSeedWriterTest {
     @Test
     public void unreadableSeedOrStateNeverFailsTheSession() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         Path agentsMd = rootfs.resolve(AGENTS_MD);
         Files.setPosixFilePermissions(agentsMd,
                 java.nio.file.attribute.PosixFilePermissions.fromString("---------"));
@@ -251,7 +251,7 @@ public class GuestAgentSeedWriterTest {
                 !Files.isReadable(agentsMd));
 
         // Must not throw, and the unreadable seeded file must survive.
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         assertTrue(Files.exists(agentsMd));
 
         Path state = rootfs.resolve(STATE);
@@ -261,7 +261,7 @@ public class GuestAgentSeedWriterTest {
                 !Files.isReadable(state));
 
         // Must not throw; the bookkeeping is rebuilt conservatively.
-        GuestAgentSeedWriter.ensure(rootfs, VERSION);
+        GuestAgentSeedWriter.ensure(rootfs, VERSION, GuestDocsFixture.SOURCE);
         assertTrue(Files.isRegularFile(state));
     }
 
@@ -269,10 +269,20 @@ public class GuestAgentSeedWriterTest {
     public void rejectsUnsafeVersionText() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         try {
-            GuestAgentSeedWriter.ensure(rootfs, "0.1.0\nrm -rf /");
+            GuestAgentSeedWriter.ensure(rootfs, "0.1.0\nrm -rf /", GuestDocsFixture.SOURCE);
             org.junit.Assert.fail("expected multiline version to be rejected");
         } catch (IllegalArgumentException expected) {
             assertTrue(expected.getMessage().contains("single safe line"));
+        }
+    }
+
+    @Test
+    public void rejectsNullDocSource() throws Exception {
+        Path rootfs = temporary.newFolder("rootfs").toPath();
+        try {
+            GuestAgentSeedWriter.ensure(rootfs, VERSION, null);
+            org.junit.Assert.fail("null doc source must be rejected");
+        } catch (IllegalArgumentException expected) {
         }
     }
 

@@ -38,7 +38,7 @@ public class GuestOptionalToolsTest {
         assertFalse(GuestOptionalTools.isInstalled(rootfs,
                 GuestOptionalTools.Kind.TERMUX));
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestOptionalTools.reconcile(rootfs, "0.3.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
 
         // A skipped reconcile creates nothing at all.
         assertFalse(Files.exists(rootfs.resolve(
@@ -53,7 +53,7 @@ public class GuestOptionalToolsTest {
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
                 GuestOptionalTools.install(rootfs, "0.3.0",
-                        GuestOptionalTools.Kind.USB_ADB));
+                        GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE));
 
         Path cli = rootfs.resolve(GuestUsbCliWriter.GUEST_CLI_RELATIVE_PATH);
         Path daemon = rootfs.resolve(GuestUsbDaemonWriter.GUEST_DAEMON_RELATIVE_PATH);
@@ -101,7 +101,7 @@ public class GuestOptionalToolsTest {
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
                 GuestOptionalTools.install(rootfs, "0.3.0",
-                        GuestOptionalTools.Kind.TERMUX));
+                        GuestOptionalTools.Kind.TERMUX, GuestDocsFixture.SOURCE));
 
         for (String command : GuestTermuxCompatWriter.COMMANDS) {
             Path script = rootfs.resolve(
@@ -136,17 +136,17 @@ public class GuestOptionalToolsTest {
     public void installIsIdempotentAndReconcileStaysQuiet() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
 
-        GuestOptionalTools.install(rootfs, "0.3.0", GuestOptionalTools.Kind.USB_ADB);
-        GuestOptionalTools.install(rootfs, "0.3.0", GuestOptionalTools.Kind.TERMUX);
+        GuestOptionalTools.install(rootfs, "0.3.0", GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE);
+        GuestOptionalTools.install(rootfs, "0.3.0", GuestOptionalTools.Kind.TERMUX, GuestDocsFixture.SOURCE);
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
                 GuestOptionalTools.install(rootfs, "0.3.0",
-                        GuestOptionalTools.Kind.USB_ADB));
+                        GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE));
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
                 GuestOptionalTools.install(rootfs, "0.3.0",
-                        GuestOptionalTools.Kind.TERMUX));
+                        GuestOptionalTools.Kind.TERMUX, GuestDocsFixture.SOURCE));
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestOptionalTools.reconcile(rootfs, "0.3.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
         assertTrue(GuestOptionalTools.isInstalled(rootfs,
                 GuestOptionalTools.Kind.USB_ADB));
         assertTrue(GuestOptionalTools.isInstalled(rootfs,
@@ -156,13 +156,13 @@ public class GuestOptionalToolsTest {
     @Test
     public void reconcileRefreshesInstalledBundleOnVersionBump() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestOptionalTools.install(rootfs, "0.3.0", GuestOptionalTools.Kind.USB_ADB);
+        GuestOptionalTools.install(rootfs, "0.3.0", GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE);
 
         Path cli = rootfs.resolve(GuestUsbCliWriter.GUEST_CLI_RELATIVE_PATH);
         Files.write(cli, "stale".getBytes(StandardCharsets.UTF_8));
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestOptionalTools.reconcile(rootfs, "0.4.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.4.0", GuestDocsFixture.SOURCE));
         assertTrue(new String(Files.readAllBytes(cli), StandardCharsets.UTF_8)
                 .contains("App version: 0.4.0"));
         String markerText = new String(Files.readAllBytes(rootfs.resolve(
@@ -187,7 +187,7 @@ public class GuestOptionalToolsTest {
                 GuestOptionalTools.Kind.USB_ADB));
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestOptionalTools.reconcile(rootfs, "0.3.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
         assertTrue(Files.isRegularFile(rootfs.resolve(
                 GuestOptionalTools.markerRelativePath(
                         GuestOptionalTools.Kind.USB_ADB)),
@@ -202,7 +202,7 @@ public class GuestOptionalToolsTest {
                 rootfs.resolve(GuestUsbShimWriter.SHIM_GUEST_PATH)));
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestOptionalTools.reconcile(rootfs, "0.3.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
     }
 
     @Test
@@ -225,7 +225,7 @@ public class GuestOptionalToolsTest {
         assertTrue(GuestOptionalTools.isInstalled(rootfs,
                 GuestOptionalTools.Kind.TERMUX));
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestOptionalTools.reconcile(rootfs, "0.3.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
 
         assertTrue(Files.isRegularFile(rootfs.resolve(
                 GuestOptionalTools.markerRelativePath(
@@ -257,7 +257,7 @@ public class GuestOptionalToolsTest {
         assertFalse(GuestOptionalTools.isInstalled(rootfs,
                 GuestOptionalTools.Kind.TERMUX));
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestOptionalTools.reconcile(rootfs, "0.3.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
 
         assertTrue(java.util.Arrays.equals(userUsb,
                 Files.readAllBytes(bin.resolve(GuestUsbCliWriter.CLI_FILE_NAME))));
@@ -283,7 +283,7 @@ public class GuestOptionalToolsTest {
                 GuestTermuxCompatWriter.scriptContent("termux-battery-status", "0.0.9")
                         .getBytes(StandardCharsets.UTF_8));
 
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.3.0");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.3.0", GuestDocsFixture.SOURCE);
 
         assertTrue(GuestOptionalTools.isInstalled(rootfs,
                 GuestOptionalTools.Kind.USB_ADB));
@@ -302,7 +302,7 @@ public class GuestOptionalToolsTest {
 
         // And the next start is quiet.
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.3.0"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
     }
 
     @Test
@@ -324,12 +324,12 @@ public class GuestOptionalToolsTest {
         assertFalse(GuestOptionalTools.isInstalled(rootfs,
                 GuestOptionalTools.Kind.USB_ADB));
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestOptionalTools.reconcile(rootfs, "0.3.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
         assertTrue(Files.isSymbolicLink(link));
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
                 GuestOptionalTools.install(rootfs, "0.3.0",
-                        GuestOptionalTools.Kind.USB_ADB));
+                        GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE));
         assertTrue(Files.isRegularFile(link, LinkOption.NOFOLLOW_LINKS));
         assertTrue(java.util.Arrays.equals(outsideBytes,
                 Files.readAllBytes(outside)));
@@ -349,7 +349,7 @@ public class GuestOptionalToolsTest {
 
         try {
             GuestOptionalTools.install(rootfs, "0.3.0",
-                    GuestOptionalTools.Kind.USB_ADB);
+                    GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE);
             fail("expected the symlinked state dir to be rejected");
         } catch (IOException expected) {
             assertTrue(expected.getMessage().contains("optional-tools"));
@@ -377,7 +377,7 @@ public class GuestOptionalToolsTest {
         assertFalse(GuestOptionalTools.isInstalled(rootfs,
                 GuestOptionalTools.Kind.USB_ADB));
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestOptionalTools.reconcile(rootfs, "0.3.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.3.0", GuestDocsFixture.SOURCE));
         assertTrue("the unreadable foreign file must be left in place",
                 Files.exists(cli));
     }
@@ -387,18 +387,24 @@ public class GuestOptionalToolsTest {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         try {
             GuestOptionalTools.install(null, "0.3.0",
-                    GuestOptionalTools.Kind.USB_ADB);
+                    GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE);
             fail("null rootfs must be rejected");
         } catch (IllegalArgumentException expected) {
         }
         try {
-            GuestOptionalTools.install(rootfs, "0.3.0", null);
+            GuestOptionalTools.install(rootfs, "0.3.0",
+                    GuestOptionalTools.Kind.USB_ADB, null);
+            fail("null doc source must be rejected");
+        } catch (IllegalArgumentException expected) {
+        }
+        try {
+            GuestOptionalTools.install(rootfs, "0.3.0", null, GuestDocsFixture.SOURCE);
             fail("null kind must be rejected");
         } catch (IllegalArgumentException expected) {
         }
         try {
             GuestOptionalTools.install(rootfs, "0.3.0\nrm -rf /",
-                    GuestOptionalTools.Kind.USB_ADB);
+                    GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE);
             fail("unsafe version must be rejected");
         } catch (IllegalArgumentException expected) {
         }
@@ -413,8 +419,13 @@ public class GuestOptionalToolsTest {
         } catch (IllegalArgumentException expected) {
         }
         try {
-            GuestOptionalTools.reconcile(null, "0.3.0");
+            GuestOptionalTools.reconcile(null, "0.3.0", GuestDocsFixture.SOURCE);
             fail("null rootfs must be rejected");
+        } catch (IllegalArgumentException expected) {
+        }
+        try {
+            GuestOptionalTools.reconcile(rootfs, "0.3.0", null);
+            fail("null doc source must be rejected");
         } catch (IllegalArgumentException expected) {
         }
     }

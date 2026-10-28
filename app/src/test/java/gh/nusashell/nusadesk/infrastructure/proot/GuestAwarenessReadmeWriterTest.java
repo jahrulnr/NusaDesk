@@ -26,7 +26,7 @@ public class GuestAwarenessReadmeWriterTest {
         Path rootfs = temporary.newFolder("rootfs").toPath();
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE));
         Path readme = rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_RELATIVE_PATH);
         String text = new String(Files.readAllBytes(readme), StandardCharsets.UTF_8);
 
@@ -42,18 +42,19 @@ public class GuestAwarenessReadmeWriterTest {
         assertTrue(text.contains("(docs/battery-sensors-location.md)"));
         assertTrue(text.contains("(docs/messaging-telephony.md)"));
         assertTrue(text.contains("(docs/desktop.md)"));
+        assertTrue(text.contains("(docs/environment.md)"));
         // Conditional on the optional Termux toolkit (ADR-0057): named, not
         // linked, because a core-only install has no termux-compat.md.
         assertTrue(text.contains("termux-compat.md"));
         assertTrue(text.contains("optional toolkit"));
         assertFalse(text.contains("(docs/termux-compat.md)"));
-        assertTrue(text.split("\\n", -1).length < 34);
+        assertTrue(text.split("\\n", -1).length < 36);
     }
 
     @Test
     public void writesDocsAndExecutableCli() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
 
         assertTrue(Files.isRegularFile(rootfs.resolve("root/docs/README.md")));
         assertTrue(Files.isRegularFile(rootfs.resolve("root/docs/bridge.md")));
@@ -61,6 +62,7 @@ public class GuestAwarenessReadmeWriterTest {
         assertTrue(Files.isRegularFile(
                 rootfs.resolve("root/docs/battery-sensors-location.md")));
         assertTrue(Files.isRegularFile(rootfs.resolve("root/docs/messaging-telephony.md")));
+        assertTrue(Files.isRegularFile(rootfs.resolve("root/docs/environment.md")));
         Path desktop = rootfs.resolve("root/docs/desktop.md");
         assertTrue(Files.isRegularFile(desktop));
         assertTrue(Files.readString(desktop).contains("version 0.1.0"));
@@ -84,13 +86,13 @@ public class GuestAwarenessReadmeWriterTest {
         Path rootfs = temporary.newFolder("rootfs").toPath();
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE));
         byte[] readme = Files.readAllBytes(
                 rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_RELATIVE_PATH));
         byte[] cli = Files.readAllBytes(
                 rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_CLI_RELATIVE_PATH));
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE));
         assertTrue(java.util.Arrays.equals(readme, Files.readAllBytes(
                 rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_RELATIVE_PATH))));
         assertTrue(java.util.Arrays.equals(cli, Files.readAllBytes(
@@ -100,7 +102,7 @@ public class GuestAwarenessReadmeWriterTest {
     @Test
     public void refreshesDesktopGuideAndItsDiscoveryLinksWithoutAVersionChange() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6", GuestDocsFixture.SOURCE);
         Path desktop = rootfs.resolve("root/docs/desktop.md");
         assertTrue(Files.isRegularFile(desktop));
         String expected = Files.readString(desktop);
@@ -109,18 +111,18 @@ public class GuestAwarenessReadmeWriterTest {
         Files.writeString(rootfs.resolve("root/docs/README.md"), "old index");
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6", GuestDocsFixture.SOURCE));
         assertEquals(expected, Files.readString(desktop));
         assertTrue(Files.readString(rootfs.resolve("root/README.md")).contains("(docs/desktop.md)"));
         assertTrue(Files.readString(rootfs.resolve("root/docs/README.md")).contains("(desktop.md)"));
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.14.6", GuestDocsFixture.SOURCE));
     }
 
     @Test
     public void versionChangeReplacesStaleAwarenessText() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
         Path readme = rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_RELATIVE_PATH);
         Path mediaDoc = rootfs.resolve("root/docs/media.md");
         Path cli = rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_CLI_RELATIVE_PATH);
@@ -129,7 +131,7 @@ public class GuestAwarenessReadmeWriterTest {
         Files.write(cli, "stale cli text".getBytes(StandardCharsets.UTF_8));
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.0"));
+                GuestAwarenessReadmeWriter.ensure(rootfs, "0.2.0", GuestDocsFixture.SOURCE));
         String readmeText = new String(Files.readAllBytes(readme), StandardCharsets.UTF_8);
         assertTrue(readmeText.contains("App version: 0.2.0"));
         assertFalse(readmeText.contains("stale user-visible text"));
@@ -144,7 +146,7 @@ public class GuestAwarenessReadmeWriterTest {
     @Test
     public void ensureLeavesOptionalToolBundlesUnchosenOnFreshRootfs() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
 
         // The shared termux_compat module is core: android-cli and the
         // nusadesk-* clients import it even without the Termux command set.
@@ -179,7 +181,7 @@ public class GuestAwarenessReadmeWriterTest {
     @Test
     public void ensureSeedsTheUserOwnedAgentBundle() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
 
         assertTrue(Files.isRegularFile(
                 rootfs.resolve(GuestAgentSeedWriter.GUEST_AGENTS_MD_RELATIVE_PATH)));
@@ -196,7 +198,7 @@ public class GuestAwarenessReadmeWriterTest {
         Files.createSymbolicLink(rootfs.resolve("root"), outside.getFileName());
 
         try {
-            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
             fail("expected root symlink to be rejected");
         } catch (java.io.IOException expected) {
             assertTrue(expected.getMessage().contains("/root"));
@@ -212,7 +214,7 @@ public class GuestAwarenessReadmeWriterTest {
         Files.createSymbolicLink(rootfs.resolve("root/docs"), outside.getFileName());
 
         try {
-            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
             fail("expected docs symlink to be rejected");
         } catch (java.io.IOException expected) {
             assertTrue(expected.getMessage().contains("/root/docs"));
@@ -228,7 +230,7 @@ public class GuestAwarenessReadmeWriterTest {
         Files.createSymbolicLink(rootfs.resolve("usr/local/bin"), outside.getFileName());
 
         try {
-            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
             fail("expected /usr/local/bin symlink to be rejected");
         } catch (java.io.IOException expected) {
             assertTrue(expected.getMessage().contains("/usr/local/bin"));
@@ -240,10 +242,33 @@ public class GuestAwarenessReadmeWriterTest {
     public void rejectsUnsafeVersionText() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         try {
-            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0\nmanaged");
+            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0\nmanaged", GuestDocsFixture.SOURCE);
             fail("expected multiline version to be rejected");
         } catch (IllegalArgumentException expected) {
             assertTrue(expected.getMessage().contains("single safe line"));
+        }
+    }
+
+    @Test
+    public void rejectsNullDocSource() throws Exception {
+        Path rootfs = temporary.newFolder("rootfs").toPath();
+        try {
+            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", null);
+            fail("null doc source must be rejected");
+        } catch (IllegalArgumentException expected) {
+        }
+    }
+
+    @Test
+    public void failingDocSourcePropagatesIoException() throws Exception {
+        Path rootfs = temporary.newFolder("rootfs").toPath();
+        try {
+            GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", path -> {
+                throw new java.io.IOException("bundled doc missing");
+            });
+            fail("a failing doc source must propagate");
+        } catch (java.io.IOException expected) {
+            assertTrue(expected.getMessage().contains("bundled doc missing"));
         }
     }
 

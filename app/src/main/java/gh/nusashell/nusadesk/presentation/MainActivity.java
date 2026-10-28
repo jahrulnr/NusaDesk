@@ -79,6 +79,7 @@ import gh.nusashell.nusadesk.infrastructure.homescreen.PinnedShortcutProof;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogCatalog;
 import gh.nusashell.nusadesk.infrastructure.logs.GuestLogTail;
+import gh.nusashell.nusadesk.infrastructure.proot.GuestAwarenessReadmeWriter;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestBaseExtras;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestOptionalTools;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
@@ -2952,7 +2953,8 @@ public final class MainActivity extends Activity {
         publishOptionalSnapshot(kind, RuntimeState.DOWNLOADING,
                 "Installing " + label);
         try {
-            GuestOptionalTools.install(rootfs, installedVersionName(), kind);
+            GuestOptionalTools.install(rootfs, installedVersionName(), kind,
+                    GuestAwarenessReadmeWriter.assetSource(getAssets()));
             publishOptionalSnapshot(kind, RuntimeState.READY, label + " installed");
         } catch (IOException | RuntimeException failure) {
             if (GuestOptionalTools.isInstalled(rootfs, kind)) {

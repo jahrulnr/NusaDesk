@@ -27,7 +27,7 @@ public class GuestUsbDaemonWriterTest {
         Path rootfs = temporary.newFolder("rootfs").toPath();
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
                 GuestOptionalTools.install(rootfs, "0.1.0",
-                        GuestOptionalTools.Kind.USB_ADB));
+                        GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE));
 
         Path daemon = rootfs.resolve(GuestUsbDaemonWriter.GUEST_DAEMON_RELATIVE_PATH);
         assertTrue("daemon must exist", Files.isRegularFile(daemon));
@@ -40,10 +40,10 @@ public class GuestUsbDaemonWriterTest {
 
         assertEquals(GuestAwarenessReadmeWriter.Result.UNCHANGED,
                 GuestOptionalTools.install(rootfs, "0.1.0",
-                        GuestOptionalTools.Kind.USB_ADB));
+                        GuestOptionalTools.Kind.USB_ADB, GuestDocsFixture.SOURCE));
         Files.write(daemon, "stale".getBytes(StandardCharsets.UTF_8));
         assertEquals(GuestAwarenessReadmeWriter.Result.UPDATED,
-                GuestOptionalTools.reconcile(rootfs, "0.2.0"));
+                GuestOptionalTools.reconcile(rootfs, "0.2.0", GuestDocsFixture.SOURCE));
         assertTrue(new String(Files.readAllBytes(daemon), StandardCharsets.UTF_8)
                 .contains("App version: 0.2.0"));
     }

@@ -129,19 +129,22 @@ public final class GuestOptionalTools {
      * @param activeRootfs validated active rootfs directory
      * @param appVersion APK version name, not user input
      * @param kind the bundle to install
+     * @param docSource source of the bundled doc files the bundle ships
      * @return whether any file or the marker was written
      * @throws IOException when a fixed path is unsafe or cannot be written
      */
     public static GuestAwarenessReadmeWriter.Result install(Path activeRootfs,
-            String appVersion, Kind kind) throws IOException {
-        if (activeRootfs == null) {
-            throw new IllegalArgumentException("activeRootfs must not be null");
+            String appVersion, Kind kind,
+            GuestAwarenessReadmeWriter.GuestDocSource docSource)
+            throws IOException {
+        if (activeRootfs == null || docSource == null) {
+            throw new IllegalArgumentException("activeRootfs/docSource must not be null");
         }
         if (kind == null) {
             throw new IllegalArgumentException("kind must not be null");
         }
         String version = GuestAwarenessReadmeWriter.requireVersionForWriter(appVersion);
-        boolean updated = ensureKindFiles(kind, activeRootfs, version);
+        boolean updated = ensureKindFiles(kind, activeRootfs, version, docSource);
         Path stateDir = GuestAwarenessReadmeWriter.prepareDirectory(activeRootfs,
                 GUEST_STATE_DIR_RELATIVE_PATH,
                 "guest /" + GUEST_STATE_DIR_RELATIVE_PATH);
@@ -163,19 +166,22 @@ public final class GuestOptionalTools {
      *
      * @param activeRootfs validated active rootfs directory
      * @param appVersion APK version name, not user input
+     * @param docSource source of the bundled doc files a bundle ships
      * @return whether any file or marker was written
      * @throws IOException when a fixed path is unsafe or cannot be written
      */
     public static GuestAwarenessReadmeWriter.Result reconcile(Path activeRootfs,
-            String appVersion) throws IOException {
-        if (activeRootfs == null) {
-            throw new IllegalArgumentException("activeRootfs must not be null");
+            String appVersion,
+            GuestAwarenessReadmeWriter.GuestDocSource docSource)
+            throws IOException {
+        if (activeRootfs == null || docSource == null) {
+            throw new IllegalArgumentException("activeRootfs/docSource must not be null");
         }
         String version = GuestAwarenessReadmeWriter.requireVersionForWriter(appVersion);
         boolean updated = false;
         for (Kind kind : Kind.values()) {
             if (installRecordedOrAdoptable(activeRootfs, kind)) {
-                updated |= install(activeRootfs, version, kind)
+                updated |= install(activeRootfs, version, kind, docSource)
                         == GuestAwarenessReadmeWriter.Result.UPDATED;
             }
         }
@@ -226,7 +232,9 @@ public final class GuestOptionalTools {
 
     /** Write one bundle's guest files; @return whether any file was updated. */
     private static boolean ensureKindFiles(Kind kind, Path activeRootfs,
-            String version) throws IOException {
+            String version,
+            GuestAwarenessReadmeWriter.GuestDocSource docSource)
+            throws IOException {
         switch (kind) {
             case USB_ADB:
                 Path bin = GuestAwarenessReadmeWriter.prepareDirectory(activeRootfs,
@@ -257,7 +265,8 @@ public final class GuestOptionalTools {
                         FILE_PERMISSIONS);
                 return updated;
             case TERMUX:
-                return GuestTermuxCompatWriter.ensure(activeRootfs, version)
+                // Only the Termux bundle ships a bundled doc (termux-compat.md).
+                return GuestTermuxCompatWriter.ensure(activeRootfs, version, docSource)
                         == GuestAwarenessReadmeWriter.Result.UPDATED;
             default:
                 throw new IllegalStateException("unhandled kind " + kind);

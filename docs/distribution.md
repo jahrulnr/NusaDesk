@@ -1,13 +1,12 @@
 # Native desktop APK distribution
 
-Regular NusaDesk APKs include GPL-3.0 Termux:X11/Xlorie code. Distribution of
-that combined APK follows GPL-3.0 terms; it must not be described as MIT-only.
-The repository's own code retains its MIT license and copyright notice.
-Dependency-specific notices and licenses remain applicable. The full GPL text
-is in `third_party/termux-x11/LICENSE` and is packaged in the APK at
-`assets/licenses/native-display/Termux-X11-GPL-3.0.txt`.
+NusaDesk's own code is GPL-3.0 (root `LICENSE`). Regular NusaDesk APKs also
+include GPL-3.0 Termux:X11/Xlorie code, so the whole APK is GPL-3.0
+throughout. Dependency-specific notices and licenses remain applicable. The
+full GPL text is in `third_party/termux-x11/LICENSE` and is packaged in the
+APK at `assets/licenses/native-display/Termux-X11-GPL-3.0.txt`.
 
-The integration review retains Xlorie's GPL-3.0 notice, the existing MIT host
+The integration review retains Xlorie's GPL-3.0 notice, the GPL-3.0 host
 source grant, and the Xorg/submodule notices. The native build copies dependency
 notices into the APK. Source pins and the patch remain tracked. This records
 the project's distribution choice and materials; it makes no legal-clearance

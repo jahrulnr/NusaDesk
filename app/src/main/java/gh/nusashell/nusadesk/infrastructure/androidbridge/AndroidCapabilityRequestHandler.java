@@ -22,10 +22,11 @@ import java.util.Map;
  *
  * <p>The unified live media session ({@code media.start} / {@code media.status}
  * / {@code media.stop}) is live-only: Android captures camera + microphone
- * and serves one loopback RTSP stream to the guest, no capture artifact is
- * ever written, and no artifact directory or path is advertised or exposed.
- * The session is owned by the current bridge session and stops when the
- * bridge closes.</p>
+ * and serves one loopback RTSP stream to the guest; the session itself
+ * writes no capture artifact. Still photos and microphone recordings are a
+ * separate surface ({@code camera.photo}, {@code microphone.record.*}) that
+ * stages files at guest-supplied paths. The session is owned by the current
+ * bridge session and stops when the bridge closes.</p>
  *
  * <p>The messaging/telephony/contacts reads are read-only with fixed
  * {@link MessagingQuery#all()} defaults; the side-effecting methods
@@ -35,10 +36,10 @@ import java.util.Map;
  * a foreground-only pull contract ({@code location.stream.start} /
  * {@code location.stream.poll} / {@code location.stream.stop}) with one fixed
  * bounded request ({@link #LOCATION_STREAM_INTERVAL_MILLIS} ms, fine accuracy
- * that the adapter degrades under a coarse-only grant). Background location
- * and a location foreground-service start are deliberately not wired in this
- * phase: the stream lives only while the bridge session is live, and closing
- * the bridge stops it.</p>
+ * that the adapter degrades under a coarse-only grant): the stream lives only
+ * while the bridge session is live, and closing the bridge stops it.
+ * Continuous fixes are the separate {@code location.background.*} module
+ * served by a location foreground service.</p>
  *
  * <p>The calendar slice is bounded in both directions. {@code calendar.list}
  * reads a fixed seven-day window of the provider's instance table with a

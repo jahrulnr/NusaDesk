@@ -33,7 +33,7 @@ public class GuestAwarenessCliTest {
     @Test
     public void cliIsExecutableFixedAllowlistWithNoGenericCallPassthrough() throws Exception {
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
         Path cli = rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_CLI_RELATIVE_PATH);
         String content = new String(Files.readAllBytes(cli), StandardCharsets.UTF_8);
 
@@ -100,7 +100,7 @@ public class GuestAwarenessCliTest {
         assumeTrue("python3 must be available for the live CLI round-trip",
                 interpreterAvailable());
         Path rootfs = temporary.newFolder("rootfs").toPath();
-        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0");
+        GuestAwarenessReadmeWriter.ensure(rootfs, "0.1.0", GuestDocsFixture.SOURCE);
         Path cli = rootfs.resolve(GuestAwarenessReadmeWriter.GUEST_CLI_RELATIVE_PATH);
         Path env = temporary.newFolder("env").toPath().resolve("android-bridge.env");
         Files.write(env, "placeholder".getBytes(StandardCharsets.UTF_8));
