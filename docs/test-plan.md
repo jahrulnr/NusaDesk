@@ -1632,6 +1632,73 @@ window state, not an app-side flag. Driven over `adb shell input`; the lab's
 | CHG-002 | Tap `Read more` | Chrome opened `github.com/jahrulnr/NusaDesk/blob/master/CHANGELOG.md` |
 | VER-001 | `adb install -r` the signed QA build over the installed 0.14.2 (`versionCode 25`) | Update accepted: `dumpsys package` reports `versionCode=14003`, `versionName=0.14.3` — the derived code stays monotonic above the last hand-edited one |
 
+## Web-app guest downloads (ADR-0083), 2026-10-29
+
+Physical evidence: Samsung SM-G935F/FloydROM Android 10/API 29, arm64-v8a,
+4 KB pages, signed release 0.14.8 updated with `adb install -r`. Installed APK
+SHA-256 matched the built APK:
+`612b65d71788c6d01325ee943fcd346a483fec2794ac406d08282c2f8fa10b5a`.
+The app's existing Linux guest and launcher registrations were retained.
+The fixture ran inside that guest at `127.0.0.1:18995`, using
+`scripts/qa/webapp-download-fixture.py`. Evidence captures and JSON file digests
+were kept in `/tmp/nusadesk-download-device` on the QA workstation.
+
+| ID | Action | Result |
+| --- | --- | --- |
+| DL-001 | Tap cookie-protected attachment in the root WebView | PASS: `/root/Downloads/qa-nusadesk-download-20261029-file.bin`, 262144 bytes, SHA-256 `2312394bd99545d9de131c24efb781e765ac1aec243f2ed9347597a793a415e9`, matching the source. The fixture requires the HttpOnly session cookie. |
+| DL-002 | Download the same name twice | PASS: original preserved; a numbered `(1)` file with the same bytes was added. |
+| DL-003 | Download a throttled 2 MiB attachment | PASS: native banner displayed textual percent and a progress bar; completed file was 2097152 bytes, SHA-256 `91d3beb88a9b2f778a6c44a1c53b63d3c79931845a9aef84b3fb414610bd1938`. |
+| DL-004 | Native re-fetch gets HTTP 503, then tap Try again | PASS: page remained visible; failure banner showed HTTP 503 and Retry/Dismiss; Retry saved the expected 262144 bytes and matching digest. |
+| DL-005 | Open `target=_blank` child tab and download | PASS: child tab used the same destination and produced `(2).bin`, matching the original digest. |
+| DL-006 | Inspect saved/failure/progress banners | PASS: screenshots inspected; path text wraps, progress remains readable, and Retry/Dismiss remain tappable. |
+| DL-007 | Other APIs/OEMs/page sizes; process death/background guarantees | UNTESTED on device; no additional runtime support or background-survival claim. |
+| DL-008 | Return to launcher immediately after starting another throttled download | PASS: no final `(1)` file existed at the switch; while the launcher stayed visible, `slow (1).bin` appeared with the expected 2 MiB size and digest. |
+
+The initial hardlink publication implementation failed on this physical device
+despite passing JVM tests. It was replaced by a same-directory move without
+replacement options, and DL-001…DL-005 were repeated on the APK identified above.
+Focused JVM tests additionally cover saved Basic credentials, wrong ports and
+schemes, redirects, truncated response cleanup, cancellation and unsafe directory
+links. Robolectric executes root/child listener wiring and banner/retry/release.
+`make check PYTHON=/usr/bin/python3` passed: 2575 JVM tests, 34 Python tests,
+all JavaScript policy tests, lintDebug, assembleDebug and desktop APK validation.
+`make release PYTHON=/usr/bin/python3` passed with the expected release signer.
+Cleanup removed the fixture's six downloaded files, stopped its guest and host
+servers, removed the temporary launcher registration and adb mappings, and
+restored the original screen timeout. The signed build remains installed.
+
+## Browser-created exports (ADR-0084), 2026-10-29
+
+Device: Samsung SM-G935F/FloydROM Android 10/API 29, arm64-v8a, 4 KB pages;
+Android System WebView `com.google.android.webview` 156.0.8078.47. The fixture
+`scripts/qa/webapp-binary-download-fixture.py` ran inside the existing guest on
+loopback port 18995. JSON digests and inspected screenshots are retained under
+`/tmp/nusadesk-binary-device` on the QA workstation.
+
+| ID | Export/action | Result |
+| --- | --- | --- |
+| BX-001 | Detached anchor `.click()` then immediate revoke | PASS: CSV, 38 UTF-8 bytes including Japanese text and punctuation; SHA-256 `bbea7d1c6e322a716f7626304e707451a726bf6971e5e638bd127c810461e6c2`. |
+| BX-002 | Percent-encoded data URL | PASS: JSON with Unicode, 32 bytes; SHA-256 `82b320bedffa3e5d4479b41ef329bb59e51a725cf03d7b3b39647b7596ca7481`. |
+| BX-003 | Base64 data URL and empty Blob | PASS: exact bytes `00 01 fe ff`; zero-byte file published successfully. |
+| BX-004 | 16 MiB generated Blob | PASS: 16777216 bytes, SHA-256 `341aacac661ccb210720bedaa9ead5d668fe5ea41a73532fc147c71e34040df1`; progress banner inspected. |
+| BX-005 | `window.open` a File object, immediately revoke | PASS: File.name retained; 16-byte content `from-window-open` matched. |
+| BX-006 | Export from same-origin iframe | PASS: 13-byte `iframe export` content matched. |
+| BX-007 | Export from child tab | PASS: numbered `(1).csv` kept the original; both had identical digests. |
+| BX-008 | Export in an early inline script before page finish | PASS: `early export`, 12 bytes, saved before any user click in the new document. |
+| BX-009 | Navigate during a 32 MiB export | PASS: explicit failure on the new page, no final cancelled filename and no `.part` files remained. |
+| BX-010 | HTTP attachment after adding the binary channel | PASS: exact bytes `00 01 80 ff`; the existing HTTP path remained functional. |
+| BX-011 | Final signed APK update and smoke | PASS: Blob CSV and data JSON repeated after in-place installation; built/installed SHA-256 `bd446979686a6b6bea4bd5a1d3749813d1ba110fac1fe223dd38020c34641f09` matched. |
+| BX-012 | Other OEM/API/page sizes, old providers, opaque/cross-origin frames | UNTESTED on device; no compatibility claim beyond the device/provider above. |
+
+All ten completed fixture files were checked for exact length and SHA-256;
+the cancelled export produced no completed file. Final gate:
+`make check PYTHON=/usr/bin/python3` passed (2582 JVM tests, 34 Python tests,
+all JavaScript tests including the shipped export script, lintDebug,
+assembleDebug and desktop APK verification). The signed release gate passed
+with the existing release signer. An earlier full run hit the unrelated RTSP
+stop assertion; its isolated rerun and the final complete gate passed without
+changing RTSP code or tests.
+
 ## License and distribution note
 
 - PRoot is GPL-2.0-or-later. Packaging/distributing it requires GPLv2+

@@ -361,8 +361,23 @@ flowchart TD
   `CameraCaptureProvider`, a non-exported provider reachable only through the
   launch intent's per-URI grant); exactly one answer reaches the page, with every
   cancel path answering `null`. A folder request goes straight to the
-  document-tree picker; recording is not offered and downloads are not handled
-  (ADR-0059).
+  document-tree picker; recording is not offered (ADR-0059). Downloads use the
+  separate path below.
+- Web-app root and child WebViews also have a DownloadListener (ADR-0083).
+  `WebAppDownloadPort` carries progress/results; `GuestWebAppDownloads` streams
+  exact-origin GETs to the active rootfs's `/root/Downloads` using the captured
+  WebView cookie and User-Agent, plus this app's saved Basic pair on a 401.
+  Redirects are classified before fetching. Same-directory temporary files and
+  non-replacing moves keep incomplete downloads and name collisions separate.
+  `WebAppDownloadUi` renders a native progress/result/retry banner while keeping
+  the page alive; surface release cancels its worker. The directory is guest
+  backup data, separate from Android's public Download/ capability destination.
+  ADR-0084 extends it with `WebAppBinaryDownloads`: AndroidX WebKit installs a
+  document-start script and an exact-origin WebMessageListener into each owned
+  frame. The script catches browser-generated exports and sends acknowledged
+  32 KiB chunks. Both HTTP and binary writes share `GuestDownloadFile` for
+  length checks, partial cleanup and collision-safe publication. There is no
+  arbitrary guest-path, filesystem or shell method exposed to JavaScript.
 - Reachability is not health: the surface never claims the app is working.
 
 ## Storage shape

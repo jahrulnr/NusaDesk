@@ -1027,9 +1027,31 @@ limits of that slice are deliberate:
 - **No grant is persisted.** The picker's grant lives as long as the activity.
   A page that keeps a handle and writes again after the surface was recreated
   fails rather than holding a permanent grant on a user file.
-- **A download link still does nothing.** `Content-Disposition: attachment` and
-  `download` links reach neither the file-chooser callback nor a download
-  handler; downloads are a separate slice.
+- **WebView downloads use guest storage (ADR-0083, ADR-0084).** Same-origin HTTP attachments
+  and download links reported by WebView save to guest `/root/Downloads`, with
+  cookies, User-Agent and the app's saved Basic credential when challenged.
+  Both root and child tabs use the same handler. The native banner shows
+  progress, saved path or failure with Retry. Existing filenames are preserved
+  with numbered suffixes. This is guest-private storage and part of guest
+  backup; it does not appear in Android's public `Download/` automatically.
+  Browser-created Blob/data exports also save here through an origin-scoped
+  message channel: ordinary/detached download links, immediate URL revocation,
+  `window.open`, same-origin frames and child tabs are handled. Chunks are
+  acknowledged after writing, with at most 32 KiB per chunk. Requires WebView
+  document-start scripting and WebMessageListener support; an older provider
+  gets an explicit update instruction when a binary download reaches the host.
+  Opaque/cross-origin frames do not get the export channel. Direct POST
+  attachment responses are not replayed; a POST fetch converted to a Blob in
+  JavaScript works. There is no resume, automatic network retry, or Android system download UI.
+  Leaving for the launcher keeps the retained surface's work; destroying the
+  surface cancels it. Process death can leave a hidden `.part` file, never a
+  completed filename. Missing Linux or a symlink at `/root/Downloads` fails
+  visibly. Redirects retain the exact-origin rule; external targets open in the
+  browser and other loopback ports/schemes remain blocked.
+  Browser exports additionally depend on the source document: navigating away,
+  closing its tab, or 60 seconds without an acknowledged transfer step cancels
+  the partial file. Binary failures require running Export again in the app;
+  the HTTP Retry action cannot recreate an ephemeral or revoked Blob.
 - **`accept` is best effort.** Extensions resolve through the platform's MIME
   table, and an extension it does not know leaves the filter at `*/*` instead of
   hiding the file the user wants.

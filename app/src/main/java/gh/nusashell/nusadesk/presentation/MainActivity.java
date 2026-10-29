@@ -86,6 +86,7 @@ import gh.nusashell.nusadesk.infrastructure.proot.GuestServiceBridge;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSystemdBusFace;
 import gh.nusashell.nusadesk.infrastructure.proot.GuestSshDaemon;
 import gh.nusashell.nusadesk.infrastructure.proot.ProotPaths;
+import gh.nusashell.nusadesk.infrastructure.webapp.GuestWebAppDownloads;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidGuestAddonInstaller;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidRuntimeInstaller;
 import gh.nusashell.nusadesk.infrastructure.runtime.AndroidRuntimeStateStore;
@@ -1705,6 +1706,12 @@ public final class MainActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT));
         }
         WebAppSurfaceView activeSurface = surface;
+        if (!definition.equals(activeSurface.getDefinition())) {
+            activeSurface.setDownloads(new GuestWebAppDownloads(
+                    ProotPaths.activeRootfsPath(
+                            getFilesDir().toPath(), CuratedRuntimeCatalog.ubuntuBaseArm64().getAppId()),
+                    definition, webAppCredentialStore));
+        }
         activeSurface.setOnTabListener((tabs, selectedTabId) -> {
             if (id.equals(activeWebAppId) && activeSurface == webAppSurfaces.get(id)) {
                 WebAppDefinition current = definitionFor(id);

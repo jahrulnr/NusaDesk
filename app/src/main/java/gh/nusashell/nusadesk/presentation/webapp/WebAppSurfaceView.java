@@ -117,6 +117,7 @@ public final class WebAppSurfaceView extends FrameLayout
     private ExecutorService probeExecutor;
     private HttpAuthResponder signInResponder;
     private WebAppFileChooser fileChooser;
+    private WebAppDownloadUi downloadUi;
     /** Alias for the permanent root tab, retained for existing surface logic. */
     private WebView webView;
     private State state = State.PROBING;
@@ -152,6 +153,12 @@ public final class WebAppSurfaceView extends FrameLayout
     /** The app this surface shows, or {@code null} before it is bound. */
     public WebAppDefinition getDefinition() {
         return definition;
+    }
+
+    /** Supplies downloads for the next bound origin; replacing it cancels the old origin's work. */
+    public void setDownloads(gh.nusashell.nusadesk.application.webapp.WebAppDownloadPort downloads) {
+        if (downloadUi != null) downloadUi.close();
+        downloadUi = new WebAppDownloadUi(this, downloads);
     }
 
     /** The state currently rendered, so the host never has to guess. */
@@ -487,6 +494,9 @@ public final class WebAppSurfaceView extends FrameLayout
                 current.newWebViewClient(
                         externalLinkHandler(), failureListener(tabId), signInResponder)));
         created.setWebChromeClient(new SurfaceWebChromeClient(tabId, current));
+        if (downloadUi != null) {
+            downloadUi.attach(created, current, externalLinkHandler(), failureListener(tabId));
+        }
         return created;
     }
 
@@ -770,6 +780,7 @@ public final class WebAppSurfaceView extends FrameLayout
             return;
         }
         viewContainer.removeView(child);
+        if (downloadUi != null) downloadUi.detach(child);
         child.stopLoading();
         child.setWebChromeClient(null);
         child.setWebViewClient(null);
@@ -792,7 +803,15 @@ public final class WebAppSurfaceView extends FrameLayout
 
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            if (request != null && request.isForMainFrame() && downloadUi != null
+                    && downloadUi.navigate(view, request.getUrl().toString())) return true;
             return delegate.shouldOverrideUrlLoading(view, request);
+        }
+
+        @Override
+        public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+            if (downloadUi != null) downloadUi.navigationStarted(view);
+            delegate.onPageStarted(view, url, favicon);
         }
 
         @Override
@@ -836,6 +855,7 @@ public final class WebAppSurfaceView extends FrameLayout
 
         @Override
         public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+            if (downloadUi != null) downloadUi.detach(view);
             return delegate.onRenderProcessGone(view, detail);
         }
     }
@@ -904,6 +924,7 @@ public final class WebAppSurfaceView extends FrameLayout
             return;
         }
         released = true;
+        if (downloadUi != null) downloadUi.close();
         fileChooser.cancel();
         if (signInResponder != null) {
             signInResponder.reset();

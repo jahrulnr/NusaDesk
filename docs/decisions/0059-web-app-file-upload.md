@@ -204,10 +204,10 @@ Rejected alternatives:
   unlistable for an app, on every Android this product supports; the readable
   roots shortcut is the honest workaround, and it is a row in the picker rather
   than a silent redirect.
-- **Downloads are still not handled.** A link that would download (for example
-  `Content-Disposition: attachment`) reaches neither `onShowFileChooser` nor a
-  `DownloadListener`; nothing happens today. That is a separate slice, recorded
-  in `docs/limitations.md`.
+- **Downloads use a separate path (ADR-0083).** Same-origin HTTP GET downloads
+  from the root or child WebView save to guest `/root/Downloads`; the upload
+  chooser does not handle them. ADR-0084 adds browser-created Blob/data exports;
+  direct POST attachment downloads remain outside the re-fetch path.
 - **The built-in picker shows hidden entries** and lets the user walk anywhere
   the app may read, including app-private directories. That is deliberate — the
   guest's own files live there — and it is the same reach the app already has.

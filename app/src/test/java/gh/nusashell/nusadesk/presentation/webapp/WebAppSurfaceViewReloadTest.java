@@ -3,6 +3,7 @@ package gh.nusashell.nusadesk.presentation.webapp;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import android.view.ViewGroup;
@@ -94,6 +95,25 @@ public class WebAppSurfaceViewReloadTest {
                 definition.getEndpointUrl(), second.getUrl());
         assertEquals("only the permanent root tab remains",
                 1, surface.getTabs().size());
+    }
+
+    @Test
+    public void rootAndChildTabsBothReceiveDownloadListeners() {
+        surface.setDownloads(new gh.nusashell.nusadesk.application.webapp.WebAppDownloadPort() {
+            public void download(String url, String agent, String cookie, String name, Listener listener) { }
+            public BinaryTransfer beginBinary(String name, long size, Listener listener, Completion ready) { throw new UnsupportedOperationException(); }
+            public void close() { }
+        });
+        bind();
+        WebView root = surfaceWebView();
+        org.robolectric.shadows.ShadowWebView rootShadow = org.robolectric.shadow.api.Shadow.extract(root);
+        assertNotNull(rootShadow.getDownloadListener());
+        WebView.WebViewTransport transport = root.new WebViewTransport();
+        android.os.Message message = android.os.Message.obtain(new android.os.Handler(android.os.Looper.getMainLooper()));
+        message.obj = transport;
+        assertTrue(rootShadow.getWebChromeClient().onCreateWindow(root, false, true, message));
+        org.robolectric.shadows.ShadowWebView childShadow = org.robolectric.shadow.api.Shadow.extract(transport.getWebView());
+        assertNotNull(childShadow.getDownloadListener());
     }
 
     @Test

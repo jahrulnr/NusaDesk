@@ -80,5 +80,57 @@
                     android:visibility="gone" />
             </LinearLayout>
         </ScrollView>
+
+        <LinearLayout
+            android:id="@+id/webapp_download_panel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="@color/surface_elevated"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/webapp_download_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:accessibilityLiveRegion="polite"
+                android:textColor="@color/ink"
+                android:textSize="14sp" />
+
+            <ProgressBar
+                android:id="@+id/webapp_download_progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" />
+
+            <LinearLayout
+                style="?android:attr/buttonBarStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="end"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/webapp_download_retry"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:text="@string/webapp_state_retry"
+                    android:textAllCaps="false" />
+
+                <Button
+                    android:id="@+id/webapp_download_dismiss"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:text="@string/webapp_download_dismiss"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+        </LinearLayout>
     </FrameLayout>
 </merge>

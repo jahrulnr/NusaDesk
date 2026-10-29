@@ -267,6 +267,12 @@
     <string name="webapp_state_failed_title">%1$s could not be shown</string>
     <string name="webapp_state_failed_body">%1$s</string>
     <string name="webapp_state_retry">Try again</string>
+    <string name="webapp_download_queued">Download queued: %1$s</string>
+    <string name="webapp_download_active">Downloading %1$s · %2$s</string>
+    <string name="webapp_download_saved">Saved to /root/Downloads/%1$s</string>
+    <string name="webapp_download_failed">Download failed: %1$s\n%2$s</string>
+    <string name="webapp_download_dismiss">Dismiss</string>
+    <string name="webapp_export_again">Run export again in the app.</string>
     <string name="webapp_state_blocked">The page tried to open an address that is not this app.</string>
     <string name="webapp_link_blocked_toast">That link is outside this app, so it was not opened.</string>
     <string name="webapp_cache_cleared_toast">Cache cleared.</string>

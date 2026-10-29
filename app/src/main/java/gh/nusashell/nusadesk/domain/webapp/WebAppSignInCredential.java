@@ -138,8 +138,8 @@ public final class WebAppSignInCredential {
     /**
      * The sign-in secret.
      *
-     * <p>Reaches exactly two consumers: the WebView's own auth challenge, and
-     * the same-origin favicon request. It is never logged, never rendered, and
+     * <p>Used by the WebView's own auth challenge, same-origin favicon requests,
+     * and guest downloads. It is never logged, never rendered, and
      * never written to disk in this form.</p>
      */
     public String getPassword() {

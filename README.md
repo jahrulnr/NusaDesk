@@ -55,7 +55,8 @@ Individual clips: [web app](https://github.com/user-attachments/assets/0f5a6f3c-
 - **Keep your files close.** Choose a workspace folder you can use from both
   Android and Linux.
 - **Bring your own web apps.** Add the local web apps you rely on to your
-  launcher.
+  launcher. Their HTTP attachments and browser-created Blob/data exports save at
+  `/root/Downloads`, with progress and clear failure messages.
 - **Stay in your flow.** Linux can keep running while you switch apps, with a
   visible notification and a clear stop control.
 

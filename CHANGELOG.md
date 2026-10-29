@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Support browser-created Blob and data URL exports from local dashboard apps,
+  including immediate URL revocation, detached download links, owned iframes
+  and child tabs; stream chunks into guest Downloads (ADR-0084).
+
+- Save user-added WebView app GET downloads to guest `/root/Downloads`,
+  with session cookies, saved Basic authentication, progress, failure/retry,
+  and collision-safe filenames (ADR-0083).
+
 ## [0.14.8] - 2026-10-29
 
 ## [0.14.7] - 2026-10-29

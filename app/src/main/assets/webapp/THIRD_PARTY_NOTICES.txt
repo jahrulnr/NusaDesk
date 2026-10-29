@@ -1,0 +1,7 @@
+AndroidX WebKit 1.15.0
+Copyright The Android Open Source Project
+Apache License 2.0 (LICENSE-AndroidX.txt)
+https://developer.android.com/jetpack/androidx/releases/webkit#1.15.0
+
+Official document-start injection and origin-scoped web messaging.
+Pinned stable dependency; no general JavaScript filesystem or shell API.

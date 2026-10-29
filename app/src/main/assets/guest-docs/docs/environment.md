@@ -33,6 +33,19 @@ contract, not a PRoot default.
 
 ## Workspace and Android files
 
+- User-added WebView apps save same-origin HTTP attachment/download GETs
+  to `/root/Downloads` (`~/Downloads`). Native Linux apps can use that same
+  directory; existing files are kept and duplicate names get numbered suffixes.
+  These files persist and belong to the guest backup, not Android's public
+  `Download/` folder. Use the workspace bind or `share.send` to export them.
+  The WebView shows progress and offers Retry for HTTP failures. External links open
+  in Android's browser. Blob/data exports from dashboard JavaScript also save
+  here, including JSON/CSV generated from a POST fetch. Direct POST attachment
+  responses are not replayed. Binary exports require a current Android System
+  WebView with document-start scripts and origin-scoped messaging. If a binary
+  export fails, run Export again in its app; leaving/reloading its document
+  cancels unfinished bytes. Import continues to use the existing file picker.
+
 - `/root/nusadesk` (`~/nusadesk`) is the workspace bind - the
   folder the user picked in the Android picker, real host
   storage other Android apps can see. On Android 10 it is the
