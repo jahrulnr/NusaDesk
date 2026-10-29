@@ -1,7 +1,5 @@
 package gh.nusashell.nusadesk.presentation;
 
-import android.app.Application;
-import android.content.Intent;
 import android.view.MenuItem;
 import android.widget.PopupMenu;
 import gh.nusashell.nusadesk.R;
@@ -17,8 +15,6 @@ import org.junit.*;
 import org.junit.runner.RunWith;
 import org.robolectric.*;
 import org.robolectric.annotation.Config;
-import org.robolectric.shadow.api.Shadow;
-import org.robolectric.shadows.ShadowApplication;
 import org.robolectric.shadows.ShadowPopupMenu;
 import static org.junit.Assert.*;
 
@@ -34,20 +30,40 @@ public class MainActivityRecoveryMenuTest {
     }
     @After public void cleanup() { TerminalTabsRegistry.getInstance().clear(); }
 
-    @Test public void failedSessionWithoutTabsStillHasAnActionableRestartMenu() throws Exception {
+    @Test public void terminalMenuOffersReconnectButNeverRestartLinux() throws Exception {
         var lifecycle = Robolectric.buildActivity(MainActivity.class).create();
         try {
             MainActivity activity = lifecycle.get();
-            invoke(activity, "renderTerminalMenu", new Class<?>[]{TerminalTabsSnapshot.class}, TerminalTabsSnapshot.empty());
-            Application application = RuntimeEnvironment.getApplication();
-            ShadowApplication shadow = Shadow.extract(application);
-            while (shadow.getNextStartedService() != null) { }
+            TerminalTabsController port = new TerminalTabsController(FakeTransport::new,
+                    ignored -> { }, Runnable::run);
+            HostRuntimeStatus running = new HostRuntimeStatus(new SessionSnapshot("s", "ubuntu-base-arm64", "1",
+                    SessionState.RUNNING, new gh.nusashell.nusadesk.domain.network.RuntimePort("127.0.0.1", 22022), 1, 2, "", 0), true, "test");
+            port.onRuntimeStatus(running);
+            port.openShell();
+            TerminalTabsRegistry.getInstance().register(port);
+            invoke(activity, "renderTerminalMenu", new Class<?>[]{TerminalTabsSnapshot.class}, port.snapshot());
             PopupMenu menu = openMenu(activity);
-            assertEquals(1, menu.getMenu().size());
-            click(menu, activity.getString(R.string.terminal_restart_linux));
-            Intent intent = shadow.getNextStartedService();
-            assertNotNull(intent);
-            assertEquals(RuntimeHostService.ACTION_RESTART, intent.getAction());
+            assertMenuHas(menu, activity.getString(R.string.terminal_reconnect));
+            assertMenuLacks(menu, activity.getString(R.string.terminal_restart_linux));
+        } finally { lifecycle.destroy(); }
+    }
+
+    @Test public void commandAppMenuNeverOffersRestartLinux() throws Exception {
+        var lifecycle = Robolectric.buildActivity(MainActivity.class).create();
+        try {
+            MainActivity activity = lifecycle.get();
+            TerminalTabsController port = new TerminalTabsController(FakeTransport::new,
+                    ignored -> { }, Runnable::run);
+            HostRuntimeStatus running = new HostRuntimeStatus(new SessionSnapshot("s", "ubuntu-base-arm64", "1",
+                    SessionState.RUNNING, new gh.nusashell.nusadesk.domain.network.RuntimePort("127.0.0.1", 22022), 1, 2, "", 0), true, "test");
+            port.onRuntimeStatus(running);
+            port.openOrSelectCommand("devin", "devin");
+            TerminalTabsRegistry.getInstance().register(port);
+            invoke(activity, "renderTerminalAppMenu", new Class<?>[]{String.class, TerminalTabsSnapshot.class},
+                    "devin", port.snapshot());
+            PopupMenu menu = openMenu(activity);
+            assertMenuHas(menu, activity.getString(R.string.terminal_reconnect));
+            assertMenuLacks(menu, activity.getString(R.string.terminal_restart_linux));
         } finally { lifecycle.destroy(); }
     }
 
@@ -92,6 +108,18 @@ public class MainActivityRecoveryMenuTest {
             }
         }
         fail("missing menu action: " + title);
+    }
+    private static void assertMenuHas(PopupMenu menu, String title) {
+        for (int i = 0; i < menu.getMenu().size(); i++) {
+            if (title.contentEquals(menu.getMenu().getItem(i).getTitle())) return;
+        }
+        fail("missing menu action: " + title);
+    }
+    private static void assertMenuLacks(PopupMenu menu, String title) {
+        for (int i = 0; i < menu.getMenu().size(); i++) {
+            assertFalse("menu must not offer " + title,
+                    title.contentEquals(menu.getMenu().getItem(i).getTitle()));
+        }
     }
     private static void invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception {
         Method method = target.getClass().getDeclaredMethod(name, types); method.setAccessible(true); method.invoke(target, args);

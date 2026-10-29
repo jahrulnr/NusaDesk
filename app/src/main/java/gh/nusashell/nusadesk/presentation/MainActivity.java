@@ -816,6 +816,7 @@ public final class MainActivity extends Activity {
         systemScreen.setOnHowItWorksListener(view -> contractDialog.show());
         systemScreen.setOnCheckUpdateListener(view -> manualUpdateCheck());
         systemScreen.renderInstalledVersion(installedVersionName());
+        systemScreen.setOnRestartLinuxListener(view -> RuntimeHostService.requestRestart(this));
         systemScreen.setOnWorkspaceActionListener(view -> onWorkspaceAction());
         systemScreen.setOnOpenAppSettingsListener(view -> openAppSettings());
         systemScreen.setOnBatteryActionListener(view -> onBatteryAction());
@@ -1356,7 +1357,7 @@ public final class MainActivity extends Activity {
                 }
             }
         }
-        addTerminalRecoveryActions(actions, TerminalSurfaceScope.commandApp(appId), snapshot);
+        addTerminalReconnectAction(actions, TerminalSurfaceScope.commandApp(appId), snapshot);
         appSurfaceHost.setMenuActions(actions);
     }
 
@@ -1432,11 +1433,17 @@ public final class MainActivity extends Activity {
                         label, () -> showTerminalTabActions(port, tabId, label)));
             }
         }
-        addTerminalRecoveryActions(actions, TerminalSurfaceScope.shellTabs(), snapshot);
+        addTerminalReconnectAction(actions, TerminalSurfaceScope.shellTabs(), snapshot);
         appSurfaceHost.setMenuActions(actions);
     }
 
-    private void addTerminalRecoveryActions(List<AppSurfaceHostView.MenuAction> actions,
+    /**
+     * Adds the one session action a terminal menu still owns: reconnect the
+     * visible in-scope tab. Restart Linux moved to System &gt; Settings
+     * (ADR-0085); the FAILED/UNRESPONSIVE attach panel and the service
+     * notification keep their own restart actions.
+     */
+    private void addTerminalReconnectAction(List<AppSurfaceHostView.MenuAction> actions,
                                              TerminalSurfaceScope scope, TerminalTabsSnapshot snapshot) {
         TerminalTabSnapshot visible = scope.visible(snapshot);
         if (visible != null && TerminalTabsRegistry.getInstance().port() != null) {
@@ -1450,8 +1457,6 @@ public final class MainActivity extends Activity {
                 if (tab != null) tab.reconnect();
             }));
         }
-        actions.add(new AppSurfaceHostView.MenuAction(R.string.terminal_restart_linux,
-                () -> RuntimeHostService.requestRestart(this)));
     }
 
     /** A tab's stable menu name, independent of whether it runs a shell or command. */

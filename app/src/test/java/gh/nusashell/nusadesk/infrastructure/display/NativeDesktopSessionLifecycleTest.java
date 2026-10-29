@@ -8,6 +8,8 @@ import android.os.RemoteException;
 import gh.nusashell.nusadesk.application.display.NativeDesktopPort;
 import gh.nusashell.nusadesk.domain.display.DesktopTasks;
 import gh.nusashell.nusadesk.domain.display.LinuxDesktopApp;
+import gh.nusashell.nusadesk.domain.display.DesktopTask;
+import gh.nusashell.nusadesk.infrastructure.ssh.SshClientBridge;
 import org.junit.Test;
 import org.junit.Before;
 import org.junit.After;
@@ -18,9 +20,12 @@ import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Constructor;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -199,6 +204,69 @@ public class NativeDesktopSessionLifecycleTest {
         session.open(); work.drain(); ShadowLooper.idleMainLooper();
         assertEquals(1, connections.get()); assertEquals(false, get(session, "displayReady"));
         assertEquals(NativeDesktopPort.State.STARTING, get(session, "state"));
+    }
+
+    @Test public void closeOnFailedTaskDropsItAndPublishesAppClosed() throws Exception {
+        Work work = new Work();
+        NativeDesktopSession session = new NativeDesktopSession(new BindingContext(), work);
+        DesktopTasks tasks = (DesktopTasks) get(session, "tasks");
+        tasks.select(new LinuxDesktopApp("editor.desktop", "Editor", "/usr/share/applications/editor.desktop", null));
+        tasks.fail("editor.desktop", "Linux application failed: exited with status -5");
+        List<NativeDesktopPort.State> published = new ArrayList<>();
+        session.subscribe((state, detail) -> published.add(state));
+
+        session.closeSelected();
+        ShadowLooper.idleMainLooper();
+
+        assertNull("the failed task must be removed", tasks.selected());
+        assertTrue("no live launch loop can answer a foreground close request",
+                work.queue.isEmpty());
+        assertEquals(NativeDesktopPort.State.APP_CLOSED, get(session, "state"));
+        assertTrue("the host is told the surface closed so it returns to the launcher",
+                published.contains(NativeDesktopPort.State.APP_CLOSED));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test public void closeAfterDisplayFailureReleasesTheRetainedChannelBeforeReopening() throws Exception {
+        Work work = new Work();
+        NativeDesktopSession session = new NativeDesktopSession(new BindingContext(), work);
+        LinuxDesktopApp app = new LinuxDesktopApp("editor.desktop", "Editor",
+                "/usr/share/applications/editor.desktop", null);
+        DesktopTasks tasks = (DesktopTasks) get(session, "tasks");
+        tasks.select(app);
+        tasks.ready(app.getId());
+        Method newChannel = NativeDesktopSession.class.getDeclaredMethod("newChannel");
+        newChannel.setAccessible(true);
+        SshClientBridge ssh = (SshClientBridge) newChannel.invoke(session);
+        try {
+            Class<?> type = Class.forName(NativeDesktopSession.class.getName() + "$AppChannel");
+            Constructor<?> constructor = type.getDeclaredConstructor(LinuxDesktopApp.class, SshClientBridge.class);
+            constructor.setAccessible(true);
+            Object channel = constructor.newInstance(app, ssh);
+            put(channel, "ready", true);
+            Map<String, Object> channels = (Map<String, Object>) get(session, "apps");
+            channels.put(app.getId(), channel);
+            Method fail = NativeDesktopSession.class.getDeclaredMethod("fail", int.class, Exception.class);
+            fail.setAccessible(true);
+            fail.invoke(session, 0, new java.io.IOException("foreground write failed"));
+            ShadowLooper.idleMainLooper();
+            assertEquals(DesktopTask.State.FAILED, tasks.selected().getState());
+
+            session.closeSelected();
+            ShadowLooper.idleMainLooper();
+
+            assertNull(tasks.selected());
+            assertFalse("Close must release even a channel whose launch loop is still live",
+                    channels.containsKey(app.getId()));
+            assertEquals("SSH cleanup belongs on the worker", 1, work.queue.size());
+            work.drain();
+            assertTrue("the retained SSH bridge must actually be closed", ssh.awaitClosed(1000));
+            session.selectApp(app);
+            assertEquals("reopening must start a fresh task, not reuse the old ready channel",
+                    DesktopTask.State.STARTING, tasks.selected().getState());
+        } finally {
+            ssh.close();
+        }
     }
 
     @Test public void rendererDisconnectInvalidatesReadinessWithoutStoppingTheBoundServer() throws Exception {

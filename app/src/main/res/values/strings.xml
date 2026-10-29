@@ -349,7 +349,7 @@
     <string name="system_changelog_more">Read more</string>
     <string name="system_changelog_unavailable_link">No browser can open the changelog right now.</string>
     <string name="system_state_label">System state</string>
-    <string name="system_session_label">Session</string>
+    <string name="system_session_label">Linux session</string>
     <string name="system_service_label">Terminal component</string>
     <string name="system_service_installed">Installed</string>
     <string name="system_service_missing">Not installed</string>
@@ -363,6 +363,13 @@
     <string name="system_detail_app">Runtime profile</string>
     <string name="system_detail_version">Version</string>
     <string name="action_read_contract">How it works</string>
+
+    <!-- Linux session card on the Settings page: reports the live runtime
+         state and carries the one Restart Linux action (ADR-0085), moved here
+         from the terminal/command-app overflow menus. A restart stops every
+         app, terminal, and window the session owns, then starts it again. -->
+    <string name="system_session_detail">Restart stops every app, terminal, and window in the Linux session, then starts it again.</string>
+    <string name="system_session_restart">Restart Linux</string>
 
     <!-- Workspace folder: a user-picked folder bound into the guest at ~/nusadesk.
          The state text is explicit about why a broad grant is needed and about

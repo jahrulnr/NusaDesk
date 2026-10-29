@@ -47,8 +47,9 @@ Individual clips: [web app](https://github.com/user-attachments/assets/0f5a6f3c-
 - **Work in Linux.** Use a touch-friendly terminal for command-line work on your
   phone, open multiple terminals, and manage them from a compact menu with
   `New`, numbered tabs, and per-terminal `Open` / `Close` actions. Use
-  `Reconnect terminal` or `Restart Linux` from its menu to recover a session;
-  a failed Linux session also offers a direct restart button.
+  `Reconnect terminal` from its menu to recover a dropped session. `Restart
+  Linux` lives on the Linux session card in System > Settings; a failed or
+  unresponsive session also offers a direct restart button.
 - **Launch a command directly.** Add a terminal-command app with a guest command
   such as `docker exec -it workspace bash`; tapping its tile opens that command
   in its own PTY inside Linux.

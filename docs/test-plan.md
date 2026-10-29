@@ -1699,6 +1699,60 @@ with the existing release signer. An earlier full run hit the unrelated RTSP
 stop assertion; its isolated rerun and the final complete gate passed without
 changing RTSP code or tests.
 
+## Session restart entry point and window-supervised tasks (ADR-0085/0086), 2026-10-29
+
+`MainActivityRecoveryMenuTest`
+pins the menu removal, `SystemSessionCardTest` pins the card→`ACTION_RESTART`
+wiring and state rendering, `NativeDesktopSessionLifecycleTest` pins the
+`FAILED`-task close path, and `test_desktop_apps.py` executes the reworked
+launch loop for both exit contracts, `StartupWMClass` adoption, the grace
+window, and a crash between the window probe and `waitpid`. The cases below
+are the device checklist; the observations after the table distinguish actual
+device evidence from unit coverage.
+
+| ID | Case | Expected result |
+| --- | --- | --- |
+| SRS-001 | System > Settings, Linux session card | Card is always visible and shows the live runtime state; `Restart Linux` restarts the session; the notification still offers its restart action |
+| SRS-002 | Open the terminal and a command-app's ⋮ menu | No `Restart Linux` entry in either; `Reconnect` is still present while a tab exists |
+| SRS-003 | FAILED session attach panel | The panel's `Restart Linux` button still recovers the session |
+| SRS-004 | A self-updating app relaunches (e.g. OpenCode update → close → reopen) | No `FAILED` card: the task stays alive while an owned window is mapped, the window stays interactive, and X closes the app |
+| SRS-005 | A real crash — a supervised app exits non-zero with no window mapped | Task still reports `FAILED` with the exit status |
+| SRS-006 | Tap X on a `FAILED` task | The task is dropped and the surface returns to the launcher |
+| SRS-007 | Respawned window in a new process group, entry has `StartupWMClass` | Close still reaches it: teardown's `_NET_CLOSE_WINDOW` sweep covers adopted windows before `killpg` |
+| SRS-008 | Window probe succeeds, then the child crashes before `waitpid` | The non-zero exit remains pending until a later probe confirms a surviving window; without one it reports `FAILED`, never `CLOSED` |
+| SRS-009 | A foreground/display error fails a task with its SSH channel still alive; tap X, then reopen | Close detaches and closes the old channel; its process/window stop, and reopening starts a new process |
+
+Follow-up evidence, 2026-10-30, Samsung S7 Edge (Android 10/API 29, arm64,
+4 KB pages), signed 0.14.8 QA builds installed in place without clearing data:
+
+- The initial audit rendered the Settings card with its live `Running` state.
+  The actual OpenCode `.deb` arm64 update from 2.2.0 to 2.2.2 was initiated
+  through its UI. Its new window returned after a sampled 2.25-second gap,
+  remained interactive, and X closed it without a host `FAILED` card. The
+  first attempt failed with insufficient disk space, and the following retry
+  hit PRoot hardlink-backup residue; space was provided by temporarily
+  archiving an inactive build cache, and the test-package residue was repaired
+  before the successful UI retry. The archived cache was restored and compared
+  with its original contents. This records that tested recovery path, not an
+  unattended-update guarantee.
+- After the audit fixes, bounded guest-X11 fixtures passed SRS-005, SRS-006,
+  SRS-007, and SRS-009. A real exit 23 displayed `FAILED` with that status.
+  A separate exit-23 launcher handed off to a window in a new process group;
+  its task stayed live and X stopped both that window and its supervisor.
+  Replacing the foreground-request destination with a directory reproduced a
+  display error while the app and supervisor were still alive; after restoring
+  the request file, X stopped both, returned to the launcher, and reopening
+  produced a fresh app PID. The temporary fixtures and access were removed.
+- SRS-008 was reproduced on a host Xvfb server using a real child and X11
+  window, with the child exiting after the successful probe but before the
+  real `waitpid`. The corrected supervisor reported status 23 without a
+  `CLOSED` marker. The deterministic Python regression covers the same order.
+
+The complete local gate passed with 2,587 JVM tests, 43 Python tests, the
+JavaScript suite, lint, and debug APK/content verification. Device restart
+from the Settings card, the menu/attach-panel cases, longer respawn gaps,
+other Android/API/OEM configurations, and 16 KB pages remain unverified.
+
 ## License and distribution note
 
 - PRoot is GPL-2.0-or-later. Packaging/distributing it requires GPLv2+

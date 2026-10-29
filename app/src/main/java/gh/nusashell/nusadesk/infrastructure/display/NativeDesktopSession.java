@@ -138,7 +138,21 @@ public final class NativeDesktopSession implements NativeDesktopPort {
     }
 
     public void closeSelected() {
-        if (tasks.selectedId() != null) foreground(tasks.selectedId(), true);
+        DesktopTask selected = tasks.selected();
+        if (selected == null) return;
+        if (selected.getState() == DesktopTask.State.FAILED) {
+            // A display/foreground error can fail a task while its channel
+            // remains live. Detach it before closing so late callbacks cannot
+            // resurrect the task or affect a new launch of the same app.
+            String id = selected.getApp().getId();
+            AppChannel channel = apps.remove(id);
+            if (channel != null) worker.execute(channel.ssh::close);
+            tasks.remove(id);
+            tasksChanged();
+            renderSelected();
+            return;
+        }
+        foreground(selected.getApp().getId(), true);
     }
 
     private void foreground(String id) { foreground(id, false); }

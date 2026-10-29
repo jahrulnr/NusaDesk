@@ -36,8 +36,11 @@ live and never open a permission prompt:
 - `location.stream.poll` - read the next fix with a bounded wait
 - `location.stream.stop` - idempotent stop
 
-The installed client for `location.get` and `location.stream.*` is
-the optional Termux toolkit's `termux-location`.
+The optional Termux toolkit's `termux-location` only calls `location.get`.
+`-r once` waits for one fix; `-r last` reads a last-known fix;
+`-r updates` still returns one fix and warns on stderr. There is
+no shipped CLI for `location.stream.*`; those are separate bridge
+methods, not a stream hidden behind `termux-location`.
 
 Background location is a separate opt-in surface:
 `location.background.start|poll|stop` runs under a visible

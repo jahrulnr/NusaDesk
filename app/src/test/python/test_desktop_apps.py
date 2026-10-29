@@ -98,13 +98,23 @@ class DesktopAppsTest(unittest.TestCase):
         self.desktop(self.system, "valid.desktop")
         self.assertEqual(["valid.desktop"], [x["id"] for x in apps.scan()])
 
+    def test_entry_reports_the_startup_wm_class(self):
+        self.desktop(self.system, "opencode.desktop", "StartupWMClass=Opencode\n")
+        self.desktop(self.user, "plain.desktop")
+        entries = {item["id"]: item for item in apps.scan()}
+        self.assertEqual("Opencode", entries["opencode.desktop"]["wm_class"])
+        self.assertEqual("", entries["plain.desktop"]["wm_class"])
+
     def test_glib_expands_quoted_exec_fields_and_owns_real_child(self):
+        import itertools
         output = self.root / "args.json"
         fields = f'''Exec=/usr/bin/python3 -c "import json,sys;open('{output}','w').write(json.dumps(sys.argv[1:]))" %c %k %% %U
 DBusActivatable=true
 '''
         desktop = self.desktop(self.system, "org.example.NativeQa.desktop", fields)
-        with patch.object(apps, "window_mapped", return_value=True):
+        with patch.object(apps, "window_mapped",
+                          side_effect=itertools.chain([True], itertools.repeat(False))), \
+             patch.object(apps.time, "sleep"):
             apps.launch(desktop.name)
         self.assertEqual(["Sample", str(desktop), "%"], json.loads(output.read_text()))
 
@@ -162,10 +172,23 @@ DBusActivatable=true
         properties = {(10, "_NET_WM_PID"): [101], (20, "_NET_WM_PID"): [202],
                       (30, "WM_TRANSIENT_FOR"): [10], (40, "WM_TRANSIENT_FOR"): [30]}
         read = lambda window, name: properties.get((window, name), [])
-        self.assertEqual([10, 30, 40], apps.owned_windows([10, 20, 30, 40], read, {100}, lambda pid: pid - 1))
-        self.assertEqual([20], apps.owned_windows([10, 20, 30, 40], read, {201}, lambda pid: pid - 1))
-        self.assertEqual([], apps.owned_windows([20], read, {100}, lambda pid: (_ for _ in ()).throw(ProcessLookupError())))
-        self.assertEqual([], apps.owned_windows([20], read, {100}, lambda pid: (_ for _ in ()).throw(PermissionError(13, "denied"))))
+        self.assertEqual([10, 30, 40], apps.owned_windows([10, 20, 30, 40], read, {100}, group_of=lambda pid: pid - 1))
+        self.assertEqual([20], apps.owned_windows([10, 20, 30, 40], read, {201}, group_of=lambda pid: pid - 1))
+        self.assertEqual([], apps.owned_windows([20], read, {100}, group_of=lambda pid: (_ for _ in ()).throw(ProcessLookupError())))
+        self.assertEqual([], apps.owned_windows([20], read, {100}, group_of=lambda pid: (_ for _ in ()).throw(PermissionError(13, "denied"))))
+
+    def test_owned_windows_adopts_startup_wm_class_windows_and_their_transients(self):
+        # A respawned app lands in a new process group; StartupWMClass is the
+        # freedesktop key that still associates its windows with the entry.
+        properties = {(10, "_NET_WM_PID"): [999], (10, "WM_CLASS"): ["opencode", "Opencode"],
+                      (20, "_NET_WM_PID"): [202], (20, "WM_CLASS"): ["other", "Other"],
+                      (30, "WM_TRANSIENT_FOR"): [10]}
+        read = lambda window, name: properties.get((window, name), [])
+        group_of = lambda pid: 7  # no window's pid belongs to the supervised group
+        self.assertEqual([10, 30], apps.owned_windows([10, 20, 30], read, {42}, ("Opencode",), group_of))
+        self.assertEqual([10, 30], apps.owned_windows([10, 20, 30], read, {42}, ("opencode",), group_of))
+        self.assertEqual([], apps.owned_windows([10, 20, 30], read, {42}, (), group_of))
+        self.assertEqual([], apps.owned_windows([10, 20, 30], read, {42}, ("Unrelated",), group_of))
 
     def test_only_parentless_dialogs_are_promoted_to_kiosk_roots(self):
         dialog, normal, menu = 10, 11, 12
@@ -176,11 +199,178 @@ DBusActivatable=true
         self.assertFalse(apps.primary_dialog([menu], [], dialog))
         self.assertFalse(apps.primary_dialog([], [], dialog))
 
-    def test_nonzero_app_exit_is_reported_even_after_a_window_was_ready(self):
+    def test_nonzero_app_exit_with_a_still_mapped_window_stays_supervised_until_it_closes(self):
+        # The respawn contract (ADR-0086): a supervised pid's non-zero exit is a
+        # failure unless a later probe confirms an owned window survived it.
+        import contextlib, io
         self.desktop(self.system, "crash.desktop", "Exec=/bin/sh -c \"exit 23\"\n")
-        with patch.object(apps, "window_mapped", return_value=True):
+        reaped = set()
+        real_waitpid = os.waitpid
+        def recording(pid, flags):
+            done, status = real_waitpid(pid, flags)
+            if done:
+                reaped.add(pid)
+            return done, status
+        probes_after_reap = [0]
+        def mapped(*args):
+            if not reaped:
+                return True
+            probes_after_reap[0] += 1
+            return probes_after_reap[0] <= 3
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+             patch.object(apps.os, "waitpid", side_effect=recording), \
+             patch.object(apps, "window_mapped", side_effect=mapped), \
+             patch.object(apps.time, "sleep"):
+            apps.launch("crash.desktop")
+        self.assertIn("__NUSADESK_GUI_EXIT__23", output.getvalue())
+        self.assertIn("__NUSADESK_GUI_CLOSED__", output.getvalue())
+        self.assertEqual(3 + apps.UNMAPPED_GRACE, probes_after_reap[0])
+
+    def test_crash_after_window_probe_is_not_mistaken_for_a_handoff(self):
+        # The last probe sees the old window, then waitpid observes its crash.
+        # No window survives: the pre-exit snapshot must not forgive status 23.
+        import contextlib, io
+        self.desktop(self.system, "crash.desktop", "Exec=/bin/sh -c \"exit 23\"\n")
+        reaped = set()
+        real_waitpid = os.waitpid
+        def recording(pid, flags):
+            done, status = real_waitpid(pid, flags)
+            if done:
+                reaped.add(pid)
+            return done, status
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+             patch.object(apps.os, "waitpid", side_effect=recording), \
+             patch.object(apps, "window_mapped", side_effect=lambda *args: not reaped), \
+             patch.object(apps.time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "status 23"):
                 apps.launch("crash.desktop")
+        self.assertIn("__NUSADESK_GUI_READY__", output.getvalue())
+        self.assertNotIn("__NUSADESK_GUI_CLOSED__", output.getvalue())
+
+    def test_nonzero_app_exit_without_a_mapped_window_is_reported(self):
+        self.desktop(self.system, "crash.desktop", "Exec=/bin/sh -c \"exit 23\"\n")
+        with patch.object(apps, "window_mapped", return_value=False), \
+             patch.object(apps.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "status 23"):
+                apps.launch("crash.desktop")
+
+    def test_the_task_stays_supervised_while_an_owned_window_outlives_its_process(self):
+        # Once every supervised pid is gone the launch loop follows the owned
+        # windows: still alive while one is mapped, then a ~3 s grace covers an
+        # update->respawn gap before the task reports CLOSED.
+        import contextlib, io
+        self.desktop(self.system, "normal.desktop", "Exec=/bin/true\n")
+        reaped = set()
+        real_waitpid = os.waitpid
+        def recording(pid, flags):
+            done, status = real_waitpid(pid, flags)
+            if done:
+                reaped.add(pid)
+            return done, status
+        probes_after_reap = [0]
+        def mapped(*args):
+            if not reaped:
+                return True
+            probes_after_reap[0] += 1
+            return probes_after_reap[0] <= 3
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+             patch.object(apps.os, "waitpid", side_effect=recording), \
+             patch.object(apps, "window_mapped", side_effect=mapped), \
+             patch.object(apps.time, "sleep"):
+            apps.launch("normal.desktop")
+        self.assertIn("__NUSADESK_GUI_CLOSED__", output.getvalue())
+        # 3 still-mapped probes plus the full unmapped grace — the loop did
+        # not end when the supervised pid died.
+        self.assertEqual(3 + apps.UNMAPPED_GRACE, probes_after_reap[0])
+
+    def test_nonzero_exit_without_a_window_is_reported_only_after_the_grace(self):
+        # The deferred failure: windows unmapped before the old pid exits does
+        # not fail the task at once — the respawn gap gets the same grace, and
+        # only its expiry reports the exit status.
+        self.desktop(self.system, "crash.desktop", "Exec=/bin/sh -c \"exit 23\"\n")
+        reaped = set()
+        real_waitpid = os.waitpid
+        def recording(pid, flags):
+            done, status = real_waitpid(pid, flags)
+            if done:
+                reaped.add(pid)
+            return done, status
+        probes_after_reap = [0]
+        def mapped(*args):
+            if reaped:
+                probes_after_reap[0] += 1
+            return False
+        with patch.object(apps.os, "waitpid", side_effect=recording), \
+             patch.object(apps, "window_mapped", side_effect=mapped), \
+             patch.object(apps.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "status 23"):
+                apps.launch("crash.desktop")
+        # One unmapped probe lands in the reaping iteration itself, then the
+        # full grace runs before the pending exit code becomes a failure.
+        self.assertEqual(apps.UNMAPPED_GRACE - 1, probes_after_reap[0])
+
+    def test_a_remapped_window_cancels_a_pending_nonzero_exit(self):
+        # Respawn interleaving: windows unmap, then the old pid exits non-zero,
+        # then a new owned window maps inside the grace — the task is
+        # supervised, not FAILED (ADR-0086).
+        import contextlib, io
+        self.desktop(self.system, "crash.desktop", "Exec=/bin/sh -c \"exit 23\"\n")
+        reaped = set()
+        real_waitpid = os.waitpid
+        def recording(pid, flags):
+            done, status = real_waitpid(pid, flags)
+            if done:
+                reaped.add(pid)
+            return done, status
+        probes_after_reap = [0]
+        def mapped(*args):
+            if not reaped:
+                return False  # windows were already gone when the pid exited
+            probes_after_reap[0] += 1
+            return probes_after_reap[0] <= 3  # re-map briefly, then gone for good
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+             patch.object(apps.os, "waitpid", side_effect=recording), \
+             patch.object(apps, "window_mapped", side_effect=mapped), \
+             patch.object(apps.time, "sleep"):
+            apps.launch("crash.desktop")
+        self.assertIn("__NUSADESK_GUI_EXIT__23", output.getvalue())
+        self.assertIn("__NUSADESK_GUI_CLOSED__", output.getvalue())
+        # 3 re-mapped probes plus the full unmapped grace — no FAILED.
+        self.assertEqual(3 + apps.UNMAPPED_GRACE, probes_after_reap[0])
+
+    def test_launch_passes_the_desktop_entry_wm_class_to_the_window_probe(self):
+        import contextlib, io, itertools
+        self.desktop(self.system, "opencode.desktop", "StartupWMClass=Opencode\n")
+        seen = []
+        values = itertools.chain([True], itertools.repeat(False))
+        def probe(groups, desktop_id, visibility, wm_classes=()):
+            seen.append(wm_classes)
+            return next(values)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+             patch.object(apps, "window_mapped", side_effect=probe), \
+             patch.object(apps, "close_owned_windows"), \
+             patch.object(apps.time, "sleep"):
+            apps.launch("opencode.desktop")
+        self.assertTrue(seen)
+        self.assertEqual(("Opencode",), seen[0])
+
+    def test_teardown_asks_owned_windows_to_close_before_terminating_groups(self):
+        import contextlib, io, itertools
+        self.desktop(self.system, "opencode.desktop", "StartupWMClass=Opencode\n")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+             patch.object(apps, "window_mapped",
+                          side_effect=itertools.chain([True], itertools.repeat(False))), \
+             patch.object(apps, "close_owned_windows") as sweep, \
+             patch.object(apps.time, "sleep"):
+            apps.launch("opencode.desktop")
+        sweep.assert_called_once()
+        self.assertEqual(("Opencode",), sweep.call_args.args[1])
 
     def test_removed_or_hidden_app_cannot_launch_from_stale_catalog(self):
         self.desktop(self.user, fields="Hidden=true\n")
@@ -188,10 +378,13 @@ DBusActivatable=true
             apps.launch("sample.desktop")
 
     def test_successful_child_completion_has_an_explicit_closed_marker(self):
-        import contextlib, io
+        import contextlib, io, itertools
         self.desktop(self.system, "normal.desktop", "Exec=/bin/true\n")
         output = io.StringIO()
-        with contextlib.redirect_stdout(output), patch.object(apps, "window_mapped", return_value=True):
+        with contextlib.redirect_stdout(output), \
+             patch.object(apps, "window_mapped",
+                          side_effect=itertools.chain([True], itertools.repeat(False))), \
+             patch.object(apps.time, "sleep"):
             apps.launch("normal.desktop")
         self.assertIn("__NUSADESK_GUI_CLOSED__", output.getvalue())
         self.assertNotIn("__NUSADESK_GUI_FAILED__", output.getvalue())

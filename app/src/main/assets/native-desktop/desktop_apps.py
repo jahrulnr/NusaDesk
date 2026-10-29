@@ -100,7 +100,8 @@ def entry(desktop_id, path):
             return None
         icon = text(info, "Icon")
         return {"id": desktop_id, "name": name_of(info).decode("utf-8"),
-                "path": str(path), "icon": icon, "icon_path": icon_path(icon)}
+                "path": str(path), "icon": icon, "icon_path": icon_path(icon),
+                "wm_class": text(info, "StartupWMClass")}
     finally:
         unref(info)
 
@@ -124,9 +125,15 @@ def primary_dialog(types, transient_for, dialog_atom):
     return dialog_atom in types and not transient_for
 
 
-def owned_windows(windows, properties, groups, group_of=os.getpgid):
-    """Keep a task's process-group windows and transients, preserving stacking order."""
+def owned_windows(windows, properties, groups, wm_classes=(), group_of=os.getpgid):
+    """Keep a task's process-group windows and transients, preserving stacking order.
+
+    A window is owned when its _NET_WM_PID's process group is supervised, or its
+    WM_CLASS — either of the two strings — matches the desktop entry's
+    StartupWMClass, the freedesktop association that survives a respawn into a
+    new process group (ADR-0086)."""
     owned = set()
+    wanted = set(wm_classes)
     for window in windows:
         for pid in properties(window, "_NET_WM_PID"):
             try:
@@ -135,6 +142,9 @@ def owned_windows(windows, properties, groups, group_of=os.getpgid):
             except OSError:
                 # A vanished or foreign-owned process has no group to match.
                 pass
+        if window not in owned and wanted:
+            if any(value in wanted for value in properties(window, "WM_CLASS")):
+                owned.add(window)
     changed = True
     while changed:
         changed = False
@@ -152,7 +162,31 @@ def foreground_request():
         return {"id": "", "token": ""}
 
 
-def window_mapped(groups=None, desktop_id=None, visibility=None):
+def property_reader(display, atom, get_property, release):
+    """Read one X11 window property as its decoded values: unsigned longs for a
+    format-32 property (pids, atoms, window ids) or the NUL-separated strings of
+    a format-8 STRING property such as WM_CLASS."""
+    def values(window, name):
+        actual, count, remaining = C.c_ulong(), C.c_ulong(), C.c_ulong()
+        fmt, data = C.c_int(), P()
+        status = get_property(display, window, atom(name), 0, 4096, 0, 0,
+                              C.byref(actual), C.byref(fmt), C.byref(count), C.byref(remaining), C.byref(data))
+        try:
+            if status != 0 or not data:
+                return []
+            if fmt.value == 32:
+                return list(C.cast(data, C.POINTER(C.c_ulong))[:count.value])
+            if fmt.value == 8:
+                raw = C.string_at(data, count.value)
+                return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+            return []
+        finally:
+            if data:
+                release(data)
+    return values
+
+
+def window_mapped(groups=None, desktop_id=None, visibility=None, wm_classes=()):
     x = C.CDLL("libX11.so.6")
     display = bind(x, "XOpenDisplay", P, C.c_char_p)(None)
     if not display:
@@ -172,22 +206,11 @@ def window_mapped(groups=None, desktop_id=None, visibility=None):
         get_property = bind(x, "XGetWindowProperty", C.c_int, P, C.c_ulong, C.c_ulong, C.c_long,
                             C.c_long, C.c_int, C.c_ulong, P, P, P, P, P)
         release = bind(x, "XFree", C.c_int, P)
-        def property_values(window, name):
-            actual, count, remaining = C.c_ulong(), C.c_ulong(), C.c_ulong()
-            fmt, data = C.c_int(), P()
-            status = get_property(display, window, atom(name), 0, 4096, 0, 0,
-                                  C.byref(actual), C.byref(fmt), C.byref(count), C.byref(remaining), C.byref(data))
-            try:
-                if status != 0 or fmt.value != 32 or not data:
-                    return []
-                return list(C.cast(data, C.POINTER(C.c_ulong))[:count.value])
-            finally:
-                if data:
-                    release(data)
+        property_values = property_reader(display, atom, get_property, release)
 
         windows = property_values(root, "_NET_CLIENT_LIST_STACKING") or property_values(root, "_NET_CLIENT_LIST")
         if groups is not None:
-            windows = owned_windows(windows, property_values, groups)
+            windows = owned_windows(windows, property_values, groups, wm_classes)
         previous = visibility if visibility is not None else {}
         old_windows = previous.get("windows", set())
         for window in windows:
@@ -251,6 +274,48 @@ def send_message(x, display, root, window, message_type, values):
     send(display, root, 0, SUBSTRUCTURE_EVENT_MASK, C.byref(event))
 
 
+def close_owned_windows(groups, wm_classes):
+    """Ask each owned primary window to close through EWMH. Teardown uses it so
+    a respawned window that left the supervised process group — adopted by its
+    StartupWMClass — is asked to quit instead of lingering as an orphan."""
+    try:
+        x = C.CDLL("libX11.so.6")
+    except OSError:
+        return
+    display = bind(x, "XOpenDisplay", P, C.c_char_p)(None)
+    if not display:
+        return
+    # Same vanishing-client hazard as the supervision probe: keep protocol
+    # errors local to this sweep instead of letting Xlib print to stderr.
+    error_type = C.CFUNCTYPE(C.c_int, P, P)
+    error_handler = error_type(lambda display, event: 0)
+    set_error_handler = bind(x, "XSetErrorHandler", P, P)
+    previous_handler = set_error_handler(C.cast(error_handler, P))
+    try:
+        root = bind(x, "XDefaultRootWindow", C.c_ulong, P)(display)
+        intern = bind(x, "XInternAtom", C.c_ulong, P, C.c_char_p, C.c_int)
+        def atom(name):
+            return intern(display, name.encode(), 0)
+        get_property = bind(x, "XGetWindowProperty", C.c_int, P, C.c_ulong, C.c_ulong, C.c_long,
+                            C.c_long, C.c_int, C.c_ulong, P, P, P, P, P)
+        release = bind(x, "XFree", C.c_int, P)
+        property_values = property_reader(display, atom, get_property, release)
+        windows = property_values(root, "_NET_CLIENT_LIST_STACKING") or property_values(root, "_NET_CLIENT_LIST")
+        for window in owned_windows(windows, property_values, groups, wm_classes):
+            if not property_values(window, "WM_TRANSIENT_FOR"):
+                send_message(x, display, root, window, atom("_NET_CLOSE_WINDOW"), (0, 2, 0, 0, 0))
+        bind(x, "XSync", C.c_int, P, C.c_int)(display, 0)
+    finally:
+        bind(x, "XCloseDisplay", C.c_int, P)(display)
+        set_error_handler(previous_handler)
+
+
+# How long the supervision loop waits for an owned window to return once no
+# supervised process remains: ~3 s at the 0.15 s probe interval, covering an
+# application update -> respawn gap before the task reports CLOSED (ADR-0086).
+UNMAPPED_GRACE = 20
+
+
 def launch(desktop_id):
     selected = next((item for item in scan() if item["id"] == desktop_id), None)
     if not selected:
@@ -266,6 +331,8 @@ def launch(desktop_id):
         bind(GIO, "g_app_launch_context_setenv", None, P, C.c_char_p, C.c_char_p)(
             context, b"DBUS_SESSION_BUS_ADDRESS", child_bus.encode())
     info = new_info(os.fsencode(selected["path"]))
+    # StartupWMClass adopts respawned windows into this task's ownership.
+    wm_classes = (selected["wm_class"],) if selected["wm_class"] else ()
     pids = []
     callback_type = C.CFUNCTYPE(None, P, C.c_int, P)
     callback = callback_type(lambda unused, pid, data: pids.append(pid))
@@ -295,11 +362,21 @@ def launch(desktop_id):
         deadline = time.monotonic() + 12
         ready = False
         visibility = {}
-        while waiting:
-            mapped = window_mapped(set(pids), desktop_id, visibility)
-            if not ready and mapped:
-                print("__NUSADESK_GUI_READY__", flush=True)
-                ready = True
+        # The task is window-supervised: it lives while a supervised process or
+        # an owned window exists, so an app that hands off to a respawned
+        # process (its pid exits non-zero while its window stays mapped) is not
+        # reported as a crash (ADR-0086).
+        unmapped = 0
+        pending = None
+        while True:
+            mapped = window_mapped(set(pids), desktop_id, visibility, wm_classes)
+            if mapped:
+                # This probe follows any exit recorded in a previous iteration:
+                # an owned window has survived or returned within the grace.
+                pending = None
+                if not ready:
+                    print("__NUSADESK_GUI_READY__", flush=True)
+                    ready = True
             for pid in list(waiting):
                 done, status = os.waitpid(pid, os.WNOHANG)
                 if done:
@@ -307,14 +384,31 @@ def launch(desktop_id):
                     code = os.waitstatus_to_exitcode(status)
                     print("__NUSADESK_GUI_EXIT__" + str(code), flush=True)
                     if code:
-                        raise RuntimeError("Linux application exited with status " + str(code))
+                        # The window snapshot precedes waitpid and may belong
+                        # to this crashed process. Only a subsequent probe can
+                        # confirm a handoff and cancel its pending failure.
+                        pending = code
             if not ready and time.monotonic() >= deadline:
                 raise RuntimeError("Application did not map an X11 window")
+            if waiting or mapped:
+                unmapped = 0
+            else:
+                unmapped += 1
+                if unmapped >= UNMAPPED_GRACE:
+                    if pending is not None:
+                        raise RuntimeError("Linux application exited with status " + str(pending))
+                    break
             time.sleep(.15)
         if not ready:
             raise RuntimeError("Application exited before mapping a window")
         print("__NUSADESK_GUI_CLOSED__", flush=True)
     finally:
+        try:
+            close_owned_windows(set(pids), wm_classes)
+        except Exception as error:
+            # Best-effort sweep: a note keeps it diagnosable in the guest log
+            # without masking the launch loop's own outcome.
+            print("Window close sweep skipped: " + str(error), file=sys.stderr)
         for pid in pids:
             try:
                 os.killpg(pid, signal.SIGTERM)

@@ -194,6 +194,9 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(doc.contains("location.stream.poll"));
         assertTrue(doc.contains("location.stream.stop"));
         assertTrue(doc.contains("5 second interval"));
+        assertTrue(doc.contains("only calls `location.get`"));
+        assertTrue(doc.contains("`-r updates` still returns one fix"));
+        assertTrue(doc.contains("no shipped CLI for `location.stream.*`"));
         // Background location is a real opt-in surface behind nusadesk-loc.
         assertTrue(doc.contains("location.background.start|poll|stop"));
         assertTrue(doc.contains("nusadesk-loc"));
@@ -274,6 +277,23 @@ public class GuestAwarenessGeneratedDocsTest {
         assertTrue(doc.contains("termux-*"));
         assertFalse("no claim that the guest is a VM",
                 doc.contains("full Docker environment"));
+    }
+
+    @Test
+    public void agentSkillDistinguishesCliExitCodeFamilies() throws IOException {
+        String skill = GuestDocsFixture.skill();
+        String exits = skill.substring(skill.indexOf("## Exit codes"));
+        assertFalse("exit contracts must not group all nusadesk prefixes together",
+                exits.contains("`termux-*`/`nusadesk-*`"));
+        assertTrue(exits.contains("`nusadesk-wifi`"));
+        assertTrue(exits.contains("`5` runtime unavailable, unreachable bridge, or malformed response"));
+        assertTrue(exits.contains("`nusadesk-serve`"));
+        assertTrue(exits.contains("`nusadesk-usb`"));
+        assertTrue(exits.contains("`exec` returns the child's exit code"));
+        String managed = GuestDocsFixture.doc("docs/environment.md", "0.1.0");
+        String managedExits = managed.substring(managed.indexOf("## Exit codes"))
+                .split("\n> Docs generated", 2)[0];
+        assertEquals("managed docs and agent guidance must agree", managedExits.strip(), exits.strip());
     }
 
     @Test

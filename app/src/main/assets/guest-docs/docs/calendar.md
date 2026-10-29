@@ -67,19 +67,29 @@ the whole-day rule is checked against it. Pass `all_day` = `false`
 ## Commands
 
 ```sh
+set -eu
+
 # the next seven days
 nusadesk-android calendar list
 
-# create an event from epoch milliseconds
-nusadesk-android calendar add --title 'Rapat' \
-  --begin-ms 1760003600000 --end-ms 1760007200000
+# create a one-hour event starting one hour from now
+now_seconds=$(date +%s)
+begin_ms=$(( (now_seconds + 3600) * 1000 ))
+end_ms=$(( begin_ms + 3600000 ))
+created=$(nusadesk-android calendar add --title 'Rapat' \
+  --begin-ms "$begin_ms" --end-ms "$end_ms")
+event_id=$(printf '%s\n' "$created" | python3 -c \
+  'import json, sys; print(json.load(sys.stdin)["event_id"])')
 
 # move or rename it later
-nusadesk-android calendar update 500 --title 'Rapat baru'
+nusadesk-android calendar update "$event_id" --title 'Rapat baru'
 
-# remove it
-nusadesk-android calendar delete 500
+# remove that same event
+nusadesk-android calendar delete "$event_id"
 ```
+
+This example creates, renames, then removes one event. Reuse the returned
+`event_id` for later operations; it is not a fixed example number.
 
 A write reports `written` = `true` and the affected `event_id`.
 `calendar add` requires `--title`, `--begin-ms`, and `--end-ms`;

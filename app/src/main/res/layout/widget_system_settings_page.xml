@@ -15,6 +15,55 @@
 
         <include layout="@layout/widget_system_page_header" />
 
+        <!-- The session card sits first: the Linux session is the context
+             every other control on this page applies to. It reports the live
+             runtime state and owns the one Restart Linux action (ADR-0085). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/card_surface"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                style="@style/Widget.LinuxWrapper.Eyebrow"
+                android:text="@string/system_session_label" />
+
+            <TextView
+                android:id="@+id/system_session_card_value"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:text="@string/session_badge_stopped"
+                android:textColor="@color/ink"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/system_session_card_detail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/system_session_detail"
+                android:textColor="@color/ink_secondary"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/system_session_card_action"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/touch_target"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/button_secondary"
+                android:fontFamily="sans"
+                android:minHeight="@dimen/touch_target"
+                android:text="@string/system_session_restart"
+                android:textAllCaps="false"
+                android:textColor="@color/primary_dark"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

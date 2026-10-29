@@ -199,6 +199,11 @@ public final class SystemScreenView extends FrameLayout
         aboutPage.renderChangelog(section);
     }
 
+    /** Wires the session card's Restart Linux action on the Settings page. */
+    public void setOnRestartLinuxListener(OnClickListener listener) {
+        settingsPage.setOnRestartLinuxListener(listener);
+    }
+
     /** Wires the workspace row's single action on the Settings page. */
     public void setOnWorkspaceActionListener(OnClickListener listener) {
         settingsPage.setOnWorkspaceActionListener(listener);
@@ -360,6 +365,7 @@ public final class SystemScreenView extends FrameLayout
     @Override
     public void renderSessionStatus(HostRuntimeStatus status) {
         aboutPage.renderSessionStatus(status);
+        settingsPage.renderSession(status);
     }
 
     @Override

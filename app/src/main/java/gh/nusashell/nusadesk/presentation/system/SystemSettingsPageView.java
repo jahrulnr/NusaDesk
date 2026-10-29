@@ -9,16 +9,21 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import gh.nusashell.nusadesk.R;
+import gh.nusashell.nusadesk.infrastructure.service.HostRuntimeStatus;
+import gh.nusashell.nusadesk.presentation.SessionUiState;
 import gh.nusashell.nusadesk.presentation.workspace.WorkspaceUiState;
 
 /**
  * System hub &gt; Settings page: the control rows the single System scroll used
- * to host — the workspace folder, battery optimization, boot start, and the
- * app-settings shortcut. The page renders state and forwards the four action
- * taps to the host; it owns no policy of its own (ADR-0043).
+ * to host — the Linux session, the workspace folder, battery optimization,
+ * boot start, and the app-settings shortcut. The page renders state and
+ * forwards the action taps to the host; it owns no policy of its own
+ * (ADR-0043, ADR-0085).
  */
 public final class SystemSettingsPageView extends ScrollView {
 
+    private TextView sessionValue;
+    private Button sessionAction;
     private TextView workspaceValue;
     private TextView workspaceDetail;
     private Button workspaceAction;
@@ -45,6 +50,8 @@ public final class SystemSettingsPageView extends ScrollView {
                 .inflate(R.layout.widget_system_settings_page, this, true);
         ((TextView) findViewById(R.id.system_page_title))
                 .setText(R.string.system_settings_title);
+        sessionValue = findViewById(R.id.system_session_card_value);
+        sessionAction = findViewById(R.id.system_session_card_action);
         workspaceValue = findViewById(R.id.system_workspace_value);
         workspaceDetail = findViewById(R.id.system_workspace_detail);
         workspaceAction = findViewById(R.id.system_workspace_action);
@@ -64,6 +71,16 @@ public final class SystemSettingsPageView extends ScrollView {
     /** Wires the back row that returns to the System hub. */
     public void setOnBackListener(OnClickListener listener) {
         findViewById(R.id.system_page_back).setOnClickListener(listener);
+    }
+
+    /**
+     * Wires the session card's Restart Linux action (ADR-0085). The button is
+     * always visible: a restart request is meaningful in every session state —
+     * the host service already routes FAILED to a fresh start and live or
+     * surviving sessions through the stop path.
+     */
+    public void setOnRestartLinuxListener(OnClickListener listener) {
+        sessionAction.setOnClickListener(listener);
     }
 
     /**
@@ -93,6 +110,18 @@ public final class SystemSettingsPageView extends ScrollView {
     /** Wires the boot card's single action (flip the opt-in, ADR-0037). */
     public void setOnBootActionListener(OnClickListener listener) {
         bootAction.setOnClickListener(listener);
+    }
+
+    /**
+     * Renders the session card's state line from the published runtime status,
+     * reusing the same session badge vocabulary the About page reports. The
+     * restart action never leaves: this page reports state, it does not gate it.
+     */
+    public void renderSession(HostRuntimeStatus status) {
+        SessionUiState session = status == null
+                ? SessionUiState.unknown()
+                : SessionUiState.from(status.getState(), status.getFailureReason());
+        sessionValue.setText(session.getBadgeRes());
     }
 
     /**

@@ -24,8 +24,9 @@ using them; only the user enables a missing one from System
 Bridge calls return typed errors
 (`<capability>-permission-required`, `-permission-denied`,
 `-unavailable`, `-busy`, `-timeout`, `invalid-argument`),
-documented JSON output, bounded reads, and stable exit codes
-(`0` result, `1` typed error, `2` usage or transport).
+documented JSON output, and bounded reads. Exit codes depend on
+the client; use the contract below and the managed copy in
+`/root/docs/environment.md#exit-codes`.
 
 - `termux-*` - optional Termux:API client surface, command- and
   JSON-compatible with Termux: battery, location, sensors,
@@ -112,8 +113,16 @@ never claim guest root is device root.
 
 ## Exit codes
 
-- `termux-*`/`nusadesk-*`: `0` result, `1` typed bridge error,
-  `2` usage or unreachable bridge.
+- `termux-*` and `nusadesk-android`: `0` result, `1` typed bridge
+  error, `2` usage, unreachable bridge, or malformed response.
+- `nusadesk-bt`, `nusadesk-wifi`, `nusadesk-pkg`, `nusadesk-usage`,
+  `nusadesk-overlay`, `nusadesk-loc`, and `nusadesk-net`: `0` result,
+  `1` typed bridge error, `2` usage,
+  `5` runtime unavailable, unreachable bridge, or malformed response.
+- `nusadesk-serve`: `0` success, `1` local runtime error, `2` usage.
+- `nusadesk-usb`: `0` success, `1` its own usage, bridge, protocol,
+  or device error; `exec` returns the child's exit code once launched.
+- The wrapped `adb` follows adb's own exit-code contract.
 - `android-cli`: the child's own exit code; `2` usage, `5`
   tool absent (or device `su` missing on a non-rooted phone).
 

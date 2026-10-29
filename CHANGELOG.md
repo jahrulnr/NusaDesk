@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.9] - 2026-10-30
+
 ### Added
 
 - Support browser-created Blob and data URL exports from local dashboard apps,
@@ -18,6 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Save user-added WebView app GET downloads to guest `/root/Downloads`,
   with session cookies, saved Basic authentication, progress, failure/retry,
   and collision-safe filenames (ADR-0083).
+
+### Changed
+
+- Move `Restart Linux` out of the terminal and command-app overflow menus
+  onto an always-visible Linux session card in System > Settings; the
+  FAILED/UNRESPONSIVE attach panel and the session notification keep their
+  own restart actions (ADR-0085).
+
+### Fixed
+
+- Correct guest location-client and per-command exit-code guidance; use
+  relative timestamps and the created event ID in the calendar example.
+- Stop reporting a false `FAILED` card when a Linux GUI app self-updates and
+  respawns: tasks are now window-supervised — they live while a supervised
+  process or an owned window (`_NET_WM_PID` process group or the entry's
+  `StartupWMClass`) is mapped, with a ~3 s grace window for the respawn gap —
+  so an owned window confirmed after the old process exits can cancel its
+  pending failure. A crash after the last window probe retains its exit
+  status (ADR-0086).
+- Make the surface's close action work on a `FAILED` task: it releases and
+  closes any retained app channel, then drops the task and returns to the
+  launcher (ADR-0086).
 
 ## [0.14.8] - 2026-10-29
 

@@ -49,8 +49,9 @@ This file is the operational truth for what the current base project does **not*
   liveness canary (ADR-0062) probes the guest every 15 s, and three missed
   probes (about 45 s) flip the session to the explicit **not responding**
   state, which the launcher, the notification, and the terminal attach panel
-  all name in words. `Restart Linux` on the notification or the terminal
-  stops the session and starts it again; the first successful probe also
+  all name in words. `Restart Linux` on the notification, the attach panel,
+  or the Settings page's Linux session card (ADR-0085) stops the session and
+  starts it again; the first successful probe also
   revives it on its own, and the state reconciles to `FAILED` if the host
   process dies.
 - No QEMU, PTY layer, or desktop guest server is included; the desktop screen remains honestly unavailable until a real guest-owned server exists.
@@ -97,7 +98,18 @@ Switching/minimizing native tasks now retains their processes and windows in
 one guest/display. Home resumes them. Close asks the app to quit through EWMH,
 so its own unsaved-document dialog can negotiate; whole-session Stop terminates
 the process tree. Task ownership relies on guest
-`_NET_WM_PID`/transient metadata; applications that omit it are not validated.
+`_NET_WM_PID`/transient metadata plus the entry's `StartupWMClass`
+(ADR-0086) — a supervised task lives while a pid or an owned window exists,
+and a non-zero exit remains pending until a later probe confirms an owned
+window or the ~3 s unmapped grace expires, so an app that hands off to a
+respawned process (even one
+whose windows unmap before the old pid exits) is not misread as a crash —
+but applications that omit both, or that respawn into a new process group
+without a `StartupWMClass` key, are not adopted: their windows can linger as
+orphans until the display restarts. Their task ends as `CLOSED` after a clean
+exit or `FAILED` after a non-zero exit. A window whose `WM_CLASS` matches a
+different entry's
+`StartupWMClass` would be adopted by the wrong task.
 Live tasks are not restored after Android process death or guest restart.
 Catalog refresh occurs on runtime-ready/foreground/Home, without a continuous
 guest filesystem watch.
@@ -208,8 +220,8 @@ What works today:
   `index-pack` and completes where `git clone` wedges.
 - **Recovery once wedged:** the liveness canary notices inside roughly a
   minute and the session shows **not responding** with a `Restart Linux`
-  action on the notification and the terminal surface — one tap stops the
-  session and starts it again. The stop path now thaws the frozen tracer
+  action on the notification, the attach panel, and the Settings session
+  card — one tap stops the session and starts it again. The stop path now thaws the frozen tracer
   with `SIGCONT` before terminating it (a `SIGSTOP`ped process never sees
   `SIGTERM`), escalates to a forced kill, and only reports `STOPPED` once
   the tracer is really gone and the fixed port is quiet — so the new
